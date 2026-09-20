@@ -1,26 +1,42 @@
-# Waymark Discovery Lab
+# Waymark Engine — agent guide
 
-Waymark is a two-phase discovery engine for one-shot code questions: an in-process
-Tree-sitter WASM AST for structural queries, Capn (SQLite FTS5, no embeddings) for
-semantic recall, and a clean miss when neither can answer.
+Waymark Engine is a two-phase discovery engine for one-shot code questions: an in-process
+Tree-sitter WASM AST for structural queries, and Capn charted memory (lexical BM25, no
+embeddings, via the bundled `@paragon-ux/capn-hook` fork) for semantic recall. A clean
+miss is a miss — never a guess.
 
-## Primary Interface
+## Working on this repo
 
-### 1. Check Existing Knowledge (`capn_ask`)
-- Call `capn_ask({ question: "<question>" })` before re-reading the codebase.
-- If `status: "hit"`, reuse the charted answer without redundant exploration.
-- A clean `miss` means "not charted yet" — investigate, then chart.
+```bash
+npm ci          # install (bundled capn fork included)
+npm run verify  # build + full node test suite
+```
 
-### 2. Structural Questions Are Free (`capn_ask` routes them automatically)
-Questions like "who calls X", "where is Y declared", or "what are the entrypoints" are
-answered in-process by the WASM AST — no external process, no index build, exact
-1-indexed line spans.
+Invariants:
 
-### 3. Chart Findings (`capn_chart`)
-After concluding an investigation:
-- Call `capn_chart({ question: "<q>", answer: "<a>", files: ["<paths>"] })`
-  to seed Capn memory so future agents reuse the answer.
+- Semantic recall must stay deterministic: the adapter refuses any store that is
+  uninitialized (`CAPN_STORE_UNINITIALIZED`) or in embedding mode
+  (`CAPN_NON_DETERMINISTIC_MODE`). Do not weaken that guard.
+- The router must miss cleanly rather than fabricate an answer.
+- External tools are invoked with explicit argv arrays (never a shell) and bounded
+  output. Keep `WAYMARK_CAPN_EXECUTABLE` as an escape hatch, but the bundled fork is
+  the default and the only tested path.
+- Tests cover both success and fail-closed paths. `npm run verify` must stay green.
 
-### 4. One-Shot Symbol Discovery (`waymark_discover_symbols`)
-- Call `waymark_discover_symbols({ path: "<repository-relative-file>", language: "typescript|python" })`
-  for exact symbols (name, kind, line span) without changing any state.
+## Using the engine
+
+```bash
+npm install -g waymark-engine
+npx --package @paragon-ux/capn-hook capn init    # one-time store init per repo
+
+waymark-ask "Who calls verifyHop?"               # AST answer, no external process
+waymark-ask "How does authentication work?"      # charted-memory answer or miss
+waymark-discover --path src/index.ts
+waymark-chart --question "<q>" --answer "<a>" --files "<a,b>"
+waymark-unchart <id>   waymark-bust <path>   waymark-prune
+waymark-list           waymark-context      waymark-mcp
+```
+
+## Library
+
+`import { ask, discoverSymbolsInFile, detectAstIntent, verifyHop, anchorForRange } from "waymark-engine";`

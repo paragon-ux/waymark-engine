@@ -1,4 +1,11 @@
-# Waymark Discovery Engine
+# Waymark Engine
+
+[![npm version](https://img.shields.io/npm/v/waymark-engine)](https://www.npmjs.com/package/waymark-engine)
+[![CI](https://github.com/paragon-ux/waymark-engine/actions/workflows/verify.yml/badge.svg)](https://github.com/paragon-ux/waymark-engine/actions/workflows/verify.yml)
+[![tests](https://img.shields.io/badge/tests-17%2F17-brightgreen)](https://github.com/paragon-ux/waymark-engine)
+[![node](https://img.shields.io/badge/node-%3E%3D22-339933?logo=node.js)](https://nodejs.org)
+[![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![recall](https://img.shields.io/badge/recall-lexical%20BM25%20(no%20embeddings)-informational)](https://github.com/paragon-ux/capn-hook)
 
 A single-process, zero-daemon discovery engine that answers one-shot code questions
 through a **two-phase router** — no plugin choice, no index to build, no embeddings:
@@ -19,92 +26,127 @@ continuity ledger was removed). Its design goal: an agent should never pay 10,00
 tokens of blind re-reading when a sub-second in-process scan answers the question with
 exact file, symbol, and line spans — and it should say "miss" rather than guess.
 
-Also retained standalone from the continuity layer, because it is the cheapest
-tamper-evidence primitive for later integration:
+The semantic phase is **deterministic by construction**: it invokes the lexical-only
+capn fork bundled as a runtime dependency (no PATH lookup, no Windows shim games) and
+refuses any store configured for embedding mode
+(`CAPN_STORE_UNINITIALIZED` / `CAPN_NON_DETERMINISTIC_MODE`, fail-closed).
 
-- `src/integrity.ts` — `verifyHop(root, hop, maxWindows)`: hash-pinned span verification
-  (FRESH / MOVED / STALE) with bounded relocation windows.
-- `src/paths.ts` — `anchorForRange(root, path, range)`: full-file hash + normalized span
-  hash + structural signature. Pin "this span said X" to a later integrity check.
+## Install
+
+Requires Node.js 22+.
+
+```bash
+# Global CLI + explicit wrapper commands
+npm install -g waymark-engine
+
+# Per-project (library + npx access)
+npm install waymark-engine
+```
+
+The engine ships prebuilt (`dist/`) — no build step for consumers.
 
 ## Quick start
 
-Requires Node.js 22+. No build steps beyond `npm ci && npm run build`.
-
-### CLI
-
 ```bash
+# Initialize the lexical Capn store once per repository (bundled fork)
+npx --package @paragon-ux/capn-hook capn init
+
 # One-shot symbol discovery (repository-relative file)
-node dist/src/cli.js discover-symbols --path src/example.ts [--language typescript|python]
+waymark-discover --path src/index.ts [--language typescript|python]
 
-# Two-phase question router
-node dist/src/cli.js ask "Who calls capnChartArgs?"
-node dist/src/cli.js ask "Where is function publish declared?"
-node dist/src/cli.js ask --profile none "anything"   # deterministic miss (no external calls)
+# Two-phase question router (AST first, charted memory second)
+waymark-ask "Who calls verifyHop?"
+waymark-ask "How does authentication work in this project?"
 
-# Full wrapped Capn chart-store surface (bundled lexical-only fork, no PATH needed)
-node dist/src/cli.js chart --question "<q>" --answer "<a>" --files "a.ts,b.ts"
-node dist/src/cli.js unchart <id>
-node dist/src/cli.js bust <path>
-node dist/src/cli.js prune
-node dist/src/cli.js list
-node dist/src/cli.js context
+# Chart an answer so the next session skips the search
+waymark-chart --question "Where are payment webhooks handled?" \
+  --answer "src/api/webhooks.ts; Stripe handler owns signature checks." \
+  --files "src/api/webhooks.ts,src/billing/handlers/stripe.ts"
+
+waymark-list                          # charted entries
+waymark-unchart <id>                  # delete one entry
+waymark-bust src/api/webhooks.ts      # delete entries backed by a file
+waymark-prune                         # delete stale entries (files changed)
+waymark-context                       # print the ask-first contract
 ```
 
-Explicit wrapper bins (one action per command): `waymark`, `waymark-ask`,
-`waymark-discover`, `waymark-chart`, `waymark-unchart`, `waymark-bust`,
-`waymark-prune`, `waymark-list`, `waymark-context`, `waymark-mcp`.
+Without a global install, prefix any wrapper with `npx --package waymark-engine`
+(e.g. `npx --package waymark-engine waymark-ask "..."`), or use the umbrella CLI:
+`waymark <command>`.
+
+## Commands
+
+| Wrapper | Umbrella CLI | Action |
+| :--- | :--- | :--- |
+| `waymark` | — | umbrella CLI (all subcommands) |
+| `waymark-ask` | `waymark ask "<q>"` | two-phase question router |
+| `waymark-discover` | `waymark discover-symbols --path <f>` | AST symbol discovery |
+| `waymark-chart` | `waymark chart --question <q> --answer <a> --files <f>` | chart into Capn memory |
+| `waymark-unchart` | `waymark unchart <id>` | delete one entry |
+| `waymark-bust` | `waymark bust <path>` | delete entries backed by one file |
+| `waymark-prune` | `waymark prune` | delete stale entries |
+| `waymark-list` | `waymark list` | list charted entries |
+| `waymark-context` | `waymark context` | print the ask-first contract |
+| `waymark-mcp` | `waymark mcp` | start the stdio MCP server |
 
 Env: `WAYMARK_CAPN_PROFILE` (`capn-cli` | `none`, default `capn-cli`),
 `WAYMARK_CAPN_EXECUTABLE` (optional override; default: the bundled
-`@paragon-ux/capn-hook` CLI run in-process — no PATH dependency). The library and CLI
-work with or without a Git repository — `repoRoot()` resolves
-`git rev-parse --show-toplevel` and falls back to the process cwd.
+`@paragon-ux/capn-hook` CLI run in-process). Works with or without a Git repository —
+`repoRoot()` resolves `git rev-parse --show-toplevel` and falls back to the process cwd.
 
-The semantic phase is **deterministic by construction**: it invokes the lexical-only
-capn fork and refuses any store configured for embedding mode
-(`CAPN_STORE_UNINITIALIZED` / `CAPN_NON_DETERMINISTIC_MODE`, fail-closed).
+## Library API
 
-### MCP (stdio)
+```ts
+import {
+  ask,                  // two-phase router (AST -> lexical charted memory)
+  discoverSymbolsInFile,// one-file AST symbol discovery
+  detectAstIntent,      // structural vs semantic intent
+  publish, unchart, bust, prune, listEntries, context, // wrapped capn surface
+  verifyHop,            // hash-pinned span verification (FRESH/MOVED/STALE)
+  anchorForRange,       // tamper-evidence primitive for a file range
+  assertLexicalStore,   // fail-closed determinism guard
+  WaymarkError,
+} from "waymark-engine";
+
+const hit = await ask(repoRoot(), "capn-cli", "", "Who calls verifyHop?");
+// { provider: "wasm-ast", status: "hit", result: "function: verifyHop\ncallers: ..." }
+```
+
+## Integrity primitives
+
+Retained standalone from the continuity layer, because they are the cheapest
+tamper-evidence primitives for later integration:
+
+- `verifyHop(root, hop, maxWindows)` — hash-pinned span verification
+  (FRESH / MOVED / STALE) with bounded relocation windows.
+- `anchorForRange(root, path, range)` — full-file hash + normalized span hash +
+  structural signature. Pin "this span said X" to a later integrity check.
+
+## MCP (stdio)
 
 ```json
 {
   "mcpServers": {
-    "waymark": {
-      "command": "node",
-      "args": ["<path-to-waymark>/dist/src/mcp/capnIndex.js"]
-    }
+    "waymark": { "command": "waymark-mcp" }
   }
 }
 ```
 
-Exposed tools: `capn_ask`, `capn_chart`, `waymark_discover_symbols`.
-Resource: `capn://status`.
+Tools: `capn_ask`, `capn_chart`, `waymark_discover_symbols`. Resource: `capn://status`.
 
-### Library
+## Known limitation
 
-```ts
-import { detectAstIntent, queryWasmAst } from "./src/discoveryRouter.js";
-import { ask } from "./src/capnAdapter.js";
-import { discoverSymbolsInFile } from "./src/astExtractor.js";
-import { anchorForRange } from "./src/paths.js";
-import { verifyHop } from "./src/integrity.js";
-```
+BM25 lexical recall is weak on filename-style queries — `ask "sample.ts"` tends to miss,
+while `ask "payment webhooks"` hits. Chart (and ask with) plain-language questions; this
+is a tokenizer quirk inherited from QMD, tracked as a future fork improvement.
 
-## Build & verify
+## Related
 
-```bash
-npm ci
-npm run verify   # tsc build + node --test dist/test/**/*.test.js
-```
+- [`@paragon-ux/capn-hook`](https://github.com/paragon-ux/capn-hook) — the lexical-only
+  fork of [CyrusNuevoDia/capn-hook](https://github.com/CyrusNuevoDia/capn-hook) that
+  powers the semantic phase (BM25 recall, no embeddings, no hooks).
 
-## Operating posture
+## License
 
-- **Zero runtime dependencies, zero daemons.** AST runs in-process (pure WASM); Capn is
-  an external CLI invoked per call (lexical FTS5 recall, `capn init --no-embedding`
-  recommended: deterministic, no embedding model, no GPU).
-- **Fail closed on integrity, fail open on infrastructure.** `verifyHop` quarantines
-  (STALE) spans it cannot prove; a missing Capn chart returns a clean `miss` rather than
-  a guess.
-- **Real-adapter testing.** The suite exercises the actual capn-hook CLI surface, not a
-  protocol fake.
+MIT. See [LICENSE](LICENSE) for the full text and attribution to the Waymark and
+capn-hook projects.

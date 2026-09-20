@@ -104,6 +104,9 @@ async function runCommand(command: string, rawArgs: readonly string[]): Promise<
         "  chart --question <q> --answer <a> --files <a,b> [--profile capn-cli|none] [--capn-executable <path>]",
         "  mcp (starts the stdio MCP discovery server)",
         "",
+        "Explicit wrappers (same engine, one command per action):",
+        "  waymark-ask <question> | waymark-discover --path <f> | waymark-chart ... | waymark-mcp",
+        "",
         "Env: WAYMARK_CAPN_PROFILE (capn-cli|none, default capn-cli), WAYMARK_CAPN_EXECUTABLE (default 'capn')",
       ].join("\n"),
     };
@@ -138,9 +141,12 @@ async function runCommand(command: string, rawArgs: readonly string[]): Promise<
   throw new WaymarkError("UNKNOWN_COMMAND", `Unknown command: ${command}`);
 }
 
-async function main(): Promise<void> {
-  const command = process.argv[2] ?? "help";
-  const args = process.argv.slice(3);
+/**
+ * Run one CLI command with its raw argv and exit with the command's status code.
+ * Exported for the explicit wrapper bins (waymark-ask / waymark-discover /
+ * waymark-chart) so each action is one process without subcommand parsing.
+ */
+export async function runCli(command: string, args: readonly string[]): Promise<void> {
   try {
     const result = await runCommand(command, args);
     if (result.value !== null) output(result.value);
@@ -154,6 +160,10 @@ async function main(): Promise<void> {
     output(result.value);
     process.exit(result.exitCode ?? 1);
   }
+}
+
+async function main(): Promise<void> {
+  await runCli(process.argv[2] ?? "help", process.argv.slice(3));
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url))) await main();

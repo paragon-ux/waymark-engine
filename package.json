@@ -1,23 +1,53 @@
 {
   "name": "waymark-engine",
   "version": "1.0.0",
-  "private": true,
-  "description": "Waymark discovery engine: symbolic (Tree-sitter WASM) + semantic (Capn FTS5) two-phase routing for one-shot code questions.",
+  "description": "Waymark Engine: two-phase symbolic+semantic discovery (Tree-sitter WASM AST + Capn FTS5) for AI coding agents — clean misses instead of guesses.",
   "type": "module",
-  "main": "./dist/src/cli.js",
+  "main": "./dist/src/index.js",
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "default": "./dist/src/index.js"
+    },
+    "./cli": "./dist/src/cli.js"
+  },
   "bin": {
     "waymark": "./dist/src/cli.js",
-    "waymark-server": "./dist/src/mcp/capnIndex.js",
-    "capn-mcp": "./dist/src/mcp/capnIndex.js",
-    "waymark-capn": "./dist/src/mcp/capnIndex.js"
+    "waymark-ask": "./bin/waymark-ask.mjs",
+    "waymark-discover": "./bin/waymark-discover.mjs",
+    "waymark-chart": "./bin/waymark-chart.mjs",
+    "waymark-mcp": "./dist/src/mcp/capnIndex.js"
   },
+  "files": [
+    "dist/src",
+    "bin",
+    "README.md",
+    "LICENSE"
+  ],
   "engines": {
     "node": ">=22"
   },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/paragon-ux/waymark-engine.git"
+  },
+  "keywords": [
+    "agent",
+    "ast",
+    "tree-sitter",
+    "discovery",
+    "code-search",
+    "mcp",
+    "semantic-search",
+    "symbols",
+    "llm-tools"
+  ],
+  "license": "MIT",
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "npm run build && node --test \"dist/test/**/*.test.js\"",
-    "verify": "npm run build && node --test \"dist/test/**/*.test.js\""
+    "verify": "npm run build && node --test \"dist/test/**/*.test.js\"",
+    "prepublishOnly": "npm run verify"
   },
   "devDependencies": {
     "@types/node": "^22.15.0",

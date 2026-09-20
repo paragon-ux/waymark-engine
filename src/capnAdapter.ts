@@ -1,4 +1,5 @@
 import path from "node:path";
+import fs from "node:fs";
 import { execFile, execFileSync } from "node:child_process";
 import { promisify } from "node:util";
 import { AdapterProfile, PublicationResult, WaymarkError } from "./types.js";
@@ -69,6 +70,51 @@ export function capnChartArgs(question: string, answer: string, files: readonly 
   return ["chart", question, ...uniqueFiles(files).flatMap((file) => ["--files", file]), "--details", answer];
 }
 
+function capnConfigPath(root: string): string {
+  return path.join(root, ".capn", "config.json");
+}
+
+/**
+ * Read the Capn store config. Returns null when the store has not been
+ * initialized. Capn itself treats a missing config as embedding mode — the
+ * engine refuses that mode, so it must be surfaced here.
+ */
+export function readCapnConfig(root: string): { embedding: boolean } | null {
+  try {
+    const raw = fs.readFileSync(capnConfigPath(root), "utf8");
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    return { embedding: parsed.embedding !== false };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw new WaymarkError("CAPN_CONFIG_CORRUPT", `Capn store config is not readable: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+/**
+ * Fail closed on the QMD hybrid path. Semantic recall must be lexical-only
+ * (`capn init --no-embedding`): the default embedding path downloads
+ * Qwen-family embedding models (300MB-2GB) and is non-deterministic — exactly
+ * what the engine excludes from its answer path. The in-process AST phase
+ * never needs this check; only the Capn fallback does.
+ */
+export function assertLexicalStore(root: string): void {
+  const config = readCapnConfig(root);
+  if (config === null) {
+    throw new WaymarkError(
+      "CAPN_STORE_UNINITIALIZED",
+      "Capn store is not initialized. Run `capn init --no-embedding` in the repository first — the engine requires deterministic lexical (BM25) recall.",
+      2,
+    );
+  }
+  if (config.embedding !== false) {
+    throw new WaymarkError(
+      "CAPN_NON_DETERMINISTIC_MODE",
+      "Capn store is in embedding (QMD hybrid) mode. Re-run `capn init --no-embedding` — the engine requires deterministic lexical recall.",
+      2,
+    );
+  }
+}
+
 /**
  * Chart a question + answer (+ optional file references) into Capn memory.
  * Profile "none" disables publication (deterministic no-op for tests and
@@ -85,6 +131,7 @@ export async function publish(
   const selectedFiles = uniqueFiles(files);
   if (profile === "none") return { published: false, adapter: profile, output: "publication disabled" };
 
+  assertLexicalStore(root);
   if (!executable || executable.includes("\0")) throw new WaymarkError("CAPN_CONFIG_INVALID", "Capn executable is invalid");
   const args = capnChartArgs(question, answer, selectedFiles);
   try {
@@ -134,6 +181,10 @@ export async function ask(
       };
     }
   }
+
+  // Semantic fallback: deterministic lexical recall ONLY. Throws (fail-closed)
+  // when the store is uninitialized or in embedding mode.
+  assertLexicalStore(root);
 
   // Semantic fallback: Capn charted memory via executable.
   try {

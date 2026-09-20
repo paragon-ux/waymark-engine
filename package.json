@@ -1,6 +1,6 @@
 {
   "name": "waymark-engine",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Waymark Engine: two-phase symbolic+semantic discovery (Tree-sitter WASM AST + Capn FTS5) for AI coding agents — clean misses instead of guesses.",
   "type": "module",
   "main": "./dist/src/index.js",

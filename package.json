@@ -1,7 +1,7 @@
 {
   "name": "waymark-engine",
   "version": "1.1.0",
-  "description": "Waymark Engine: two-phase symbolic+semantic discovery (Tree-sitter WASM AST + Capn FTS5) for AI coding agents \u2014 clean misses instead of guesses.",
+  "description": "Waymark Engine: two-phase symbolic+semantic discovery (Tree-sitter WASM AST + Capn FTS5) for AI coding agents — clean misses instead of guesses.",
   "type": "module",
   "main": "./dist/src/index.js",
   "exports": {
@@ -12,16 +12,16 @@
     "./cli": "./dist/src/cli.js"
   },
   "bin": {
-    "waymark": "./dist/src/cli.js",
-    "waymark-ask": "./bin/waymark-ask.mjs",
-    "waymark-discover": "./bin/waymark-discover.mjs",
-    "waymark-chart": "./bin/waymark-chart.mjs",
-    "waymark-unchart": "./bin/waymark-unchart.mjs",
-    "waymark-bust": "./bin/waymark-bust.mjs",
-    "waymark-prune": "./bin/waymark-prune.mjs",
-    "waymark-list": "./bin/waymark-list.mjs",
-    "waymark-context": "./bin/waymark-context.mjs",
-    "waymark-mcp": "./dist/src/mcp/capnIndex.js"
+    "waymark": "dist/src/cli.js",
+    "waymark-ask": "bin/waymark-ask.mjs",
+    "waymark-discover": "bin/waymark-discover.mjs",
+    "waymark-chart": "bin/waymark-chart.mjs",
+    "waymark-unchart": "bin/waymark-unchart.mjs",
+    "waymark-bust": "bin/waymark-bust.mjs",
+    "waymark-prune": "bin/waymark-prune.mjs",
+    "waymark-list": "bin/waymark-list.mjs",
+    "waymark-context": "bin/waymark-context.mjs",
+    "waymark-mcp": "dist/src/mcp/capnIndex.js"
   },
   "files": [
     "dist/src",

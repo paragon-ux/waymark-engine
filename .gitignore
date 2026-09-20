@@ -1,0 +1,11 @@
+.waymark/
+dist/
+node_modules/
+evidence/runtime/
+.tmp-*/
+.sandbox/
+experiments/**/.sandbox/
+experiments/**/.tmp-*/
+.capn/
+.claude/
+.codex/

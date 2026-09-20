@@ -1,0 +1,31 @@
+{
+  "name": "waymark-engine",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Waymark discovery engine: symbolic (Tree-sitter WASM) + semantic (Capn FTS5) two-phase routing for one-shot code questions.",
+  "type": "module",
+  "main": "./dist/src/cli.js",
+  "bin": {
+    "waymark": "./dist/src/cli.js",
+    "waymark-server": "./dist/src/mcp/capnIndex.js",
+    "capn-mcp": "./dist/src/mcp/capnIndex.js",
+    "waymark-capn": "./dist/src/mcp/capnIndex.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node --test \"dist/test/**/*.test.js\"",
+    "verify": "npm run build && node --test \"dist/test/**/*.test.js\""
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "capn-hook": "0.2.2",
+    "typescript": "^5.8.3"
+  },
+  "dependencies": {
+    "tree-sitter-wasms": "^0.1.13",
+    "web-tree-sitter": "0.24.0"
+  }
+}

@@ -66,7 +66,7 @@ waymark-chart --question "Where are payment webhooks handled?" \
 waymark-list                          # charted entries
 waymark-unchart <id>                  # delete one entry
 waymark-bust src/api/webhooks.ts      # delete entries backed by a file
-waymark-prune                         # delete stale entries (files changed)
+waymark-prune                         # explicit prune (also runs automatically on list/chart/ask)
 waymark-context                       # print the ask-first contract
 ```
 
@@ -81,11 +81,11 @@ Without a global install, prefix any wrapper with `npx --package waymark-engine`
 | `waymark` | — | umbrella CLI (all subcommands) |
 | `waymark-ask` | `waymark ask "<q>"` | two-phase question router |
 | `waymark-discover` | `waymark discover-symbols --path <f>` | AST symbol discovery |
-| `waymark-chart` | `waymark chart --question <q> --answer <a> --files <f>` | chart into Capn memory |
+| `waymark-chart` | `waymark chart --question <q> --answer <a> --files <f>` | chart into Capn memory (prunes stale siblings first) |
 | `waymark-unchart` | `waymark unchart <id>` | delete one entry |
 | `waymark-bust` | `waymark bust <path>` | delete entries backed by one file |
 | `waymark-prune` | `waymark prune` | delete stale entries |
-| `waymark-list` | `waymark list` | list charted entries |
+| `waymark-list` | `waymark list` | list charted entries (prunes stale first) |
 | `waymark-context` | `waymark context` | print the ask-first contract |
 | `waymark-mcp` | `waymark mcp` | start the stdio MCP server |
 

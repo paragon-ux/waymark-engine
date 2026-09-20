@@ -1,7 +1,7 @@
 {
   "name": "waymark-engine",
   "version": "1.1.0",
-  "description": "Waymark Engine: two-phase symbolic+semantic discovery (Tree-sitter WASM AST + Capn FTS5) for AI coding agents — clean misses instead of guesses.",
+  "description": "Waymark Engine: two-phase symbolic+semantic discovery (Tree-sitter WASM AST + Capn FTS5) for AI coding agents \u2014 clean misses instead of guesses.",
   "type": "module",
   "main": "./dist/src/index.js",
   "exports": {
@@ -59,7 +59,7 @@
     "typescript": "^5.8.3"
   },
   "dependencies": {
-    "@paragon-ux/capn-hook": "^1.0.0",
+    "@paragon-ux/capn-hook": "^1.1.0",
     "tree-sitter-wasms": "^0.1.13",
     "web-tree-sitter": "0.24.0"
   }

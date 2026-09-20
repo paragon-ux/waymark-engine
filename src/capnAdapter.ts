@@ -2,19 +2,22 @@ import path from "node:path";
 import fs from "node:fs";
 import { execFile, execFileSync } from "node:child_process";
 import { promisify } from "node:util";
+import { createRequire } from "node:module";
 import { AdapterProfile, PublicationResult, WaymarkError } from "./types.js";
 import { detectAstIntent, queryWasmAst } from "./discoveryRouter.js";
 
+const require = createRequire(import.meta.url);
 const execFileAsync = promisify(execFile);
 const MAX_OUTPUT = 2000;
+const MAX_OUTPUT_LARGE = 8000;
 
 interface CommandSpec {
   file: string;
   args: string[];
 }
 
-function digestOutput(value: string): string {
-  return value.length <= MAX_OUTPUT ? value : `${value.slice(0, MAX_OUTPUT)}…`;
+function digestOutput(value: string, maximum = MAX_OUTPUT): string {
+  return value.length <= maximum ? value : `${value.slice(0, maximum)}…`;
 }
 
 function uniqueFiles(files: readonly string[]): string[] {
@@ -45,18 +48,63 @@ export function resolveWindowsExecutable(executable: string): string {
   }
 }
 
-function commandSpec(executable: string, args: readonly string[]): CommandSpec {
-  if (process.platform !== "win32") return { file: executable, args: [...args] };
-  const resolved = resolveWindowsExecutable(executable);
-  const extension = path.extname(resolved).toLowerCase();
-  if (extension !== ".cmd" && extension !== ".bat") return { file: resolved, args: [...args] };
-  const commandLine = [resolved, ...args].map(quoteCmdArgument).join(" ");
-  return { file: process.env.ComSpec || "cmd.exe", args: ["/d", "/v:off", "/s", "/c", commandLine] };
+/**
+ * Resolve the bundled `@paragon-ux/capn-hook` CLI entry (dist/capn.js) from the
+ * installed dependency. Deterministic and PATH-independent: the lexical-only
+ * fork is pinned as a runtime dependency, so the semantic phase never depends
+ * on which `capn` happens to be on PATH.
+ */
+function bundledCapnEntry(): string | null {
+  try {
+    const pkg = require.resolve("@paragon-ux/capn-hook/package.json");
+    return path.join(path.dirname(pkg), "dist", "capn.js");
+  } catch {
+    return null;
+  }
 }
 
-async function execute(root: string, executable: string, args: readonly string[]): Promise<{ stdout: string; stderr: string }> {
-  const spec = commandSpec(executable, args);
-  return await execFileAsync(spec.file, spec.args, {
+interface ResolvedCapnCommand {
+  file: string;
+  prefix: string[];
+  viaCmdShim: boolean;
+}
+
+/**
+ * Resolve how to invoke capn:
+ *  1. explicit executable (flag/env WAYMARK_CAPN_EXECUTABLE) — PATH/.cmd rules apply;
+ *  2. the bundled @paragon-ux/capn-hook dist entry, run with this Node process
+ *     (no PATH, no shell shims);
+ *  3. `capn` on PATH as a last resort.
+ */
+export function resolveCapnCommand(executable?: string): ResolvedCapnCommand {
+  const override = (executable && executable.trim()) || process.env.WAYMARK_CAPN_EXECUTABLE;
+  if (override) {
+    const resolved = resolveWindowsExecutable(override);
+    const ext = path.extname(resolved).toLowerCase();
+    return { file: resolved, prefix: [], viaCmdShim: ext === ".cmd" || ext === ".bat" };
+  }
+  const bundled = bundledCapnEntry();
+  if (bundled) {
+    return { file: process.execPath, prefix: [bundled], viaCmdShim: false };
+  }
+  const resolved = resolveWindowsExecutable("capn");
+  const ext = path.extname(resolved).toLowerCase();
+  return { file: resolved, prefix: [], viaCmdShim: ext === ".cmd" || ext === ".bat" };
+}
+
+async function execute(root: string, command: ResolvedCapnCommand, args: readonly string[]): Promise<{ stdout: string; stderr: string }> {
+  const fullArgs = [...command.prefix, ...args];
+  if (process.platform === "win32" && command.viaCmdShim) {
+    const commandLine = [command.file, ...fullArgs].map(quoteCmdArgument).join(" ");
+    return await execFileAsync(process.env.ComSpec || "cmd.exe", ["/d", "/v:off", "/s", "/c", commandLine], {
+      cwd: root,
+      windowsHide: true,
+      shell: false,
+      timeout: 15_000,
+      maxBuffer: 64 * 1024,
+    });
+  }
+  return await execFileAsync(command.file, fullArgs, {
     cwd: root,
     windowsHide: true,
     shell: false,
@@ -92,24 +140,24 @@ export function readCapnConfig(root: string): { embedding: boolean } | null {
 
 /**
  * Fail closed on the QMD hybrid path. Semantic recall must be lexical-only
- * (`capn init --no-embedding`): the default embedding path downloads
- * Qwen-family embedding models (300MB-2GB) and is non-deterministic — exactly
- * what the engine excludes from its answer path. The in-process AST phase
- * never needs this check; only the Capn fallback does.
+ * (`capn init --no-embedding`, or any capn init from the lexical-only fork):
+ * the embedding path downloads Qwen-family models (300MB-2GB) and is
+ * non-deterministic — exactly what the engine excludes from its answer path.
+ * The in-process AST phase never needs this check; only the Capn fallback does.
  */
 export function assertLexicalStore(root: string): void {
   const config = readCapnConfig(root);
   if (config === null) {
     throw new WaymarkError(
       "CAPN_STORE_UNINITIALIZED",
-      "Capn store is not initialized. Run `capn init --no-embedding` in the repository first — the engine requires deterministic lexical (BM25) recall.",
+      "Capn store is not initialized. Run `capn init` (the lexical-only @paragon-ux/capn-hook) in the repository first — the engine requires deterministic lexical (BM25) recall.",
       2,
     );
   }
   if (config.embedding !== false) {
     throw new WaymarkError(
       "CAPN_NON_DETERMINISTIC_MODE",
-      "Capn store is in embedding (QMD hybrid) mode. Re-run `capn init --no-embedding` — the engine requires deterministic lexical recall.",
+      "Capn store is in embedding (QMD hybrid) mode. Re-initialize with the lexical-only @paragon-ux/capn-hook — the engine requires deterministic lexical recall.",
       2,
     );
   }
@@ -118,7 +166,7 @@ export function assertLexicalStore(root: string): void {
 /**
  * Chart a question + answer (+ optional file references) into Capn memory.
  * Profile "none" disables publication (deterministic no-op for tests and
- * offline use); "capn-cli" invokes the real capn-hook CLI.
+ * offline use); "capn-cli" invokes the Capn CLI (bundled fork preferred).
  */
 export async function publish(
   root: string,
@@ -132,10 +180,9 @@ export async function publish(
   if (profile === "none") return { published: false, adapter: profile, output: "publication disabled" };
 
   assertLexicalStore(root);
-  if (!executable || executable.includes("\0")) throw new WaymarkError("CAPN_CONFIG_INVALID", "Capn executable is invalid");
   const args = capnChartArgs(question, answer, selectedFiles);
   try {
-    const result = await execute(root, executable, args);
+    const result = await execute(root, resolveCapnCommand(executable), args);
     return { published: true, adapter: profile, output: digestOutput(result.stdout || result.stderr || "capn chart completed") };
   } catch (error) {
     if (error instanceof WaymarkError) {
@@ -155,7 +202,7 @@ export async function publish(
 /**
  * The two-phase discovery router: structural questions (who calls / where is /
  * entrypoints) are answered by the in-process Tree-sitter WASM AST; everything
- * else falls through to Capn's charted semantic memory. A clean miss is a miss —
+ * else falls through to Capn's charted lexical memory. A clean miss is a miss —
  * the router never guesses.
  */
 export async function ask(
@@ -186,9 +233,8 @@ export async function ask(
   // when the store is uninitialized or in embedding mode.
   assertLexicalStore(root);
 
-  // Semantic fallback: Capn charted memory via executable.
   try {
-    const result = await execute(root, executable, ["ask", question]);
+    const result = await execute(root, resolveCapnCommand(executable), ["ask", question]);
     const stdout = (result.stdout || "").trim();
     if (stdout && !stdout.startsWith("No charted answer.")) {
       try {
@@ -213,4 +259,54 @@ export async function ask(
       error: digestOutput(`${candidate.code ?? "CAPN_ERROR"}: ${candidate.stderr || candidate.message || "Capn ask failed"}`),
     };
   }
+}
+
+// ---------------------------------------------------------------------------
+// Full wrapped Capn command surface (the lexical-only fork's CLI): bounded
+// output, typed envelopes, same fail-closed posture.
+// ---------------------------------------------------------------------------
+
+async function runCapnSimple(root: string, executable: string, args: readonly string[]): Promise<{ ok: boolean; exitCode: number; output: string }> {
+  try {
+    const result = await execute(root, resolveCapnCommand(executable), args);
+    return { ok: true, exitCode: 0, output: digestOutput(result.stdout || result.stderr || "", MAX_OUTPUT_LARGE) };
+  } catch (error) {
+    const candidate = error as { message?: string; stdout?: string; stderr?: string; code?: string | number };
+    const detail = candidate.stderr || candidate.stdout || candidate.message || "capn command failed";
+    return {
+      ok: false,
+      exitCode: typeof candidate.code === "number" ? candidate.code : 1,
+      output: digestOutput(detail, MAX_OUTPUT_LARGE),
+    };
+  }
+}
+
+/** Delete one chart entry by id. */
+export async function unchart(root: string, executable: string, id: string): Promise<Record<string, unknown>> {
+  const result = await runCapnSimple(root, executable, ["unchart", id]);
+  return { waymark: 1, kind: "unchart", ok: result.ok, exitCode: result.exitCode, ...(result.ok ? { output: result.output } : { error: result.output }) };
+}
+
+/** Delete every chart entry backed by one file. */
+export async function bust(root: string, executable: string, file: string): Promise<Record<string, unknown>> {
+  const result = await runCapnSimple(root, executable, ["bust", file]);
+  return { waymark: 1, kind: "bust", ok: result.ok, exitCode: result.exitCode, ...(result.ok ? { output: result.output } : { error: result.output }) };
+}
+
+/** Delete every chart entry whose backing files changed or vanished. */
+export async function prune(root: string, executable: string): Promise<Record<string, unknown>> {
+  const result = await runCapnSimple(root, executable, ["prune"]);
+  return { waymark: 1, kind: "prune", ok: result.ok, exitCode: result.exitCode, ...(result.ok ? { output: result.output } : { error: result.output }) };
+}
+
+/** List charted entries, human-readable. */
+export async function listEntries(root: string, executable: string): Promise<Record<string, unknown>> {
+  const result = await runCapnSimple(root, executable, ["list"]);
+  return { waymark: 1, kind: "list", ok: result.ok, exitCode: result.exitCode, ...(result.ok ? { output: result.output } : { error: result.output }) };
+}
+
+/** Print the ask-first charting contract. */
+export async function context(root: string, executable: string): Promise<Record<string, unknown>> {
+  const result = await runCapnSimple(root, executable, ["context"]);
+  return { waymark: 1, kind: "context", ok: result.ok, exitCode: result.exitCode, ...(result.ok ? { output: result.output } : { error: result.output }) };
 }

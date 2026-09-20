@@ -6,7 +6,7 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { AdapterProfile, WaymarkError } from "./types.js";
 import { repoRoot } from "./paths.js";
-import { ask as capnAsk, publish } from "./capnAdapter.js";
+import { ask as capnAsk, publish, unchart, bust, prune, listEntries, context } from "./capnAdapter.js";
 import { discoverSymbolsInFile } from "./astExtractor.js";
 
 interface ParsedArgs {
@@ -82,7 +82,9 @@ function resolveProfile(parsed: ParsedArgs): AdapterProfile {
 }
 
 function resolveCapnExecutable(parsed: ParsedArgs): string {
-  return parsed.values.get("capn-executable") ?? process.env.WAYMARK_CAPN_EXECUTABLE ?? "capn";
+  // Empty string = auto-resolution: the bundled @paragon-ux/capn-hook CLI when
+  // installed, otherwise `capn` on PATH.
+  return parsed.values.get("capn-executable") ?? process.env.WAYMARK_CAPN_EXECUTABLE ?? "";
 }
 
 async function runCommand(command: string, rawArgs: readonly string[]): Promise<CommandResult> {
@@ -102,12 +104,14 @@ async function runCommand(command: string, rawArgs: readonly string[]): Promise<
         "  discover-symbols --path <repository-relative-file> [--language typescript|python]",
         "  ask <question> [--profile capn-cli|none] [--capn-executable <path>]",
         "  chart --question <q> --answer <a> --files <a,b> [--profile capn-cli|none] [--capn-executable <path>]",
+        "  unchart <id> | bust <path> | prune | list | context",
         "  mcp (starts the stdio MCP discovery server)",
         "",
         "Explicit wrappers (same engine, one command per action):",
-        "  waymark-ask <question> | waymark-discover --path <f> | waymark-chart ... | waymark-mcp",
+        "  waymark-ask | waymark-discover | waymark-chart | waymark-unchart",
+        "  waymark-bust | waymark-prune | waymark-list | waymark-context | waymark-mcp",
         "",
-        "Env: WAYMARK_CAPN_PROFILE (capn-cli|none, default capn-cli), WAYMARK_CAPN_EXECUTABLE (default 'capn')",
+        "Env: WAYMARK_CAPN_PROFILE (capn-cli|none, default capn-cli), WAYMARK_CAPN_EXECUTABLE (optional override; default: bundled lexical-only capn-hook)",
       ].join("\n"),
     };
   }
@@ -129,6 +133,30 @@ async function runCommand(command: string, rawArgs: readonly string[]): Promise<
     const profile = resolveProfile(parsed);
     const result = await publish(root, profile, resolveCapnExecutable(parsed), question, answer, files);
     return { value: result, exitCode: result.published === false && profile === "capn-cli" ? 3 : 0 };
+  }
+
+  if (command === "unchart") {
+    const id = parsed.positionals[0];
+    if (!id) throw new WaymarkError("MISSING_ARGUMENT", "unchart requires an id");
+    return { value: await unchart(root, resolveCapnExecutable(parsed), id) };
+  }
+
+  if (command === "bust") {
+    const file = parsed.positionals[0];
+    if (!file) throw new WaymarkError("MISSING_ARGUMENT", "bust requires a repository-relative path");
+    return { value: await bust(root, resolveCapnExecutable(parsed), file) };
+  }
+
+  if (command === "prune") {
+    return { value: await prune(root, resolveCapnExecutable(parsed)) };
+  }
+
+  if (command === "list") {
+    return { value: await listEntries(root, resolveCapnExecutable(parsed)) };
+  }
+
+  if (command === "context") {
+    return { value: await context(root, resolveCapnExecutable(parsed)) };
   }
 
   if (command === "mcp") {

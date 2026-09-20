@@ -6,7 +6,7 @@ through a **two-phase router** — no plugin choice, no index to build, no embed
 | Phase | Engine | Answers | Properties |
 | :--- | :--- | :--- | :--- |
 | **Symbolic** | In-process Tree-sitter WASM AST (30+ grammars) | *Who calls `verifySignature`? Where is it declared? What are the entrypoints?* | 100% precision, millisecond-range parses, exact 1-indexed line spans |
-| **Semantic** | Capn charted memory (SQLite FTS5 lexical recall, no embedding model) | *How does authentication work here?* | Charted answers with backing file references |
+| **Semantic** | Capn charted memory via the **lexical-only fork** ([`@paragon-ux/capn-hook`](https://github.com/paragon-ux/capn-hook): BM25/FTS5, no embeddings, no hooks) | *How does authentication work here?* | Charted answers with backing file references, content-hash staleness |
 
 The router decides intent from the question: structural queries (`who calls`, `entrypoints`,
 `trace X`) go to the AST; conceptual questions go to charted memory; **misses fall through
@@ -42,14 +42,28 @@ node dist/src/cli.js ask "Who calls capnChartArgs?"
 node dist/src/cli.js ask "Where is function publish declared?"
 node dist/src/cli.js ask --profile none "anything"   # deterministic miss (no external calls)
 
-# Chart an answer into Capn memory (profile none = no-op)
+# Full wrapped Capn chart-store surface (bundled lexical-only fork, no PATH needed)
 node dist/src/cli.js chart --question "<q>" --answer "<a>" --files "a.ts,b.ts"
+node dist/src/cli.js unchart <id>
+node dist/src/cli.js bust <path>
+node dist/src/cli.js prune
+node dist/src/cli.js list
+node dist/src/cli.js context
 ```
 
+Explicit wrapper bins (one action per command): `waymark`, `waymark-ask`,
+`waymark-discover`, `waymark-chart`, `waymark-unchart`, `waymark-bust`,
+`waymark-prune`, `waymark-list`, `waymark-context`, `waymark-mcp`.
+
 Env: `WAYMARK_CAPN_PROFILE` (`capn-cli` | `none`, default `capn-cli`),
-`WAYMARK_CAPN_EXECUTABLE` (default `capn`). The library and CLI work with or without a
-Git repository — `repoRoot()` resolves `git rev-parse --show-toplevel` and falls back to
-the process cwd.
+`WAYMARK_CAPN_EXECUTABLE` (optional override; default: the bundled
+`@paragon-ux/capn-hook` CLI run in-process — no PATH dependency). The library and CLI
+work with or without a Git repository — `repoRoot()` resolves
+`git rev-parse --show-toplevel` and falls back to the process cwd.
+
+The semantic phase is **deterministic by construction**: it invokes the lexical-only
+capn fork and refuses any store configured for embedding mode
+(`CAPN_STORE_UNINITIALIZED` / `CAPN_NON_DETERMINISTIC_MODE`, fail-closed).
 
 ### MCP (stdio)
 

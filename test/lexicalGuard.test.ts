@@ -67,9 +67,9 @@ test("ask() refuses the semantic fallback without a lexical store (AST path unaf
     (error: any) => error.code === "CAPN_NON_DETERMINISTIC_MODE",
   );
 
-  // Lexical store: the guard passes and the real capn CLI decides (hit/miss/error,
+  // Lexical store: the guard passes and the bundled fork decides (hit/miss/error,
   // but never the mode error).
   fs.writeFileSync(path.join(repo, ".capn", "config.json"), '{"embedding": false}');
-  const result = await ask(repo, "capn-cli", "capn", "How does authentication work in this project?");
+  const result = await ask(repo, "capn-cli", "", "How does authentication work in this project?");
   assert.ok(result.status === "miss" || result.status === "error", `unexpected status: ${result.status}`);
 });

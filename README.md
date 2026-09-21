@@ -90,6 +90,10 @@ Without a global install, prefix any wrapper with `npx --package waymark-engine`
 (e.g. `npx --package waymark-engine waymark-ask "..."`), or use the umbrella CLI:
 `waymark <command>`.
 
+Run `waymark help` (or bare `waymark`) for the full command list, or
+`waymark-context` for the routing contract showing which phrasing patterns
+route to the symbolic vs semantic phase.
+
 ## Commands
 
 | Wrapper | Umbrella CLI | Action |

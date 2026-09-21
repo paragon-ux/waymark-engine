@@ -26,6 +26,26 @@ test("detectAstIntent classifies structural queries correctly", () => {
 
   const i4 = detectAstIntent("Why does Waymark require contiguous verified prefixes?");
   assert.equal(i4.requiresParser, false);
+
+  // Natural phrasing variants for declarations and definitions
+  const i5 = detectAstIntent("Where is publish declared?");
+  assert.equal(i5.requiresParser, true);
+  assert.equal(i5.tool, "search_graph");
+  assert.equal(i5.query, "publish");
+
+  const i6 = detectAstIntent("Where is publish defined?");
+  assert.equal(i6.requiresParser, true);
+  assert.equal(i6.tool, "search_graph");
+  assert.equal(i6.query, "publish");
+
+  const i7 = detectAstIntent("declaration of publish");
+  assert.equal(i7.requiresParser, true);
+  assert.equal(i7.tool, "search_graph");
+  assert.equal(i7.query, "publish");
+
+  // Conceptual query must remain semantic fallback
+  const i8 = detectAstIntent("Where are payment webhooks handled?");
+  assert.equal(i8.requiresParser, false);
 });
 
 test("extractAstFromRepo parses Waymark repository using in-process WebAssembly", async () => {

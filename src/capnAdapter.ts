@@ -308,5 +308,32 @@ export async function listEntries(root: string, executable: string): Promise<Rec
 /** Print the ask-first charting contract. */
 export async function context(root: string, executable: string): Promise<Record<string, unknown>> {
   const result = await runCapnSimple(root, executable, ["context"]);
-  return { waymark: 1, kind: "context", ok: result.ok, exitCode: result.exitCode, ...(result.ok ? { output: result.output } : { error: result.output }) };
+  const routingHints = [
+    "<waymark-engine>",
+    "waymark-ask routes questions in two phases. Use exact phrasing for the symbolic (AST) phase:",
+    "",
+    "  Symbolic (exact AST match, 100% precision):",
+    "    \"Who calls <name>?\" / \"Callers of <name>\" / \"Callees of <name>\" / \"Trace <name>\"",
+    "    \"What calls <name>?\" / \"Which functions call <name>?\" / \"Call hierarchy for <name>\"",
+    "    \"Where is <name> declared?\" / \"Where is <name> defined?\" / \"Where is <name> implemented?\"",
+    "    \"Definition of <name>\" / \"Declaration of <name>\" / \"Implementation of <name>\"",
+    "    \"Find method <name>\" / \"Find function <name>\" / \"Find symbol <name>\"",
+    "    \"Line numbers of <name>\" / \"Method signature of <name>\" / \"Locate symbol <name>\"",
+    "    \"Entrypoints\" / \"Architecture\" / \"Overview of the repo\" / \"Hotspots\"",
+    "",
+    "  Semantic (BM25, charted memory):",
+    "    Any conceptual question, e.g. \"How does authentication work?\"",
+    "",
+    "  <name> must be an exact identifier (case-sensitive). If no AST hit, the query falls",
+    "  through to semantic. Use waymark-context to see this contract again.",
+    "</waymark-engine>",
+    "",
+  ].join("\n");
+  return { waymark: 1, kind: "context", ok: result.ok, exitCode: result.exitCode, ...(result.ok ? { output: routingHints + result.output } : { error: result.output }) };
+}
+
+/** Initialize the repository's Capn lexical store using the bundled fork. */
+export async function initCapn(root: string, executable?: string): Promise<Record<string, unknown>> {
+  const result = await runCapnSimple(root, executable ?? "", ["init"]);
+  return { waymark: 1, kind: "init", ok: result.ok, exitCode: result.exitCode, ...(result.ok ? { output: result.output } : { error: result.output }) };
 }

@@ -81,3 +81,13 @@ test("MCP discovery server exposes exactly the discovery tools", async () => {
   const names = (parsed.result?.tools ?? []).map((tool) => tool.name);
   assert.deepEqual(names.sort(), ["capn_ask", "capn_chart", "waymark_discover_symbols"]);
 });
+
+test("CLI init creates lexical Capn store with embedding false", () => {
+  const repo = setupRepo();
+  const result = runCli(repo, ["init"]);
+  assert.equal(result.code, 0, JSON.stringify(result));
+  assert.equal(result.value?.ok, true);
+  const cfg = JSON.parse(fs.readFileSync(path.join(repo, ".capn", "config.json"), "utf8"));
+  assert.equal(cfg.embedding, false);
+});
+

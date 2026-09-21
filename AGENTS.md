@@ -27,7 +27,7 @@ Invariants:
 
 ```bash
 npm install -g waymark-engine
-npx --package @paragon-ux/capn-hook capn init    # one-time store init per repo
+waymark-init                                     # one-time lexical store init per repo (or: waymark init)
 
 waymark-ask "Who calls verifyHop?"               # AST answer, no external process
 waymark-ask "How does authentication work?"      # charted-memory answer or miss

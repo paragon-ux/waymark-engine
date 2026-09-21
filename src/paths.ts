@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { TextDecoder } from "node:util";
-import { LineRange, StructuralSignature, WaymarkError } from "./types.js";
+import { LineRange, LineRangeLike, StructuralSignature, WaymarkError } from "./types.js";
 
 const decoder = new TextDecoder("utf-8", { fatal: true });
 
@@ -87,11 +87,33 @@ export function normalizedLines(text: string): string[] {
   return text.replace(/\r\n?/gu, "\n").split("\n");
 }
 
-export function extractRange(lines: readonly string[], range: LineRange): string {
-  if (!Number.isInteger(range.start) || !Number.isInteger(range.end) || range.start < 1 || range.end < range.start || range.end > lines.length) {
-    throw new WaymarkError("INVALID_RANGE", `Invalid line range ${range.start}-${range.end}`);
+export function normalizeRange(input: unknown): LineRange {
+  if (!input || typeof input !== "object") {
+    throw new WaymarkError("INVALID_RANGE", "Invalid range object");
   }
-  return lines.slice(range.start - 1, range.end).join("\n");
+  const obj = input as Record<string, unknown>;
+  const startRaw = obj.start ?? obj.startLine;
+  const endRaw = obj.end ?? obj.endLine;
+
+  const start = typeof startRaw === "object" && startRaw !== null && "line" in startRaw
+    ? (startRaw as { line: unknown }).line
+    : startRaw;
+  const end = typeof endRaw === "object" && endRaw !== null && "line" in endRaw
+    ? (endRaw as { line: unknown }).line
+    : endRaw;
+
+  if (typeof start !== "number" || typeof end !== "number" || !Number.isInteger(start) || !Number.isInteger(end)) {
+    throw new WaymarkError("INVALID_RANGE", `Invalid line range ${String(start)}-${String(end)}`);
+  }
+  return { start, end };
+}
+
+export function extractRange(lines: readonly string[], range: LineRange | LineRangeLike): string {
+  const normalized = normalizeRange(range);
+  if (normalized.start < 1 || normalized.end < normalized.start || normalized.end > lines.length) {
+    throw new WaymarkError("INVALID_RANGE", `Invalid line range ${normalized.start}-${normalized.end}`);
+  }
+  return lines.slice(normalized.start - 1, normalized.end).join("\n");
 }
 
 export function normalizeSpan(text: string): string {
@@ -124,21 +146,22 @@ export function structuralSignature(normalized: string): StructuralSignature {
  * same one the in-flight continuity ledger used, kept standalone because it is
  * the cheapest way to pin "this span said X" to a later integrity check.
  */
-export function anchorForRange(root: string, storedPath: string, range: LineRange): {
+export function anchorForRange(root: string, storedPath: string, range: LineRange | LineRangeLike): {
   fileSha256: string;
   normalizedSpanHash: string;
   normalizedSpanLen: number;
   spanLineCount: number;
   structuralSignature: StructuralSignature;
 } {
+  const normRange = normalizeRange(range);
   const file = readFileText(root, storedPath);
   const lines = normalizedLines(file.text);
-  const normalized = normalizeSpan(extractRange(lines, range));
+  const normalized = normalizeSpan(extractRange(lines, normRange));
   return {
     fileSha256: sha256(file.bytes),
     normalizedSpanHash: sha256(Buffer.from(normalized, "utf8")),
     normalizedSpanLen: Buffer.byteLength(normalized, "utf8"),
-    spanLineCount: range.end - range.start + 1,
+    spanLineCount: normRange.end - normRange.start + 1,
     structuralSignature: structuralSignature(normalized),
   };
 }

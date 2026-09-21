@@ -49,12 +49,28 @@ The engine ships prebuilt (`dist/`) — no build step for consumers.
 
 ```bash
 # Initialize the lexical Capn store once per repository (bundled fork)
-npx --package @paragon-ux/capn-hook capn init
+waymark-init                          # or: waymark init
 
 # One-shot symbol discovery (repository-relative file)
 waymark-discover --path src/index.ts [--language typescript|python]
 
 # Two-phase question router (AST first, charted memory second)
+# Use exact phrasing for the symbolic (AST) phase:
+#
+#   Symbolic (exact AST match, 100% precision):
+#     "Who calls <name>?" / "Callers of <name>" / "Callees of <name>" / "Trace <name>"
+#     "What calls <name>?" / "Which functions call <name>?" / "Call hierarchy for <name>"
+#     "Where is <name> declared?" / "Where is <name> defined?" / "Where is <name> implemented?"
+#     "Definition of <name>" / "Declaration of <name>" / "Implementation of <name>"
+#     "Find method <name>" / "Find function <name>" / "Find symbol <name>"
+#     "Line numbers of <name>" / "Method signature of <name>" / "Locate symbol <name>"
+#     "Entrypoints" / "Architecture" / "Overview of the repo" / "Hotspots"
+#
+#   Semantic (BM25, charted memory):
+#     Any conceptual question, e.g. "How does authentication work?"
+#
+#   <name> must be an exact identifier (case-sensitive). If no AST hit, the
+#   query falls through to semantic. Run `waymark-context` to see this contract.
 waymark-ask "Who calls verifyHop?"
 waymark-ask "How does authentication work in this project?"
 
@@ -79,6 +95,7 @@ Without a global install, prefix any wrapper with `npx --package waymark-engine`
 | Wrapper | Umbrella CLI | Action |
 | :--- | :--- | :--- |
 | `waymark` | — | umbrella CLI (all subcommands) |
+| `waymark-init` | `waymark init` | initialize the lexical Capn store |
 | `waymark-ask` | `waymark ask "<q>"` | two-phase question router |
 | `waymark-discover` | `waymark discover-symbols --path <f>` | AST symbol discovery |
 | `waymark-chart` | `waymark chart --question <q> --answer <a> --files <f>` | chart into Capn memory (prunes stale siblings first) |

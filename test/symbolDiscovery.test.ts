@@ -6,7 +6,9 @@ import { execFileSync } from "node:child_process";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { discoverSymbolsInFile } from "../src/astExtractor.js";
+import { anchorForRange, normalizeRange } from "../src/paths.js";
 import { McpServer } from "../src/mcp/server.js";
+
 
 function setupRepo(): string {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), "waymark-symbol-discovery-"));
@@ -95,3 +97,20 @@ test("Waymark structured discovery supports Python and fails closed at parser bo
     fs.rmSync(repo, { recursive: true, force: true });
   }
 });
+
+test("anchorForRange accepts flexible line range formats seamlessly", () => {
+  const repo = setupRepo();
+  try {
+    const a1 = anchorForRange(repo, "sample.ts", { start: 1, end: 2 });
+    assert.ok(a1.normalizedSpanHash);
+
+    const a2 = anchorForRange(repo, "sample.ts", { startLine: 1, endLine: 2 });
+    assert.equal(a2.normalizedSpanHash, a1.normalizedSpanHash);
+
+    const a3 = anchorForRange(repo, "sample.ts", { start: { line: 1 }, end: { line: 2 } });
+    assert.equal(a3.normalizedSpanHash, a1.normalizedSpanHash);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+

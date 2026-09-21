@@ -6,7 +6,7 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { AdapterProfile, WaymarkError } from "./types.js";
 import { repoRoot } from "./paths.js";
-import { ask as capnAsk, publish, unchart, bust, prune, listEntries, context } from "./capnAdapter.js";
+import { ask as capnAsk, initCapn, publish, unchart, bust, prune, listEntries, context } from "./capnAdapter.js";
 import { discoverSymbolsInFile } from "./astExtractor.js";
 
 interface ParsedArgs {
@@ -101,6 +101,7 @@ async function runCommand(command: string, rawArgs: readonly string[]): Promise<
     return {
       value: [
         "Waymark discovery engine (symbolic + semantic routing)",
+        "  init [--capn-executable <path>] (initialize lexical Capn store)",
         "  discover-symbols --path <repository-relative-file> [--language typescript|python]",
         "  ask <question> [--profile capn-cli|none] [--capn-executable <path>]",
         "  chart --question <q> --answer <a> --files <a,b> [--profile capn-cli|none] [--capn-executable <path>]",
@@ -108,12 +109,16 @@ async function runCommand(command: string, rawArgs: readonly string[]): Promise<
         "  mcp (starts the stdio MCP discovery server)",
         "",
         "Explicit wrappers (same engine, one command per action):",
-        "  waymark-ask | waymark-discover | waymark-chart | waymark-unchart",
+        "  waymark-init | waymark-ask | waymark-discover | waymark-chart | waymark-unchart",
         "  waymark-bust | waymark-prune | waymark-list | waymark-context | waymark-mcp",
         "",
         "Env: WAYMARK_CAPN_PROFILE (capn-cli|none, default capn-cli), WAYMARK_CAPN_EXECUTABLE (optional override; default: bundled lexical-only capn-hook)",
       ].join("\n"),
     };
+  }
+
+  if (command === "init") {
+    return { value: await initCapn(root, resolveCapnExecutable(parsed)) };
   }
 
   if (command === "discover-symbols") {
@@ -194,4 +199,16 @@ async function main(): Promise<void> {
   await runCli(process.argv[2] ?? "help", process.argv.slice(3));
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url))) await main();
+function isDirectExecution(): boolean {
+  if (!process.argv[1]) return false;
+  try {
+    const scriptPath = fs.realpathSync.native(process.argv[1]);
+    const modulePath = fs.realpathSync.native(fileURLToPath(import.meta.url));
+    if (scriptPath === modulePath) return true;
+  } catch {
+    // Fallback if realpathSync throws
+  }
+  return path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url));
+}
+
+if (isDirectExecution()) await main();

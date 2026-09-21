@@ -24,7 +24,7 @@ npm run verify   # build + 17-test suite (success AND fail-closed paths)
 
 ```bash
 npm install -g waymark-engine
-npx --package @paragon-ux/capn-hook capn init   # one-time store init per repo
+waymark-init                                    # one-time lexical store init per repo (or: waymark init)
 
 waymark-ask "Who calls verifyHop?"
 waymark-discover --path src/index.ts

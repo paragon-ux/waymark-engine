@@ -13,6 +13,7 @@
   },
   "bin": {
     "waymark": "dist/src/cli.js",
+    "waymark-init": "bin/waymark-init.mjs",
     "waymark-ask": "bin/waymark-ask.mjs",
     "waymark-discover": "bin/waymark-discover.mjs",
     "waymark-chart": "bin/waymark-chart.mjs",

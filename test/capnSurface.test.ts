@@ -5,7 +5,8 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { createRequire } from "node:module";
 import test from "node:test";
-import { ask, publish, unchart, bust, prune, listEntries, context } from "../src/capnAdapter.js";
+import { ask, initCapn, publish, unchart, bust, prune, listEntries, context } from "../src/capnAdapter.js";
+
 
 const require = createRequire(import.meta.url);
 
@@ -67,3 +68,13 @@ test("unchart rejects unknown ids with a typed error", async () => {
   assert.equal(result.ok, false);
   assert.match(String(result.error), /unknown id/);
 });
+
+test("initCapn initializes store in deterministic lexical mode", async () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "waymark-init-test-"));
+  execFileSync("git", ["init", "-q", "-b", "main"], { cwd: repo });
+  const result = await initCapn(repo);
+  assert.equal(result.ok, true);
+  const cfg = JSON.parse(fs.readFileSync(path.join(repo, ".capn", "config.json"), "utf8"));
+  assert.equal(cfg.embedding, false);
+});
+

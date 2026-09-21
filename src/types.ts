@@ -7,6 +7,13 @@ export interface LineRange {
   end: number;
 }
 
+export type LineRangeLike =
+  | LineRange
+  | { startLine: number; endLine: number }
+  | { start: { line: number }; end: { line: number } }
+  | { [key: string]: unknown };
+
+
 export interface StructuralSignature {
   firstHash: string;
   lastHash: string;

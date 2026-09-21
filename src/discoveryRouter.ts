@@ -58,19 +58,29 @@ export function detectAstIntent(question: string): AstIntent {
     lower.includes("where is function") ||
     lower.includes("where is class") ||
     lower.includes("where is interface") ||
+    lower.includes("find method") ||
+    lower.includes("find function") ||
     lower.includes("definition of") ||
+    lower.includes("declaration of") ||
+    lower.includes("implementation of") ||
     lower.includes("declared in") ||
+    lower.includes("defined in") ||
     lower.includes("line numbers of") ||
     lower.includes("ast node") ||
     lower.includes("method signature") ||
     lower.includes("find symbol") ||
-    lower.includes("locate symbol");
+    lower.includes("locate symbol") ||
+    /\bwhere\s+is\s+([A-Za-z0-9_]+)\s+(declared|defined|implemented|located)\b/i.test(q) ||
+    /\bwhere\s+is\s+([A-Za-z0-9_]+)\s*\??$/i.test(q) ||
+    /\b(declared|defined|implemented)\s+in\b/i.test(q) ||
+    /\b(declaration|definition|implementation)\s+of\b/i.test(q);
 
   if (symbolMatch) {
     const tokens = q.match(/[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)*/g) || [];
     const stopWords = new Set([
-      "where", "is", "method", "function", "class", "interface", "definition",
-      "of", "declared", "in", "the", "find", "symbol", "lines", "numbers", "locate"
+      "where", "is", "are", "method", "function", "class", "interface", "definition", "declaration",
+      "implementation", "of", "declared", "defined", "implemented", "located", "in", "the", "find",
+      "symbol", "lines", "numbers", "locate", "signature"
     ]);
     const candidates = tokens.filter(t => !stopWords.has(t.toLowerCase()) && t.length > 1);
     const queryTerm = candidates[0] ?? q;

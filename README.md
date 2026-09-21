@@ -7,17 +7,22 @@
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![recall](https://img.shields.io/badge/recall-lexical%20BM25%20(no%20embeddings)-informational)](https://github.com/paragon-ux/capn-hook)
 
-A single-process, zero-daemon discovery engine that answers one-shot code questions
-through a **two-phase router** — no plugin choice, no index to build, no embeddings:
+Ask your codebase a question in plain English. Get an exact answer — file,
+symbol, and line span — in milliseconds, without re-reading thousands of tokens.
 
-| Phase | Engine | Answers | Properties |
-| :--- | :--- | :--- | :--- |
-| **Symbolic** | In-process Tree-sitter WASM AST (30+ grammars) | *Who calls `verifySignature`? Where is it declared? What are the entrypoints?* | 100% precision, millisecond-range parses, exact 1-indexed line spans |
-| **Semantic** | Capn charted memory via the **lexical-only fork** ([`@paragon-ux/capn-hook`](https://github.com/paragon-ux/capn-hook): BM25/FTS5, no embeddings, no hooks) | *How does authentication work here?* | Charted answers with backing file references, content-hash staleness |
+Built for AI coding agents: one-shot discovery, no plugin choice, no index to
+build, no embeddings, no daemon.
 
-The router decides intent from the question: structural queries (`who calls`, `entrypoints`,
-`trace X`) go to the AST; conceptual questions go to charted memory; **misses fall through
-cleanly instead of hallucinating**.
+| You ask | You get |
+| :--- | :--- |
+| *"Who calls `verifyToken`?"* | Every caller, exact line numbers, 100% precision |
+| *"Where is `PaymentService` declared?"* | File path, line span, structural signature |
+| *"How does authentication work?"* | The files that answer it — charted, staleness-checked |
+| *"Entrypoints"* | The architecture's front doors |
+
+Structural questions go to an in-process AST parser (30+ languages, exact
+match). Conceptual questions go to BM25 charted memory. Misses fall through
+cleanly — the engine says "I don't know" rather than hallucinating.
 
 ## Why this exists
 
@@ -26,10 +31,10 @@ continuity ledger was removed). Its design goal: an agent should never pay 10,00
 tokens of blind re-reading when a sub-second in-process scan answers the question with
 exact file, symbol, and line spans — and it should say "miss" rather than guess.
 
-The semantic phase is **deterministic by construction**: it invokes the lexical-only
-capn fork bundled as a runtime dependency (no PATH lookup, no Windows shim games) and
-refuses any store configured for embedding mode
-(`CAPN_STORE_UNINITIALIZED` / `CAPN_NON_DETERMINISTIC_MODE`, fail-closed).
+The semantic phase is **deterministic by construction**: it invokes the bundled
+BM25 store as a runtime dependency and refuses any store configured for
+embedding mode (`CAPN_STORE_UNINITIALIZED` / `CAPN_NON_DETERMINISTIC_MODE`,
+fail-closed).
 
 ## Install
 

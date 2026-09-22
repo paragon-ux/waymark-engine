@@ -4,7 +4,7 @@ import { execFile, execFileSync } from "node:child_process";
 import { promisify } from "node:util";
 import { createRequire } from "node:module";
 import { AdapterProfile, PublicationResult, WaymarkError } from "./types.js";
-import { detectAstIntent, queryWasmAst } from "./discoveryRouter.js";
+import { collectRepoPaths, detectAstIntent, detectLiteralIntent, matchLiteralPath, queryWasmAst } from "./discoveryRouter.js";
 
 const require = createRequire(import.meta.url);
 const execFileAsync = promisify(execFile);
@@ -225,6 +225,22 @@ export async function ask(
         provider: "wasm-ast",
         status: "hit",
         result: digestOutput(astResult.output),
+      };
+    }
+  }
+
+  // Tier 2: literal filename/path short-circuit (deterministic, zero-dep).
+  // Intercepts exact file references before they dilute into BM25.
+  const literal = detectLiteralIntent(question);
+  if (literal.isLiteral) {
+    const matches = matchLiteralPath(literal.normalized, collectRepoPaths(root));
+    if (matches.length > 0) {
+      return {
+        waymark: 1,
+        kind: "ask",
+        provider: "literal-path",
+        status: "hit",
+        result: matches.map((m) => `${m.file}\t[${m.kind}]`).join("\n"),
       };
     }
   }

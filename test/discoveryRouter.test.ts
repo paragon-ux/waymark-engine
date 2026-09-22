@@ -1,8 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { detectAstIntent, queryWasmAst } from "../src/discoveryRouter.js";
+import { collectRepoPaths, detectAstIntent, detectLiteralIntent, matchLiteralPath, queryWasmAst } from "../src/discoveryRouter.js";
 import { extractAstFromRepo } from "../src/astExtractor.js";
 import { ask } from "../src/capnAdapter.js";
 
@@ -84,4 +86,57 @@ test("ask() automatically delegates AST queries to in-process Tree-sitter WASM",
   assert.equal(symbolRes.status, "hit");
   assert.equal(symbolRes.provider, "wasm-ast");
   assert.ok(typeof symbolRes.result === "string" && symbolRes.result.includes("src/capnAdapter.ts"));
+});
+
+function literalWorkspace(): string {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "waymark-literal-"));
+  fs.mkdirSync(path.join(repo, "src", "auth"), { recursive: true });
+  fs.mkdirSync(path.join(repo, "src", "db"), { recursive: true });
+  fs.writeFileSync(path.join(repo, "src", "auth", "utils.ts"), "export const auth = 1\n");
+  fs.writeFileSync(path.join(repo, "src", "db", "utils.ts"), "export const db = 1\n");
+  fs.writeFileSync(path.join(repo, "src", "sample.ts"), "export const sample = 1\n");
+  fs.writeFileSync(path.join(repo, ".gitignore"), "node_modules/\n");
+  fs.writeFileSync(path.join(repo, "Dockerfile"), "FROM node:22\n");
+  return repo;
+}
+
+test("detectLiteralIntent classifies literal queries and leaves natural language alone", () => {
+  assert.deepEqual(detectLiteralIntent("sample.ts"), { isLiteral: true, normalized: "sample.ts" });
+  assert.equal(detectLiteralIntent("src/auth/utils.ts").isLiteral, true);
+  assert.equal(detectLiteralIntent(".gitignore").isLiteral, true);
+  assert.equal(detectLiteralIntent("Dockerfile").isLiteral, true);
+  assert.equal(detectLiteralIntent("Where is function capnChartArgs declared?").isLiteral, false);
+  assert.equal(detectLiteralIntent("payment webhooks").isLiteral, false);
+});
+
+test("collectRepoPaths + matchLiteralPath resolve literals and fail closed on ambiguity", () => {
+  const repo = literalWorkspace();
+  const paths = collectRepoPaths(repo);
+
+  assert.ok(paths.includes("src/sample.ts"));
+  assert.ok(paths.includes("src/auth/utils.ts"));
+  assert.ok(paths.includes("src/db/utils.ts"));
+  assert.ok(paths.includes(".gitignore"));
+  assert.ok(paths.includes("Dockerfile"));
+
+  assert.deepEqual(matchLiteralPath("sample.ts", paths), [{ file: "src/sample.ts", kind: "basename" }]);
+  assert.deepEqual(matchLiteralPath(".gitignore", paths), [{ file: ".gitignore", kind: "exact" }]);
+  assert.deepEqual(matchLiteralPath("Dockerfile", paths), [{ file: "Dockerfile", kind: "exact" }]);
+  assert.deepEqual(matchLiteralPath("src/auth/utils.ts", paths), [{ file: "src/auth/utils.ts", kind: "exact" }]);
+  assert.deepEqual(matchLiteralPath("auth/utils.ts", paths), [{ file: "src/auth/utils.ts", kind: "suffix" }]);
+  assert.deepEqual(matchLiteralPath("utils.ts", paths), []);
+});
+
+test("matchLiteralPath prioritizes a case-sensitive exact match", () => {
+  const paths = ["src/foo.ts", "src/Foo.ts"];
+  assert.deepEqual(matchLiteralPath("src/Foo.ts", paths), [{ file: "src/Foo.ts", kind: "exact" }]);
+  assert.deepEqual(matchLiteralPath("src/foo.ts", paths), [{ file: "src/foo.ts", kind: "exact" }]);
+});
+
+test("ask() short-circuits a literal filename to provider literal-path", async () => {
+  const repo = literalWorkspace();
+  const res = await ask(repo, "capn-cli", "capn", ".gitignore");
+  assert.equal(res.status, "hit");
+  assert.equal(res.provider, "literal-path");
+  assert.ok(typeof res.result === "string" && res.result.includes(".gitignore"));
 });

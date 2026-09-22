@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import { extractAstFromRepo, type AstExtractionResult } from "./astExtractor.js";
 
 export interface AstIntent {
@@ -178,4 +180,132 @@ export async function queryWasmAst(
   } catch (error) {
     return { hit: false, output: error instanceof Error ? error.message : String(error) };
   }
+}
+
+// ---------------------------------------------------------------------------
+// Tier 2: literal filename / path router (deterministic, zero-dependency)
+//
+// Bridges the filename blind spot inherited from BM25 tokenization: a bare
+// literal like "sample.ts", "src/api/webhooks.ts", ".gitignore", or "Dockerfile"
+// never reaches the statistical engine. Matching is a fail-closed rule cascade
+// (never guess on ambiguity) over an in-memory, memoized path array.
+// ---------------------------------------------------------------------------
+
+const LITERAL_EXTENSIONS = new Set<string>([
+  "ts", "tsx", "js", "jsx", "mjs", "cjs", "cts", "mts", "py", "pyi", "ipynb",
+  "go", "rs", "java", "kt", "kts", "scala", "c", "h", "cpp", "hpp", "cc",
+  "cxx", "m", "cs", "rb", "php", "swift", "sh", "bash", "zsh", "fish", "ps1",
+  "bat", "cmd", "lua", "zig", "dart", "el", "ex", "exs", "elm", "ml", "mli",
+  "res", "sol", "json", "jsonc", "json5", "yaml", "yml", "toml", "ini", "cfg",
+  "conf", "properties", "editorconfig", "md", "mdx", "rst", "txt", "adoc",
+  "css", "scss", "sass", "less", "svg", "xml", "html", "graphql", "gql",
+  "proto", "prisma", "csv", "tsv", "tf", "tfvars", "hcl", "mod", "sum", "lock",
+  "mk", "sql",
+]);
+
+const NO_EXT_FILENAMES = new Set<string>([
+  "dockerfile", "makefile", "jenkinsfile", "procfile", "justfile",
+]);
+
+export interface LiteralIntent {
+  isLiteral: boolean;
+  normalized: string;
+}
+
+export function detectLiteralIntent(question: string): LiteralIntent {
+  const q = question.trim().replace(/^['"`]+|['"`]+$/g, "");
+  const normalized = q.replace(/\\/g, "/").replace(/^\.\//, "");
+  const lower = normalized.toLowerCase();
+
+  const hasSep = normalized.includes("/");
+  const extMatch = lower.match(/\.([a-z0-9]+)[?!.,;)]*$/);
+  const hasExt = extMatch !== null && LITERAL_EXTENSIONS.has(extMatch[1] ?? "");
+  const leadingDot = lower.startsWith(".");
+  const noExt = NO_EXT_FILENAMES.has(lower);
+
+  return { isLiteral: hasSep || hasExt || leadingDot || noExt, normalized };
+}
+
+const SKIP_DIRS = new Set<string>([
+  "node_modules", "dist", "out", "build", "coverage", "next", "nuxt",
+  "capn", "waymark", "qmd", "claude", "codex", "zed",
+  "eval", "experiments", "evidence", "sandbox", "tmp", "vendor", "venv",
+  "__pycache__",
+]);
+
+let pathCache: { root: string; at: number; paths: string[] } | null = null;
+
+export function collectRepoPaths(root: string, maxAgeMs = 30_000): string[] {
+  if (pathCache && pathCache.root === root && Date.now() - pathCache.at < maxAgeMs) {
+    return pathCache.paths;
+  }
+
+  const base = path.resolve(root);
+  const out: string[] = [];
+  const walk = (dir: string) => {
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const ent of entries) {
+      const full = path.join(dir, ent.name);
+      if (ent.isDirectory()) {
+        if (!(ent.name.startsWith(".") || SKIP_DIRS.has(ent.name))) {
+          walk(full);
+        }
+      } else if (ent.isFile()) {
+        if (ent.name === ".DS_Store") continue;
+        if (ent.name.endsWith(".log") || ent.name.endsWith(".tsbuildinfo")) continue;
+        out.push(path.relative(base, full).replace(/\\/g, "/"));
+      }
+    }
+  };
+  walk(base);
+
+  pathCache = { root, at: Date.now(), paths: out };
+  return out;
+}
+
+export type LiteralMatchKind = "exact" | "basename" | "suffix" | "substring";
+
+export interface LiteralMatch {
+  file: string;
+  kind: LiteralMatchKind;
+}
+
+export function matchLiteralPath(normalized: string, paths: string[]): LiteralMatch[] {
+  const lower = normalized.toLowerCase();
+
+  const exact = paths.filter((p) => p.toLowerCase() === lower);
+  if (exact.length > 0) {
+    const strict = exact.find((p) => p === normalized);
+    return strict
+      ? [{ file: strict, kind: "exact" }]
+      : exact.map((file) => ({ file, kind: "exact" }));
+  }
+
+  const baseName = lower.split("/").pop() ?? "";
+  const basenames = paths.filter(
+    (p) => (p.split("/").pop() ?? "").toLowerCase() === baseName
+  );
+  if (basenames.length === 1) {
+    const file = basenames[0];
+    if (file !== undefined) return [{ file, kind: "basename" }];
+  }
+
+  const suffixes = paths.filter((p) => p.toLowerCase().endsWith(lower));
+  if (suffixes.length === 1) {
+    const file = suffixes[0];
+    if (file !== undefined) return [{ file, kind: "suffix" }];
+  }
+
+  const subs = paths.filter((p) => p.toLowerCase().includes(lower));
+  if (subs.length === 1) {
+    const file = subs[0];
+    if (file !== undefined) return [{ file, kind: "substring" }];
+  }
+
+  return [];
 }

@@ -2,7 +2,7 @@
 
 [![npm version](https://img.shields.io/npm/v/waymark-engine)](https://www.npmjs.com/package/waymark-engine)
 [![CI](https://github.com/paragon-ux/waymark-engine/actions/workflows/verify.yml/badge.svg)](https://github.com/paragon-ux/waymark-engine/actions/workflows/verify.yml)
-[![tests](https://img.shields.io/badge/tests-17%2F17-brightgreen)](https://github.com/paragon-ux/waymark-engine)
+[![tests](https://img.shields.io/badge/tests-24%2F24-brightgreen)](https://github.com/paragon-ux/waymark-engine)
 [![node](https://img.shields.io/badge/node-%3E%3D22-339933?logo=node.js)](https://nodejs.org)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![recall](https://img.shields.io/badge/recall-lexical%20BM25%20(no%20embeddings)-informational)](https://github.com/paragon-ux/capn-hook)
@@ -20,9 +20,12 @@ build, no embeddings, no daemon.
 | *"How does authentication work?"* | The files that answer it — charted, staleness-checked |
 | *"Entrypoints"* | The architecture's front doors |
 
-Structural questions go to an in-process AST parser (30+ languages, exact
-match). Conceptual questions go to BM25 charted memory. Misses fall through
-cleanly — the engine says "I don't know" rather than hallucinating.
+Questions route through three deterministic tiers: structural questions hit an
+in-process AST parser (30+ languages, exact match); literal filename/path
+queries (`sample.ts`, `src/api/webhooks.ts`, `.gitignore`) short-circuit a
+zero-dependency in-memory matcher; and conceptual questions go to BM25 charted
+memory. Misses fall through cleanly — the engine says "I don't know" rather
+than hallucinating.
 
 ## Why this exists
 
@@ -59,7 +62,7 @@ waymark-init                          # or: waymark init
 # One-shot symbol discovery (repository-relative file)
 waymark-discover --path src/index.ts [--language typescript|python]
 
-# Two-phase question router (AST first, charted memory second)
+# Three-tier question router (AST, literal filename/path, then BM25 memory)
 # Use exact phrasing for the symbolic (AST) phase:
 #
 #   Symbolic (exact AST match, 100% precision):
@@ -71,8 +74,11 @@ waymark-discover --path src/index.ts [--language typescript|python]
 #     "Line numbers of <name>" / "Method signature of <name>" / "Locate symbol <name>"
 #     "Entrypoints" / "Architecture" / "Overview of the repo" / "Hotspots"
 #
-#   Semantic (BM25, charted memory):
-#     Any conceptual question, e.g. "How does authentication work?"
+  #   Literal (filename/path, exact match):
+  #     "sample.ts" / "src/api/webhooks.ts" / ".gitignore"
+  #
+  #   Semantic (BM25, charted memory):
+  #     Any conceptual question, e.g. "How does authentication work?"
 #
 #   <name> must be an exact identifier (case-sensitive). If no AST hit, the
 #   query falls through to semantic. Run `waymark-context` to see this contract.
@@ -160,11 +166,18 @@ tamper-evidence primitives for later integration:
 
 Tools: `capn_ask`, `capn_chart`, `waymark_discover_symbols`. Resource: `capn://status`.
 
-## Known limitation
+## Routing
 
-BM25 lexical recall is weak on filename-style queries — `ask "sample.ts"` tends to miss,
-while `ask "payment webhooks"` hits. Chart (and ask with) plain-language questions; this
-is a tokenizer quirk inherited from QMD, tracked as a future fork improvement.
+Three deterministic tiers, in order:
+
+1. **Symbolic (AST)** — exact identifier and call-graph queries hit the in-process
+   Tree-sitter WASM parser (100% precision).
+2. **Literal** — bare filenames and paths (`sample.ts`, `src/api/webhooks.ts`,
+   `.gitignore`, `Dockerfile`) resolve against an in-memory path index, fail-closed
+   on ambiguity (never guesses).
+3. **Semantic (BM25)** — conceptual questions fall back to charted FTS5 memory.
+
+A clean miss is a miss — the engine never guesses.
 
 ## Related
 

@@ -315,9 +315,9 @@ export async function context(root: string, executable: string): Promise<Record<
   const result = await runCapnSimple(root, executable, ["context"]);
   const routingHints = [
     "<waymark-engine>",
-    "waymark-ask routes questions in two phases. Use exact phrasing for the symbolic (AST) phase:",
+    "waymark-ask routes questions in two phases. Use exact phrasing for the symbolic (codedb) phase:",
     "",
-    "  Symbolic (exact AST match, 100% precision):",
+    "  Symbolic (exact codedb match, resolved call graph):",
     "    \"Who calls <name>?\" / \"Callers of <name>\" / \"Callees of <name>\" / \"Trace <name>\"",
     "    \"What calls <name>?\" / \"Which functions call <name>?\" / \"Call hierarchy for <name>\"",
     "    \"Where is <name> declared?\" / \"Where is <name> defined?\" / \"Where is <name> implemented?\"",
@@ -329,7 +329,7 @@ export async function context(root: string, executable: string): Promise<Record<
     "  Semantic (BM25, charted memory):",
     "    Any conceptual question, e.g. \"How does authentication work?\"",
     "",
-    "  <name> must be an exact identifier (case-sensitive). If no AST hit, the query falls",
+    "  <name> must be an exact identifier (case-sensitive). If no codedb hit, the query falls",
     "  through to semantic. Use waymark-context to see this contract again.",
     "</waymark-engine>",
     "",

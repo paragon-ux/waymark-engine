@@ -79,10 +79,10 @@ waymark-init                          # or: waymark init
 # One-shot symbol discovery (repository-relative file)
 waymark-discover --path src/index.ts [--language typescript|python]
 
-# Three-tier question router (AST, literal filename/path, then BM25 memory)
+# Three-tier question router (codedb, literal filename/path, then BM25 memory)
 # Use exact phrasing for the symbolic (codedb) phase:
 #
-#   Symbolic (exact AST match, 100% precision):
+#   Symbolic (exact codedb match, resolved call graph):
 #     "Who calls <name>?" / "Callers of <name>" / "Callees of <name>" / "Trace <name>"
 #     "What calls <name>?" / "Which functions call <name>?" / "Call hierarchy for <name>"
 #     "Where is <name> declared?" / "Where is <name> defined?" / "Where is <name> implemented?"
@@ -97,7 +97,7 @@ waymark-discover --path src/index.ts [--language typescript|python]
   #   Semantic (BM25, charted memory):
   #     Any conceptual question, e.g. "How does authentication work?"
 #
-#   <name> must be an exact identifier (case-sensitive). If no AST hit, the
+#   <name> must be an exact identifier (case-sensitive). If no codedb hit, the
 #   query falls through to semantic. Run `waymark-context` to see this contract.
 waymark-ask "Who calls verifyHop?"
 waymark-ask "How does authentication work in this project?"
@@ -147,7 +147,7 @@ Env: `WAYMARK_CAPN_PROFILE` (`capn-cli` | `none`, default `capn-cli`),
 
 ```ts
 import {
-  ask,                  // two-phase router (AST -> lexical charted memory)
+  ask,                  // two-phase router (codedb -> lexical charted memory)
   discoverSymbolsInFile,// one-file AST symbol discovery
   detectAstIntent,      // structural vs semantic intent
   publish, unchart, bust, prune, listEntries, context, // wrapped capn surface

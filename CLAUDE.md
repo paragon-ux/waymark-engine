@@ -1,9 +1,9 @@
 # CLAUDE.md — Waymark Engine
 
-Two-phase discovery engine for one-shot code questions: in-process Tree-sitter WASM AST
-for structural queries, Capn charted memory (lexical BM25, no embeddings — the bundled
-`@paragon-ux/capn-hook` fork) for semantic recall. Misses fall through cleanly; the
-router never guesses.
+Two-phase discovery engine for one-shot code questions: the deterministic codedb call
+graph (`@paragon-ux/codedb-core`, resolved and fail-closed) for structural queries, Capn
+charted memory (lexical BM25, no embeddings — the bundled `@paragon-ux/capn-hook` fork)
+for semantic recall. Misses fall through cleanly; the router never guesses.
 
 ## Dev loop
 

@@ -1,9 +1,10 @@
 # Waymark Engine — agent guide
 
-Waymark Engine is a two-phase discovery engine for one-shot code questions: an in-process
-Tree-sitter WASM AST for structural queries, and Capn charted memory (lexical BM25, no
-embeddings, via the bundled `@paragon-ux/capn-hook` fork) for semantic recall. A clean
-miss is a miss — never a guess.
+Waymark Engine is a two-phase discovery engine for one-shot code questions: the
+deterministic codedb call graph (`@paragon-ux/codedb-core`, resolved and fail-closed)
+for structural queries, and Capn charted memory (lexical BM25, no embeddings, via the
+bundled `@paragon-ux/capn-hook` fork) for semantic recall. A clean miss is a miss —
+never a guess.
 
 ## Working on this repo
 

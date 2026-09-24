@@ -27,11 +27,28 @@ match); literal filename/path queries (`sample.ts`, `src/api/webhooks.ts`,
 questions go to BM25 charted memory. Misses fall through cleanly — the engine
 says "I don't know" rather than hallucinating.
 
+## Why the symbolic tier uses a forked structural engine
+
+The structural phase previously used an in-process Tree-sitter WASM walker. A
+code review exposed three defects that produced silent misses and
+confidently-wrong answers:
+
+- **`src/`-only scanning** — code in `lib/`, `crates/*/src/`, or the repo root was missed.
+- **Bare-name call-graph collisions** — `Builder.build()` from unrelated classes merged into one bucket.
+- **Node-type string-matching gaps** — Rust `function_item` and Go `method_declaration` were never extracted.
+
+The fix is a fork of codedb (`@paragon-ux/codedb-core`), stripped to its
+deterministic structural core (the same play as the capn-hook fork). It scans the
+repo root, resolves the call graph fail-closed, and surfaces file-scoped
+candidates on a name collision instead of merging or guessing.
+`discoverSymbolsInFile` keeps `web-tree-sitter` for precise single-file symbol
+discovery (classes / methods / interfaces / types).
+
 ## Why this exists
 
 The engine is the extracted discovery half of the original Waymark project (the in-flight
 continuity ledger was removed). Its design goal: an agent should never pay 10,000–50,000
-tokens of blind re-reading when a sub-second in-process scan answers the question with
+tokens of blind re-reading when a sub-second deterministic scan answers the question with
 exact file, symbol, and line spans — and it should say "miss" rather than guess.
 
 The semantic phase is **deterministic by construction**: it invokes the bundled
@@ -63,7 +80,7 @@ waymark-init                          # or: waymark init
 waymark-discover --path src/index.ts [--language typescript|python]
 
 # Three-tier question router (AST, literal filename/path, then BM25 memory)
-# Use exact phrasing for the symbolic (AST) phase:
+# Use exact phrasing for the symbolic (codedb) phase:
 #
 #   Symbolic (exact AST match, 100% precision):
 #     "Who calls <name>?" / "Callers of <name>" / "Callees of <name>" / "Trace <name>"

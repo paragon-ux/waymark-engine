@@ -1,8 +1,8 @@
 # Contributing to Waymark Engine
 
 Waymark Engine is intentionally small, local-first, and dependency-free at runtime
-(the only runtime dependencies are the in-process Tree-sitter WASM and an optional
-Capn CLI invocation).
+(the only runtime dependencies are the codedb binary, tree-sitter for single-file
+symbol discovery, and an optional Capn CLI invocation).
 
 ## Development
 

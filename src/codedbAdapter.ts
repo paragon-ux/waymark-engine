@@ -16,7 +16,6 @@ interface ResolvedCodedbCommand {
 /** Resolve the bundled `@paragon-ux/codedb-core` binary, if installed. */
 function bundledCodedbBinary(): string | null {
   try {
-    require.resolve("@paragon-ux/codedb-core/package.json");
     const mod = require("@paragon-ux/codedb-core") as { codedbBinaryPath: () => string | null };
     return mod.codedbBinaryPath();
   } catch {

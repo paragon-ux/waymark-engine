@@ -132,7 +132,7 @@ export function readCapnConfig(root: string): { embedding: boolean } | null {
  * (`capn init --no-embedding`, or any capn init from the lexical-only fork):
  * the embedding path downloads Qwen-family models (300MB-2GB) and is
  * non-deterministic — exactly what the engine excludes from its answer path.
- * The in-process AST phase never needs this check; only the Capn fallback does.
+ * The codedb structural phase never needs this check; only the Capn fallback does.
  */
 export function assertLexicalStore(root: string): void {
   const config = readCapnConfig(root);

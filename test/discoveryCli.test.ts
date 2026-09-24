@@ -6,6 +6,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { McpServer } from "../src/mcp/server.js";
+import { skipCodedb } from "./codedb.js";
 
 const cliPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../src/cli.js");
 
@@ -43,11 +44,11 @@ function runCli(root: string, args: string[]): CliResult {
   return { code: result.status ?? 1, value };
 }
 
-test("CLI ask routes structural questions to the in-process AST", () => {
+test("CLI ask routes structural questions to the codedb call graph", { skip: skipCodedb() }, () => {
   const repo = setupRepo();
   const result = runCli(repo, ["ask", "Where is function helloWorld declared?"]);
   assert.equal(result.code, 0, JSON.stringify(result));
-  assert.equal(result.value?.provider, "wasm-ast");
+  assert.equal(result.value?.provider, "codedb");
   assert.equal(result.value?.status, "hit");
   assert.match(String(result.value?.result), /helloWorld/);
 });

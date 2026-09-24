@@ -5,6 +5,7 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import test from "node:test";
 import { ask, assertLexicalStore, readCapnConfig } from "../src/capnAdapter.js";
+import { hasCodedb } from "./codedb.js";
 
 function setupRepo(): string {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), "waymark-lexical-"));
@@ -47,11 +48,13 @@ test("assertLexicalStore passes a lexical-only store", () => {
   assert.doesNotThrow(() => assertLexicalStore(repo));
 });
 
-test("ask() refuses the semantic fallback without a lexical store (AST path unaffected)", async () => {
+test("ask() refuses the semantic fallback without a lexical store (structural path unaffected)", async () => {
   const repo = setupRepo();
-  // Structural question: answered in-process by the AST, no store required.
-  const astResult = await ask(repo, "capn-cli", "capn", "Where is function helloWorld declared?");
-  assert.equal(astResult.provider, "wasm-ast");
+  // Structural question: answered by the codedb call graph, no store required.
+  if (hasCodedb()) {
+    const astResult = await ask(repo, "capn-cli", "capn", "Where is function helloWorld declared?");
+    assert.equal(astResult.provider, "codedb");
+  }
 
   // Non-structural question: semantic fallback must fail closed on an uninitialized store.
   await assert.rejects(

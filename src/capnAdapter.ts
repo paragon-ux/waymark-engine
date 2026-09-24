@@ -1,10 +1,14 @@
 import path from "node:path";
 import fs from "node:fs";
-import { execFile, execFileSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { createRequire } from "node:module";
 import { AdapterProfile, PublicationResult, WaymarkError } from "./types.js";
-import { collectRepoPaths, detectAstIntent, detectLiteralIntent, matchLiteralPath, queryWasmAst } from "./discoveryRouter.js";
+import { collectRepoPaths, detectAstIntent, detectLiteralIntent, matchLiteralPath } from "./discoveryRouter.js";
+import { queryStructural } from "./codedbAdapter.js";
+import { resolveWindowsExecutable } from "./executable.js";
+
+export { resolveWindowsExecutable };
 
 const require = createRequire(import.meta.url);
 const execFileAsync = promisify(execFile);
@@ -31,21 +35,6 @@ function quoteCmdArgument(value: string): string {
   if (/[\r\n%"]/u.test(value)) throw new WaymarkError("CAPN_UNSAFE_ARGUMENT", "Capn batch adapters reject percent signs, quotes, and newlines; use a direct executable for those values");
   if (/^[A-Za-z0-9_./\\:@+=,-]+$/u.test(value)) return value;
   return `"${value.replace(/["^&|<>]/gu, "^$&")}"`;
-}
-
-export function resolveWindowsExecutable(executable: string): string {
-  if (path.extname(executable).toLowerCase() === ".cmd" || path.extname(executable).toLowerCase() === ".bat") return executable;
-  try {
-    const output = execFileSync("where.exe", [executable], { encoding: "utf8", windowsHide: true, timeout: 5000 });
-    const candidates = output.split(/\r?\n/u).map((line) => line.trim()).filter(Boolean);
-    const executableHit = candidates.find((c) => {
-      const ext = path.extname(c).toLowerCase();
-      return ext === ".cmd" || ext === ".bat" || ext === ".exe";
-    });
-    return executableHit ?? candidates[0] ?? executable;
-  } catch {
-    return executable;
-  }
 }
 
 /**
@@ -201,9 +190,9 @@ export async function publish(
 
 /**
  * The two-phase discovery router: structural questions (who calls / where is /
- * entrypoints) are answered by the in-process Tree-sitter WASM AST; everything
- * else falls through to Capn's charted lexical memory. A clean miss is a miss —
- * the router never guesses.
+ * entrypoints) are answered by the deterministic codedb CLI (resolved, fail-closed
+ * call graph); everything else falls through to Capn's charted lexical memory.
+ * A clean miss is a miss — the router never guesses.
  */
 export async function ask(
   root: string,
@@ -215,14 +204,14 @@ export async function ask(
 
   const intent = detectAstIntent(question);
 
-  // Structural AST query -> in-process Tree-sitter WASM, no external process.
+  // Structural AST query -> deterministic codedb CLI (resolved call graph).
   if (intent.requiresParser) {
-    const astResult = await queryWasmAst(intent, root);
+    const astResult = await queryStructural(intent, root);
     if (astResult.hit) {
       return {
         waymark: 1,
         kind: "ask",
-        provider: "wasm-ast",
+        provider: "codedb",
         status: "hit",
         result: digestOutput(astResult.output),
       };

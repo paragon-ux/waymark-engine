@@ -3,13 +3,25 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { collectRepoPaths, detectAstIntent, detectLiteralIntent, matchLiteralPath, queryWasmAst } from "../src/discoveryRouter.js";
-import { extractAstFromRepo } from "../src/astExtractor.js";
+import { collectRepoPaths, detectAstIntent, detectLiteralIntent, matchLiteralPath } from "../src/discoveryRouter.js";
+import { queryStructural, resolveCodedbCommand } from "../src/codedbAdapter.js";
 import { ask } from "../src/capnAdapter.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const waymarkRoot = path.resolve(__dirname, "../..");
+
+function hasCodedb(): boolean {
+  try {
+    const cmd = resolveCodedbCommand("");
+    execFileSync(cmd.file, [...cmd.prefix, "--version"], { windowsHide: true, timeout: 10_000, stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+const skipCodedb = hasCodedb() ? false : "codedb binary not available (set WAYMARK_CODEDB_EXECUTABLE)";
 
 test("detectAstIntent classifies structural queries correctly", () => {
   const i1 = detectAstIntent("Who calls capnChartArgs?");
@@ -50,41 +62,25 @@ test("detectAstIntent classifies structural queries correctly", () => {
   assert.equal(i8.requiresParser, false);
 });
 
-test("extractAstFromRepo parses Waymark repository using in-process WebAssembly", async () => {
-  const result = await extractAstFromRepo(waymarkRoot, ["src"]);
-  assert.ok(result.filesParsed >= 10, `Expected at least 10 files parsed, got ${result.filesParsed}`);
-  assert.ok(result.symbols.length >= 40, `Expected at least 40 symbols, got ${result.symbols.length}`);
-  assert.ok(result.calls.length >= 100, `Expected at least 100 calls, got ${result.calls.length}`);
-
-  // capnChartArgs should be found in src/capnAdapter.ts
-  const chartArgs = result.symbols.find((s) => s.name === "capnChartArgs");
-  assert.ok(chartArgs, "capnChartArgs symbol should be extracted");
-  assert.equal(chartArgs.file, "src/capnAdapter.ts");
-
-  // publish should be called by mcp tool handlers or cli
-  const publishCallers = result.callersMap.get("capnChartArgs") || [];
-  assert.ok(publishCallers.includes("publish"), "publish should call capnChartArgs");
-});
-
-test("queryWasmAst answers trace_path and search_graph directly", async () => {
-  const traceRes = await queryWasmAst({ requiresParser: true, tool: "trace_path", functionName: "capnChartArgs" }, waymarkRoot);
+test("queryStructural answers trace_path and search_graph directly", { skip: skipCodedb }, async () => {
+  const traceRes = await queryStructural({ requiresParser: true, tool: "trace_path", functionName: "capnChartArgs" }, waymarkRoot);
   assert.equal(traceRes.hit, true);
   assert.ok(traceRes.output.includes("publish"));
 
-  const symbolRes = await queryWasmAst({ requiresParser: true, tool: "search_graph", query: "capnChartArgs" }, waymarkRoot);
+  const symbolRes = await queryStructural({ requiresParser: true, tool: "search_graph", query: "capnChartArgs" }, waymarkRoot);
   assert.equal(symbolRes.hit, true);
   assert.ok(symbolRes.output.includes("src/capnAdapter.ts"));
 });
 
-test("ask() automatically delegates AST queries to in-process Tree-sitter WASM", async () => {
+test("ask() automatically delegates AST queries to the codedb call graph", { skip: skipCodedb }, async () => {
   const hitRes = await ask(waymarkRoot, "capn-cli", "capn", "Who calls capnChartArgs?");
   assert.equal(hitRes.status, "hit");
-  assert.equal(hitRes.provider, "wasm-ast");
+  assert.equal(hitRes.provider, "codedb");
   assert.ok(typeof hitRes.result === "string" && hitRes.result.includes("publish"));
 
   const symbolRes = await ask(waymarkRoot, "capn-cli", "capn", "Where is function capnChartArgs declared?");
   assert.equal(symbolRes.status, "hit");
-  assert.equal(symbolRes.provider, "wasm-ast");
+  assert.equal(symbolRes.provider, "codedb");
   assert.ok(typeof symbolRes.result === "string" && symbolRes.result.includes("src/capnAdapter.ts"));
 });
 

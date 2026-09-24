@@ -20,12 +20,12 @@ build, no embeddings, no daemon.
 | *"How does authentication work?"* | The files that answer it — charted, staleness-checked |
 | *"Entrypoints"* | The architecture's front doors |
 
-Questions route through three deterministic tiers: structural questions hit an
-in-process AST parser (30+ languages, exact match); literal filename/path
-queries (`sample.ts`, `src/api/webhooks.ts`, `.gitignore`) short-circuit a
-zero-dependency in-memory matcher; and conceptual questions go to BM25 charted
-memory. Misses fall through cleanly — the engine says "I don't know" rather
-than hallucinating.
+Questions route through three deterministic tiers: structural questions hit the
+deterministic codedb structural index + resolved call graph (fail-closed, exact
+match); literal filename/path queries (`sample.ts`, `src/api/webhooks.ts`,
+`.gitignore`) short-circuit a zero-dependency in-memory matcher; and conceptual
+questions go to BM25 charted memory. Misses fall through cleanly — the engine
+says "I don't know" rather than hallucinating.
 
 ## Why this exists
 
@@ -141,7 +141,7 @@ import {
 } from "waymark-engine";
 
 const hit = await ask(repoRoot(), "capn-cli", "", "Who calls verifyHop?");
-// { provider: "wasm-ast", status: "hit", result: "function: verifyHop\ncallers: ..." }
+// { provider: "codedb", status: "hit", result: "function: verifyHop\ncallers: ..." }
 ```
 
 ## Integrity primitives
@@ -170,8 +170,9 @@ Tools: `capn_ask`, `capn_chart`, `waymark_discover_symbols`. Resource: `capn://s
 
 Three deterministic tiers, in order:
 
-1. **Symbolic (AST)** — exact identifier and call-graph queries hit the in-process
-   Tree-sitter WASM parser (100% precision).
+1. **Symbolic (codedb)** — exact identifier and call-graph queries hit the
+   deterministic codedb structural index + resolved, fail-closed call graph
+   (ambiguity surfaces file-scoped candidates rather than guessing).
 2. **Literal** — bare filenames and paths (`sample.ts`, `src/api/webhooks.ts`,
    `.gitignore`, `Dockerfile`) resolve against an in-memory path index, fail-closed
    on ambiguity (never guesses).
@@ -184,6 +185,11 @@ A clean miss is a miss — the engine never guesses.
 - [`@paragon-ux/capn-hook`](https://github.com/paragon-ux/capn-hook) — the lexical-only
   fork of [CyrusNuevoDia/capn-hook](https://github.com/CyrusNuevoDia/capn-hook) that
   powers the semantic phase (BM25 recall, no embeddings, no hooks).
+- [`@paragon-ux/codedb-core`](https://github.com/paragon-ux/codedb-core) — the
+  deterministic structural fork of [justrach/codedb](https://github.com/justrach/codedb)
+  that powers the symbolic phase (resolved call graph, no embeddings, no telemetry,
+  no daemon). `discoverSymbolsInFile` retains `web-tree-sitter` for precise
+  single-file structured symbol discovery.
 
 ## License
 

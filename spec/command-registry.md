@@ -69,33 +69,39 @@ Options and flags modify discovery routing, execution format, performance instru
 
 ## 4. MCP Tool Registry
 
-The resident stdio MCP server (`waymark-mcp`) exposes three high-leverage tools for agentic discovery:
+The resident stdio MCP server (`waymark-mcp`) exposes high-leverage tools for agentic discovery and consensus memory maintenance with full precision parity matching the CLI:
 
-### 4.1 `capn_ask`
-- **Identifier**: `capn_ask`
+### 4.1 `capn_ask` (alias: `waymark_ask`)
+- **Identifier**: `capn_ask` / `waymark_ask`
 - **Stability**: **Stable**
-- **Description**: Query repository memory and tiered discovery to answer code questions without hallucination.
+- **Description**: Query repository memory and tiered discovery (AST structural, literal path, deterministic fuzzy, charted consensus) to answer code questions without hallucination.
 - **Input Schema**:
   ```json
   {
     "type": "object",
     "properties": {
       "question": { "type": "string", "description": "The question to look up." },
+      "tier": { "type": "string", "enum": ["auto", "ast", "path", "fuzzy", "capn"], "description": "Optional forced discovery tier: auto | ast | path | fuzzy | capn. Defaults to auto." },
+      "auto_resolve": { "type": "boolean", "description": "Collapse junction responses directly to top recommendation." },
+      "timing": { "type": "boolean", "description": "Collect high-resolution tier execution timing metrics." },
+      "plain": { "type": "boolean", "description": "Emit token-minimal plain text formatted result for LLM context efficiency (~16-38 tokens)." },
+      "daemon": { "type": "boolean", "description": "Accelerate query via persistent in-memory background daemon IPC." },
       "capn_executable": { "type": "string", "description": "Optional custom path to the Capn executable." },
       "profile": { "type": "string", "enum": ["capn-cli", "none"], "description": "Optional adapter profile; defaults to capn-cli." },
-      "root": { "type": "string", "description": "Optional repository root path." }
+      "root": { "type": "string", "description": "Optional repository root path. Defaults to current working directory." }
     },
     "required": ["question"]
   }
   ```
 - **Output Shape**:
-  - `status: "hit"`: `{ waymark: 1, kind: "ask", status: "hit", provider: "...", confidence: "...", result: ... }`
+  - `plain: true`: Token-minimal plain text formatted result (`[hit: ...]`, `[junction]`, or `[miss]`).
+  - `status: "hit"`: `{ waymark: 1, kind: "ask", status: "hit", provider: "...", confidence: "...", result: ..., timings?: ... }`
   - `status: "junction"`: Full inspectable recommendation payload with executed option, alternative option, and continuation instructions.
-  - `status: "miss"`: Fail-closed miss with `missCode: WaymarkMissCode`.
+  - `status: "miss"`: Fail-closed miss with `missCode: WaymarkMissCode` (clean miss, never guesses).
   - `status: "error"`: Error object with `code` and `message`.
 
-### 4.2 `capn_chart`
-- **Identifier**: `capn_chart`
+### 4.2 `capn_chart` (alias: `waymark_chart`)
+- **Identifier**: `capn_chart` / `waymark_chart`
 - **Stability**: **Stable**
 - **Description**: Commit verified question, answer, and referenced file set to long-term lexical BM25 consensus memory.
 - **Input Schema**:
@@ -132,6 +138,42 @@ The resident stdio MCP server (`waymark-mcp`) exposes three high-leverage tools 
   }
   ```
 - **Output Shape**: Structured list of `SymbolRecord` objects containing symbol name, kind, line numbers, and byte ranges.
+
+### 4.4 `waymark_unchart` (alias: `capn_unchart`)
+- **Identifier**: `waymark_unchart` / `capn_unchart`
+- **Stability**: **Stable**
+- **Description**: Delete one charted consensus memory entry by ID from Capn repository memory.
+- **Input Schema**: `{ "id": string, "if_exists"?: boolean, "capn_executable"?: string, "root"?: string }`
+
+### 4.5 `waymark_bust` (alias: `capn_bust`)
+- **Identifier**: `waymark_bust` / `capn_bust`
+- **Stability**: **Stable**
+- **Description**: Invalidate and delete every charted memory entry backed by a specific repository file.
+- **Input Schema**: `{ "file": string, "capn_executable"?: string, "root"?: string }`
+
+### 4.6 `waymark_prune` (alias: `capn_prune`)
+- **Identifier**: `waymark_prune` / `capn_prune`
+- **Stability**: **Stable**
+- **Description**: Delete every charted memory entry whose backing files have changed or vanished.
+- **Input Schema**: `{ "capn_executable"?: string, "root"?: string }`
+
+### 4.7 `waymark_list` (alias: `capn_list`)
+- **Identifier**: `waymark_list` / `capn_list`
+- **Stability**: **Stable**
+- **Description**: List all charted consensus memory entries in the repository.
+- **Input Schema**: `{ "capn_executable"?: string, "root"?: string }`
+
+### 4.8 `waymark_context` (alias: `capn_context`)
+- **Identifier**: `waymark_context` / `capn_context`
+- **Stability**: **Stable**
+- **Description**: Retrieve the ask-first charting contract and syntax guidelines for Waymark Engine.
+- **Input Schema**: `{ "capn_executable"?: string, "root"?: string }`
+
+### 4.9 `waymark_daemon_status`
+- **Identifier**: `waymark_daemon_status`
+- **Stability**: **Stable**
+- **Description**: Check resident in-memory background daemon status, active IPC address, uptime, and PID.
+- **Input Schema**: `{ "root"?: string }`
 
 ---
 

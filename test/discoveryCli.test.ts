@@ -84,7 +84,24 @@ test("MCP discovery server exposes exactly the discovery tools", async () => {
   const response = await server.handleMessage(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }));
   const parsed = JSON.parse(response ?? "{}") as { result?: { tools?: Array<{ name: string }> } };
   const names = (parsed.result?.tools ?? []).map((tool) => tool.name);
-  assert.deepEqual(names.sort(), ["capn_ask", "capn_chart", "waymark_discover_symbols"]);
+  assert.deepEqual(names.sort(), [
+    "capn_ask",
+    "capn_bust",
+    "capn_chart",
+    "capn_context",
+    "capn_list",
+    "capn_prune",
+    "capn_unchart",
+    "waymark_ask",
+    "waymark_bust",
+    "waymark_chart",
+    "waymark_context",
+    "waymark_daemon_status",
+    "waymark_discover_symbols",
+    "waymark_list",
+    "waymark_prune",
+    "waymark_unchart",
+  ]);
 });
 
 test("CLI init creates lexical Capn store with embedding false", () => {

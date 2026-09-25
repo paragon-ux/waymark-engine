@@ -84,9 +84,15 @@ When an agent or client editor launches `waymark-engine` via stdio, the server d
 
 ### Exposed MCP Surface
 * **Tools**:
-  * `capn_ask` (alias: `waymark_ask`): 4-tier discovery question query.
-  * `capn_chart` (alias: `waymark_chart`): Publish architectural consensus memory with backing files.
+  * `waymark_ask` (alias: `capn_ask`): 4-tier discovery question query with full CLI flag parity (`tier: "auto"|"ast"|"path"|"fuzzy"|"capn"`, `auto_resolve`, `timing`, `plain`, `daemon`).
+  * `waymark_chart` (alias: `capn_chart`): Publish architectural consensus memory with backing files.
   * `waymark_discover_symbols`: Extract classes, methods, functions, and types from TS/Python files.
+  * `waymark_unchart` (alias: `capn_unchart`): Invalidate and delete charted consensus memory entry by ID.
+  * `waymark_bust` (alias: `capn_bust`): Invalidate every charted memory entry backed by a specific repository file.
+  * `waymark_prune` (alias: `capn_prune`): Cleanly remove all stale charted memory entries whose backing files vanished.
+  * `waymark_list` (alias: `capn_list`): List all charted repository consensus memories.
+  * `waymark_context` (alias: `capn_context`): Retrieve the ask-first charting contract and routing guidelines.
+  * `waymark_daemon_status`: Inspect resident in-memory background daemon health, PID, address, and uptime.
 * **Resources**:
   * `capn://status`: Memory store configuration and adapter status.
   * `waymark://manifest`: Engine capabilities, tier metadata, and versioning.

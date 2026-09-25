@@ -65,9 +65,15 @@ When Claude Desktop runs the MCP server via stdio, the server defaults its worki
 ```
 
 ### Available MCP Tools & Capabilities
-* `capn_ask` (alias: `waymark_ask`): Answers questions using the 4-tier discovery pipeline. Returns exact AST call graphs, literal paths, fuzzy matches, or charted memory.
+* `waymark_ask` (alias: `capn_ask`): Answers questions using the 4-tier discovery pipeline. Supports full CLI flag parity: `tier` (`"auto"|"ast"|"path"|"fuzzy"|"capn"`), `auto_resolve`, `timing`, `plain` (~16 tokens), and `daemon`.
 * `waymark_discover_symbols`: Discovers structured AST symbols (classes, functions, methods, types) in a single TypeScript or Python file.
-* `capn_chart` (alias: `waymark_chart`): Publishes architectural findings and consensus summaries with backing file paths into long-term repository memory.
+* `waymark_chart` (alias: `capn_chart`): Publishes architectural findings and consensus summaries with backing file paths into long-term repository memory.
+* `waymark_unchart` (alias: `capn_unchart`): Deletes charted memory entry by ID.
+* `waymark_bust` (alias: `capn_bust`): Deletes every charted entry backed by a specific file.
+* `waymark_prune` (alias: `capn_prune`): Deletes every charted entry whose backing files changed or vanished.
+* `waymark_list` (alias: `capn_list`): Lists all charted consensus memory entries.
+* `waymark_context` (alias: `capn_context`): Prints the ask-first charting contract and query syntax rules.
+* `waymark_daemon_status`: Inspects resident in-memory background daemon health, PID, address, and uptime.
 * Prompts: `explore-subsystem`, `architectural-map`.
 * Resources: `capn://status`, `waymark://manifest`.
 

@@ -332,6 +332,10 @@ const STOP_WORDS = new Set([
   "those", "am", "module", "file", "function", "method", "class", "interface",
   "symbol", "declared", "defined", "implemented", "located", "find", "locate",
   "show", "get", "give", "tell", "me", "code", "work", "works",
+  "call", "calls", "caller", "callers", "callee", "callees",
+  "trace", "tracing", "hierarchy", "signature",
+  "declaration", "declarations", "definition", "definitions",
+  "implementation", "implementations", "entrypoint", "entrypoints",
 ]);
 
 export function extractCandidateTokens(question: string): {
@@ -414,12 +418,14 @@ export async function routeDiscovery(ctx: DiscoveryRouteContext): Promise<AskRes
   }
 
   // Tier 1: Structural AST check (codedb)
+  const astIntent = detectAstIntent(question);
+  const hasStructuralIntent = astIntent.requiresParser;
+
   if (tier === "auto" || tier === "ast") {
     const tAst0 = performance.now();
-    const intent = detectAstIntent(question);
-    if (intent.requiresParser || tier === "ast") {
-      const structuralIntent = intent.requiresParser
-        ? intent
+    if (hasStructuralIntent || tier === "ast") {
+      const structuralIntent = hasStructuralIntent
+        ? astIntent
         : { requiresParser: true, tool: "search_graph" as const, query: question };
       const astResult = await queryStructural(structuralIntent, root, codedbExecutable);
       if (recordTiming) timings.ast_ms = Math.round((performance.now() - tAst0) * 100) / 100;
@@ -674,6 +680,12 @@ export async function routeDiscovery(ctx: DiscoveryRouteContext): Promise<AskRes
       const cands = await getCandidates(token);
       const scored = rankFzf(token, cands);
       if (scored.length > 0 && scored[0] && scored[0].score >= 60) {
+        if (hasStructuralIntent && astIntent.tool === "trace_path") {
+          const kind = scored[0].candidate.kind?.toLowerCase();
+          if (kind && kind !== "function" && kind !== "method") {
+            continue;
+          }
+        }
         if (!bestFuzzyResult || scored[0].score > bestFuzzyResult.score) {
           bestFuzzyResult = scored[0];
           matchedToken = token;
@@ -806,6 +818,23 @@ export async function routeDiscovery(ctx: DiscoveryRouteContext): Promise<AskRes
       chartHint: "This answer can be charted with waymark-chart regardless of which option resolved it.",
       recommendation: `Recommended tier: capn-cli. Queried charted memory.`,
       tip: `To search code symbols fuzzily instead: waymark-ask "${question}" --tier fuzzy`,
+      ...(recordTiming ? { timings } : {}),
+    };
+  }
+
+  // If the query had explicit call-graph trace intent (e.g. "Who calls <X>?", "Callees of <X>"),
+  // and both Tier 1 AST structural and Tier 4 Capn memory missed, fail closed.
+  // Stage 3 exhaustive fuzzy pass on plain narrative words cannot answer call-graph relationships.
+  if (hasStructuralIntent && astIntent.tool === "trace_path") {
+    if (recordTiming) timings.total_ms = Math.round((performance.now() - startTime) * 100) / 100;
+    return {
+      waymark: 1,
+      kind: "ask",
+      status: "miss",
+      provider: "codedb",
+      missCode: "SYMBOL_NOT_FOUND",
+      reason: `No structural symbol or call graph match found for "${question}".`,
+      matches: [],
       ...(recordTiming ? { timings } : {}),
     };
   }

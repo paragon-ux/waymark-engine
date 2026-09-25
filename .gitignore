@@ -12,6 +12,8 @@ experiments/**/.tmp-*/
 # Ad-hoc local verification harnesses (machine-specific absolute paths)
 claude-probes.mjs
 precision-probes.mjs
+local-*.mjs
+scripts/local-*
 scratch/
 *.log
 .capn/

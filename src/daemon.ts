@@ -327,6 +327,7 @@ export async function autoStartDaemon(root: string, timeoutMs = 20_000, idleTime
     env: {
       ...process.env,
       WAYMARK_AUTO_DAEMON: "0", // prevent recursive spawn
+      CODEDB_ALLOW_TEMP: process.env.CODEDB_ALLOW_TEMP ?? "1",
     },
   });
   child.unref();

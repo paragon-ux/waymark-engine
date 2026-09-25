@@ -1,6 +1,8 @@
 import { execFileSync } from "node:child_process";
 import { resolveCodedbCommand } from "../src/codedbAdapter.js";
 
+process.env.CODEDB_ALLOW_TEMP = process.env.CODEDB_ALLOW_TEMP ?? "1";
+
 /** True when a codedb binary is resolvable and runnable. */
 export function hasCodedb(): boolean {
   try {

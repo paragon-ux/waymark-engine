@@ -33,3 +33,5 @@ jobs:
         run: npm ci
       - name: Verify build and tests
         run: npm run verify
+        env:
+          CODEDB_ALLOW_TEMP: "1"

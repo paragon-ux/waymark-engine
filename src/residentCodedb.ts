@@ -135,6 +135,7 @@ export class ResidentCodedbClient {
             ...process.env,
             CODEDB_QUIET: "1",
             CODEDB_MAX_THREADS: maxThreads,
+            CODEDB_ALLOW_TEMP: process.env.CODEDB_ALLOW_TEMP ?? "1",
           },
         });
       } catch (err) {

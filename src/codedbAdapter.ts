@@ -85,6 +85,7 @@ async function executeCold(root: string, command: ResolvedCodedbCommand, args: r
       ...process.env,
       CODEDB_QUIET: "1",
       CODEDB_MAX_THREADS: maxThreads,
+      CODEDB_ALLOW_TEMP: process.env.CODEDB_ALLOW_TEMP ?? "1",
     },
   });
 }

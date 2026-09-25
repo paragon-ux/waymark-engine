@@ -33,6 +33,10 @@ function runCli(root: string, args: string[]): CliResult {
     encoding: "utf8",
     timeout: 180_000,
     windowsHide: true,
+    env: {
+      ...process.env,
+      CODEDB_ALLOW_TEMP: process.env.CODEDB_ALLOW_TEMP ?? "1",
+    },
   });
   let value: Record<string, unknown> | null = null;
   try {

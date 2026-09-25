@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import os from "node:os";
 import readline from "node:readline";
 import { spawn, type ChildProcess } from "node:child_process";
@@ -118,6 +119,13 @@ export class ResidentCodedbClient {
       startupTimer.unref();
 
       try {
+        if (process.platform !== "win32" && this.command.file) {
+          try {
+            fs.chmodSync(this.command.file, 0o755);
+          } catch {
+            // ignore
+          }
+        }
         const fullArgs = [...this.command.prefix, this.root, "serve"];
         this.proc = spawn(this.command.file, fullArgs, {
           cwd: this.root,

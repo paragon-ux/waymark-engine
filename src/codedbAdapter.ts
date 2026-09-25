@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import os from "node:os";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -19,7 +20,15 @@ export interface ResolvedCodedbCommand {
 function bundledCodedbBinary(): string | null {
   try {
     const mod = require("@paragon-ux/codedb-core") as { codedbBinaryPath: () => string | null };
-    return mod.codedbBinaryPath();
+    const bin = mod.codedbBinaryPath();
+    if (bin && process.platform !== "win32") {
+      try {
+        fs.chmodSync(bin, 0o755);
+      } catch {
+        // ignore
+      }
+    }
+    return bin;
   } catch {
     return null;
   }
@@ -53,6 +62,13 @@ import { tryDaemonQuery, autoStartDaemon } from "./daemon.js";
 export type { CodedbJson, CodedbRun };
 
 async function executeCold(root: string, command: ResolvedCodedbCommand, args: readonly string[]): Promise<{ stdout: string; stderr: string }> {
+  if (process.platform !== "win32" && command.file) {
+    try {
+      fs.chmodSync(command.file, 0o755);
+    } catch {
+      // ignore
+    }
+  }
   const fullArgs = [...command.prefix, ...args];
   const timeoutMs = process.env.WAYMARK_CODEDB_TIMEOUT
     ? parseInt(process.env.WAYMARK_CODEDB_TIMEOUT, 10) || 120_000

@@ -1,6 +1,6 @@
 {
   "name": "waymark-engine",
-  "version": "2.1.1",
+  "version": "2.1.2",
   "description": "Agentic code discovery: ask your codebase a question, get exact file + symbol + line span in milliseconds. No re-reading, no guessing, no index to build.",
   "type": "module",
   "main": "./dist/src/index.js",
@@ -12,6 +12,8 @@
     "./cli": "./dist/src/cli.js"
   },
   "bin": {
+    "waymark-engine": "dist/src/mcp/capnIndex.js",
+    "waymark-mcp": "dist/src/mcp/capnIndex.js",
     "waymark": "dist/src/cli.js",
     "waymark-init": "bin/waymark-init.mjs",
     "waymark-ask": "bin/waymark-ask.mjs",
@@ -22,8 +24,7 @@
     "waymark-prune": "bin/waymark-prune.mjs",
     "waymark-list": "bin/waymark-list.mjs",
     "waymark-context": "bin/waymark-context.mjs",
-    "waymark-daemon": "bin/waymark-daemon.mjs",
-    "waymark-mcp": "dist/src/mcp/capnIndex.js"
+    "waymark-daemon": "bin/waymark-daemon.mjs"
   },
   "files": [
     "dist/src",

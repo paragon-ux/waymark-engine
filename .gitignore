@@ -6,7 +6,6 @@ evidence/runtime/
 .sandbox/
 experiments/**/.sandbox/
 experiments/**/.tmp-*/
-.capn/
 .claude/
 .codex/
 
@@ -15,3 +14,4 @@ claude-probes.mjs
 precision-probes.mjs
 scratch/
 *.log
+.capn/

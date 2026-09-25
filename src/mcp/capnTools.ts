@@ -202,4 +202,26 @@ export const discoverSymbolsTool: McpToolHandler = {
   },
 };
 
-export const CAPN_TOOLS: McpToolHandler[] = [capnAskTool, capnChartTool, discoverSymbolsTool];
+export const waymarkAskTool: McpToolHandler = {
+  definition: {
+    ...capnAskTool.definition,
+    name: "waymark_ask",
+    description: "Query the codebase using Waymark 4-tier discovery (AST structural, literal path, deterministic fuzzy, charted memory).",
+  },
+  handler: capnAskTool.handler,
+};
+
+export const waymarkChartTool: McpToolHandler = {
+  definition: {
+    ...capnChartTool.definition,
+    name: "waymark_chart",
+    description: "Directly chart a question, answer, and associated file references into Waymark/Capn long-term repository memory.",
+  },
+  handler: capnChartTool.handler,
+};
+
+export const CAPN_TOOLS: McpToolHandler[] = [
+  capnAskTool,
+  capnChartTool,
+  discoverSymbolsTool,
+];

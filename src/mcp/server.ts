@@ -15,6 +15,42 @@ export const CAPN_RESOURCES: McpResourceDefinition[] = [
     description: "Current Capn adapter profile and executable configuration",
     mimeType: "application/json",
   },
+  {
+    uri: "waymark://manifest",
+    name: "Waymark Engine Manifest",
+    description: "Tier configuration and symbol discovery capabilities of waymark-engine",
+    mimeType: "application/json",
+  },
+];
+
+export const CAPN_PROMPTS: McpPromptDefinition[] = [
+  {
+    name: "explore-subsystem",
+    description: "Guide a structured 4-tier exploration of a subsystem or symbol in the codebase.",
+    arguments: [
+      {
+        name: "query",
+        description: "The symbol, function, concept, or path to investigate.",
+        required: true,
+      },
+      {
+        name: "root",
+        description: "Optional repository root path.",
+        required: false,
+      },
+    ],
+  },
+  {
+    name: "architectural-map",
+    description: "Generate an architectural call-graph map and consensus memory summary for a feature.",
+    arguments: [
+      {
+        name: "topic",
+        description: "The architectural topic or subsystem to map.",
+        required: true,
+      },
+    ],
+  },
 ];
 
 export interface McpServerOptions {
@@ -40,9 +76,9 @@ export class McpServer {
   constructor(optionsOrHandlers: McpServerOptions | McpToolHandler[] = CAPN_TOOLS) {
     if (Array.isArray(optionsOrHandlers)) {
       this.serverName = "waymark-engine";
-      this.serverVersion = "2.1.1";
+      this.serverVersion = "2.1.2";
       this.resources = CAPN_RESOURCES;
-      this.prompts = [];
+      this.prompts = CAPN_PROMPTS;
       this.root = process.cwd();
       this.enableDaemon = true;
       for (const item of optionsOrHandlers) {
@@ -50,10 +86,10 @@ export class McpServer {
       }
     } else {
       this.serverName = optionsOrHandlers.name ?? "waymark-engine";
-      this.serverVersion = optionsOrHandlers.version ?? "2.1.1";
+      this.serverVersion = optionsOrHandlers.version ?? "2.1.2";
       const tools = optionsOrHandlers.tools ?? CAPN_TOOLS;
       this.resources = optionsOrHandlers.resources ?? CAPN_RESOURCES;
-      this.prompts = optionsOrHandlers.prompts ?? [];
+      this.prompts = optionsOrHandlers.prompts ?? CAPN_PROMPTS;
       this.root = optionsOrHandlers.root ?? process.cwd();
       this.enableDaemon = optionsOrHandlers.enableDaemon !== false;
       for (const item of tools) {
@@ -152,6 +188,7 @@ export class McpServer {
             resources: {},
             prompts: {},
           },
+          instructions: "Waymark discovery engine: AST structural graph, literal path router, deterministic fzf fuzzy matcher, and repository consensus BM25 memory.",
         },
       };
     }
@@ -247,6 +284,34 @@ export class McpServer {
         };
       }
 
+      if (uri === "waymark://manifest") {
+        const manifestObj = {
+          waymark: 1,
+          name: this.serverName,
+          version: this.serverVersion,
+          tiers: [
+            { tier: 1, name: "AST Structural Call Graph", engine: "@paragon-ux/codedb-core" },
+            { tier: 2, name: "Literal Path Router", resolution: "exact-and-substring" },
+            { tier: 3, name: "Deterministic Fuzzy Matcher", engine: "Junegunn Choi fzf (algo.go)" },
+            { tier: 4, name: "Charted Consensus Memory", engine: "@paragon-ux/capn-hook (BM25)" },
+          ],
+          capabilities: ["symbol-discovery", "call-graph", "fuzzy-matching", "consensus-memory", "single-file-ast"],
+        };
+        return {
+          jsonrpc: "2.0",
+          id,
+          result: {
+            contents: [
+              {
+                uri,
+                mimeType: "application/json",
+                text: JSON.stringify(manifestObj, null, 2),
+              },
+            ],
+          },
+        };
+      }
+
       return {
         jsonrpc: "2.0",
         id,
@@ -268,12 +333,52 @@ export class McpServer {
     }
 
     if (method === "prompts/get") {
+      const name = String(params?.name ?? "");
+      const args = (params?.arguments && typeof params.arguments === "object" ? params.arguments : {}) as Record<string, string>;
+      if (name === "explore-subsystem") {
+        const query = args.query ?? "unknown";
+        return {
+          jsonrpc: "2.0",
+          id,
+          result: {
+            description: "Guide a structured 4-tier exploration of a subsystem or symbol in the codebase.",
+            messages: [
+              {
+                role: "user",
+                content: {
+                  type: "text",
+                  text: `Please explore the codebase using waymark-engine MCP tools for: "${query}". First use capn_ask to check Tier 1 AST call graphs or Tier 3 Discovery Junction recommendations, inspect relevant files with waymark_discover_symbols, and chart findings with capn_chart.`,
+                },
+              },
+            ],
+          },
+        };
+      }
+      if (name === "architectural-map") {
+        const topic = args.topic ?? "unknown";
+        return {
+          jsonrpc: "2.0",
+          id,
+          result: {
+            description: "Generate an architectural call-graph map and consensus memory summary for a feature.",
+            messages: [
+              {
+                role: "user",
+                content: {
+                  type: "text",
+                  text: `Trace the architectural call chain and execution flow for: "${topic}". Use capn_ask to resolve callers and callees, verify exact file paths, and summarize the policy in long-term memory via capn_chart.`,
+                },
+              },
+            ],
+          },
+        };
+      }
       return {
         jsonrpc: "2.0",
         id,
         error: {
           code: -32602,
-          message: `Prompt not found: ${String(params?.name ?? "")}`,
+          message: `Prompt not found: ${name}`,
         },
       };
     }

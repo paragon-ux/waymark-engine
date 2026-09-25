@@ -1,33 +1,104 @@
-# Waymark Engine — agent guide
+# Waymark Engine — Agent & Integration Guide
 
-Waymark Engine is a four-tier discovery engine for one-shot code questions:
-1. **Tier 1: AST Structural** — deterministic codedb call graph (`@paragon-ux/codedb-core` v1.0.2, resolved and fail-closed).
-2. **Tier 2: Literal Path Router** — exact and substring path resolution.
+Waymark Engine is a four-tier symbolic and semantic discovery engine for one-shot code questions:
+1. **Tier 1: AST Structural** — deterministic codedb call graph (`@paragon-ux/codedb-core` v1.1.0, resolved and fail-closed).
+2. **Tier 2: Literal Path Router** — exact and substring path resolution with zero-hallucination fail-closed defense.
 3. **Tier 3: Deterministic Fuzzy Matcher** — embedded Junegunn Choi `fzf` (`algo.go`) two-pass scoring.
 4. **Tier 4: Charted Memory** — lexical BM25 repository consensus memory via `@paragon-ux/capn-hook`.
+5. **Single-File Structured AST** — precise tree-sitter class, method, function, and type extraction for TypeScript and Python.
 
 When structural and literal tiers miss, the **Discovery Junction** evaluates syntactic candidate signals and emits an inspectable recommendation (`status: "junction"`) with machine-readable continuation instructions. A clean miss is a miss — never a guess.
+
+---
 
 ## Working on this repo
 
 ```bash
-npm ci          # install (bundled capn fork included)
-npm run verify  # build + full node test suite (39/39 passing)
+npm ci          # install dependencies (bundled capn fork included)
+npm run verify  # build + full node test suite (43/43 passing green)
 ```
 
 Invariants:
-
-- Semantic recall must stay deterministic: the adapter refuses any store that is
-  uninitialized (`CAPN_STORE_UNINITIALIZED`) or in embedding mode
-  (`CAPN_NON_DETERMINISTIC_MODE`). Do not weaken that guard.
+- Semantic recall must stay deterministic: the adapter refuses any store that is uninitialized (`CAPN_STORE_UNINITIALIZED`) or in embedding mode (`CAPN_NON_DETERMINISTIC_MODE`). Do not weaken that guard.
 - The router must miss cleanly rather than fabricate an answer.
-- External tools are invoked with explicit argv arrays (never a shell) and bounded
-  output. Keep `WAYMARK_CAPN_EXECUTABLE` as an escape hatch, but the bundled fork is
-  the default and the only tested path.
+- External tools are invoked with explicit argv arrays (never a shell) and bounded output. Keep `WAYMARK_CAPN_EXECUTABLE` as an escape hatch, but the bundled fork is the default and the only tested path.
 - Fuzzy matching is zero-dependency and strictly deterministic.
+- Host CPU responsiveness is protected: `CODEDB_MAX_THREADS` defaults to `max(1, cpus - 1)` so 1 logical core remains free.
 - Tests cover both success and fail-closed paths. `npm run verify` must stay green.
 
-## Using the engine
+---
+
+## MCP Server Setup (Stdio Integration)
+
+Waymark Engine implements the Model Context Protocol (MCP) dual-era specification (`2026-07-28` modern discovery + `2024-11-05` standard handshake).
+
+### Autonomous Agent Architecture & Context Delegation
+Waymark Engine serves as the symbolic and semantic discovery layer for coding agents. Rather than bloating context windows with large directory dumps or full-file reads, agents delegate exploration to `waymark-engine` to obtain exact symbols, call graphs, and line spans in milliseconds. Trajectory tracking and session compaction are handled externally (e.g., via `codex-agents-compact-reload` / AGENTS.md Compact Reload), keeping this engine focused purely on high-performance code intelligence.
+
+### Target Repository Path (`root` Argument)
+When an agent or client editor launches `waymark-engine` via stdio, the server defaults to its current working directory. When querying a target repository located elsewhere on disk, **always pass the `root` argument** in tool calls:
+```json
+{
+  "question": "Who calls execute_command?",
+  "root": "/path/to/target/repository"
+}
+```
+
+### Configuration Snippets
+
+#### 1. Google Antigravity / Gemini CLI (`~/.gemini/config/mcp_config.json`)
+```json
+{
+  "mcpServers": {
+    "waymark-engine": {
+      "command": "node",
+      "args": [
+        "c:/Users/USER/Desktop/Frameworks/deepseek-playground-2/Waymark-grill-logic/dist/src/mcp/capnIndex.js"
+      ],
+      "env": {
+        "CODEDB_ALLOW_TEMP": "1"
+      }
+    }
+  }
+}
+```
+*(Or via global npm: `"command": "npx", "args": ["-y", "waymark-engine"]`)*
+
+#### 2. Claude Desktop (`claude_desktop_config.json`)
+```json
+{
+  "mcpServers": {
+    "waymark-engine": {
+      "command": "npx",
+      "args": ["-y", "waymark-engine"],
+      "env": {
+        "CODEDB_ALLOW_TEMP": "1"
+      }
+    }
+  }
+}
+```
+
+#### 3. Cursor / Zed / Continue
+* **Command**: `npx -y waymark-engine`
+* **Transport**: `stdio`
+* **Environment**: `CODEDB_ALLOW_TEMP=1`
+
+### Exposed MCP Surface
+* **Tools**:
+  * `capn_ask` (alias: `waymark_ask`): 4-tier discovery question query.
+  * `capn_chart` (alias: `waymark_chart`): Publish architectural consensus memory with backing files.
+  * `waymark_discover_symbols`: Extract classes, methods, functions, and types from TS/Python files.
+* **Resources**:
+  * `capn://status`: Memory store configuration and adapter status.
+  * `waymark://manifest`: Engine capabilities, tier metadata, and versioning.
+* **Prompts**:
+  * `explore-subsystem`: Guided 4-tier exploration workflow for a concept or module.
+  * `architectural-map`: Structured call-graph and consensus memory mapping workflow.
+
+---
+
+## CLI Usage
 
 ```bash
 npm install -g waymark-engine
@@ -45,6 +116,8 @@ waymark-list           waymark-context      waymark-mcp
 waymark-daemon [start|stop|restart|status|list|ping]
 ```
 
+---
+
 ## Documentation & Specifications
 
 The canonical specifications, contracts, and registries are maintained under [`/spec`](spec/):
@@ -57,4 +130,3 @@ The canonical specifications, contracts, and registries are maintained under [`/
 ## Library
 
 `import { ask, discoverSymbolsInFile, detectAstIntent, scoreFzf, rankFzf, verifyHop, anchorForRange } from "waymark-engine";`
-

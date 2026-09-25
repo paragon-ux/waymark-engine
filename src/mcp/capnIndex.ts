@@ -1,13 +1,13 @@
 #!/usr/bin/env node
-import { CAPN_RESOURCES, McpServer } from "./server.js";
+import { CAPN_PROMPTS, CAPN_RESOURCES, McpServer } from "./server.js";
 import { CAPN_TOOLS } from "./capnTools.js";
 
 const server = new McpServer({
   name: "waymark-engine",
-  version: "2.1.1",
+  version: "2.1.2",
   tools: CAPN_TOOLS,
   resources: CAPN_RESOURCES,
-  prompts: [],
+  prompts: CAPN_PROMPTS,
 });
 
 server.runStdio().catch((error) => {

@@ -3,8 +3,8 @@ import { CAPN_RESOURCES, McpServer } from "./server.js";
 import { CAPN_TOOLS } from "./capnTools.js";
 
 const server = new McpServer({
-  name: "capn-mcp",
-  version: "1.3.0",
+  name: "waymark-engine",
+  version: "2.1.1",
   tools: CAPN_TOOLS,
   resources: CAPN_RESOURCES,
   prompts: [],

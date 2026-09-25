@@ -39,8 +39,8 @@ export class McpServer {
 
   constructor(optionsOrHandlers: McpServerOptions | McpToolHandler[] = CAPN_TOOLS) {
     if (Array.isArray(optionsOrHandlers)) {
-      this.serverName = "waymark-discovery-mcp";
-      this.serverVersion = "2.0.0";
+      this.serverName = "waymark-engine";
+      this.serverVersion = "2.1.1";
       this.resources = CAPN_RESOURCES;
       this.prompts = [];
       this.root = process.cwd();
@@ -49,8 +49,8 @@ export class McpServer {
         this.toolMap.set(item.definition.name, item);
       }
     } else {
-      this.serverName = optionsOrHandlers.name ?? "waymark-discovery-mcp";
-      this.serverVersion = optionsOrHandlers.version ?? "2.0.0";
+      this.serverName = optionsOrHandlers.name ?? "waymark-engine";
+      this.serverVersion = optionsOrHandlers.version ?? "2.1.1";
       const tools = optionsOrHandlers.tools ?? CAPN_TOOLS;
       this.resources = optionsOrHandlers.resources ?? CAPN_RESOURCES;
       this.prompts = optionsOrHandlers.prompts ?? [];
@@ -110,12 +110,39 @@ export class McpServer {
   private async handleRequest(request: JsonRpcRequest): Promise<JsonRpcResponse> {
     const { id, method, params } = request;
 
-    if (method === "initialize") {
+    const supportedVersions = ["2026-07-28", "2025-11-25", "2024-11-05"];
+
+    if (method === "server/discover") {
       return {
         jsonrpc: "2.0",
         id,
         result: {
-          protocolVersion: "2024-11-05",
+          resultType: "complete",
+          supportedVersions,
+          capabilities: {
+            tools: {},
+            resources: {},
+            prompts: {},
+          },
+          _meta: {
+            "io.modelcontextprotocol/serverInfo": {
+              name: this.serverName,
+              version: this.serverVersion,
+            },
+          },
+          instructions: "Waymark discovery engine: AST structural graph, literal path router, deterministic fzf fuzzy matcher, and repository consensus BM25 memory.",
+        },
+      };
+    }
+
+    if (method === "initialize") {
+      const requested = typeof params?.protocolVersion === "string" ? params.protocolVersion : "2024-11-05";
+      const negotiated = supportedVersions.includes(requested) ? requested : "2024-11-05";
+      return {
+        jsonrpc: "2.0",
+        id,
+        result: {
+          protocolVersion: negotiated,
           serverInfo: {
             name: this.serverName,
             version: this.serverVersion,
@@ -148,7 +175,9 @@ export class McpServer {
     }
 
     if (method === "tools/call") {
-      const toolName = typeof params?.name === "string" ? params.name : "";
+      let toolName = typeof params?.name === "string" ? params.name : "";
+      if (toolName === "waymark_ask") toolName = "capn_ask";
+      if (toolName === "waymark_chart") toolName = "capn_chart";
       const toolArgs = (params?.arguments && typeof params.arguments === "object" ? params.arguments : {}) as Record<string, unknown>;
 
       const handler = this.toolMap.get(toolName);

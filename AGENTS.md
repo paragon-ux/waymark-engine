@@ -51,10 +51,8 @@ When an agent or client editor launches `waymark-engine` via stdio, the server d
 {
   "mcpServers": {
     "waymark-engine": {
-      "command": "node",
-      "args": [
-        "c:/Users/USER/Desktop/Frameworks/deepseek-playground-2/Waymark-grill-logic/dist/src/mcp/capnIndex.js"
-      ],
+      "command": "npx",
+      "args": ["-y", "waymark-engine"],
       "env": {
         "CODEDB_ALLOW_TEMP": "1"
       }
@@ -62,7 +60,7 @@ When an agent or client editor launches `waymark-engine` via stdio, the server d
   }
 }
 ```
-*(Or via global npm: `"command": "npx", "args": ["-y", "waymark-engine"]`)*
+*(For local source development, replace `"command": "npx"` with `"command": "node"`, and `"args": ["/path/to/waymark-engine/dist/src/mcp/capnIndex.js"]`).*
 
 #### 2. Claude Desktop (`claude_desktop_config.json`)
 ```json

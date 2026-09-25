@@ -2,7 +2,7 @@
 
 [![npm version](https://img.shields.io/npm/v/waymark-engine)](https://www.npmjs.com/package/waymark-engine)
 [![CI](https://github.com/paragon-ux/waymark-engine/actions/workflows/verify.yml/badge.svg)](https://github.com/paragon-ux/waymark-engine/actions/workflows/verify.yml)
-[![tests](https://img.shields.io/badge/tests-24%2F24-brightgreen)](https://github.com/paragon-ux/waymark-engine)
+[![tests](https://img.shields.io/badge/tests-39%2F39-brightgreen)](https://github.com/paragon-ux/waymark-engine)
 [![node](https://img.shields.io/badge/node-%3E%3D22-339933?logo=node.js)](https://nodejs.org)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![recall](https://img.shields.io/badge/recall-lexical%20BM25%20(no%20embeddings)-informational)](https://github.com/paragon-ux/capn-hook)
@@ -20,12 +20,13 @@ build, no embeddings, no daemon.
 | *"How does authentication work?"* | The files that answer it — charted, staleness-checked |
 | *"Entrypoints"* | The architecture's front doors |
 
-Questions route through three deterministic tiers: structural questions hit the
+Questions route through deterministic tiers: structural questions hit the
 deterministic codedb structural index + resolved call graph (fail-closed, exact
 match); literal filename/path queries (`sample.ts`, `src/api/webhooks.ts`,
-`.gitignore`) short-circuit a zero-dependency in-memory matcher; and conceptual
-questions go to BM25 charted memory. Misses fall through cleanly — the engine
-says "I don't know" rather than hallucinating.
+`.gitignore`) short-circuit a zero-dependency in-memory matcher; and when both
+miss, the engine enters the **Discovery Junction** (Tier 3 Junegunn Choi `fzf`
+Smith-Waterman fuzzy lexical match ⇄ Capn BM25 charted semantic memory). Misses
+fall through cleanly — the engine says "I don't know" rather than hallucinating.
 
 ## Why the symbolic tier uses a forked structural engine
 
@@ -100,6 +101,9 @@ waymark-discover --path src/index.ts [--language typescript|python]
 #   <name> must be an exact identifier (case-sensitive). If no codedb hit, the
 #   query falls through to semantic. Run `waymark-context` to see this contract.
 waymark-ask "Who calls verifyHop?"
+waymark-ask "refundOrdr"                      # Discovery Junction: fuzzy-lexical recommended (~92% match)
+waymark-ask "refundOrdr" -t fuzzy -b          # isolate fuzzy tier with high-resolution timings
+waymark-ask "refundOrdr" --plain              # token-minimal plain text for agents (~16 tokens)
 waymark-ask "How does authentication work in this project?"
 
 # Chart an answer so the next session skips the search
@@ -185,17 +189,31 @@ Tools: `capn_ask`, `capn_chart`, `waymark_discover_symbols`. Resource: `capn://s
 
 ## Routing
 
-Three deterministic tiers, in order:
+Four deterministic tiers coordinated by the Discovery Junction:
 
-1. **Symbolic (codedb)** — exact identifier and call-graph queries hit the
-   deterministic codedb structural index + resolved, fail-closed call graph
-   (ambiguity surfaces file-scoped candidates rather than guessing).
-2. **Literal** — bare filenames and paths (`sample.ts`, `src/api/webhooks.ts`,
-   `.gitignore`, `Dockerfile`) resolve against an in-memory path index, fail-closed
-   on ambiguity (never guesses).
-3. **Semantic (BM25)** — conceptual questions fall back to charted FTS5 memory.
+1. **Tier 1: AST Structural (`codedb`)** — exact identifier, definition, and call-graph queries hit the deterministic codedb structural index + resolved, fail-closed call graph ([`@paragon-ux/codedb-core`](https://github.com/paragon-ux/codedb-core) v1.0.2). Ambiguity surfaces file-scoped candidates rather than guessing.
+2. **Tier 2: Literal Path Router** — bare filenames and paths (`sample.ts`, `src/api/webhooks.ts`, `.gitignore`, `Dockerfile`) resolve against an in-memory path index, fail-closed on ambiguity.
+3. **Tier 3: Deterministic Fuzzy Matcher** — embedded Junegunn Choi `fzf` (`algo.go`) two-pass Smith-Waterman scoring with boundary bonuses, camelCase detection, and path-proximity boosts. Zero external dependencies.
+4. **Tier 4: Charted Memory (Capn BM25)** — conceptual and narrative questions hit long-term lexical consensus memory ([`@paragon-ux/capn-hook`](https://github.com/paragon-ux/capn-hook)).
+
+When structural and literal tiers miss, the **Discovery Junction** evaluates syntactic candidate signals and emits an inspectable recommendation (`status: "junction"`) with machine-readable continuation instructions (`tool: "waymark_ask"` and `cliCommand`), allowing agents to force alternative paths without guessing.
 
 A clean miss is a miss — the engine never guesses.
+
+## Specifications & Documentation
+
+The canonical technical specifications, contracts, and benchmark metrics for Waymark Engine are maintained under [`/spec`](spec/):
+
+- [`spec/README.md`](spec/README.md) — Architectural map, tier index, and core design invariants
+- [`spec/tier-1-ast.md`](spec/tier-1-ast.md) — Tier 1 AST structural call graphs and definitions
+- [`spec/tier-2-path.md`](spec/tier-2-path.md) — Tier 2 literal filename and path router
+- [`spec/tier-3-fuzzy.md`](spec/tier-3-fuzzy.md) — Tier 3 deterministic Junegunn Choi `fzf` matcher
+- [`spec/tier-4-semantic.md`](spec/tier-4-semantic.md) — Tier 4 Capn lexical BM25 consensus memory
+- [`spec/discovery-junction.md`](spec/discovery-junction.md) — Discovery Junction recommendation state machine
+- [`spec/command-registry.md`](spec/command-registry.md) — Canonical CLI commands, flags, Discovery options, and MCP tools
+- [`spec/error-codes.md`](spec/error-codes.md) — Status envelopes, error codes, miss codes, and exit codes
+- [`spec/metrics.md`](spec/metrics.md) — Measurable operational metrics schema and comparative benchmarks
+- [`CHANGELOG.md`](CHANGELOG.md) — Release history and breaking changes across versions
 
 ## Related
 

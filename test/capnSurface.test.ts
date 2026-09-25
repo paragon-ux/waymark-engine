@@ -32,7 +32,11 @@ test("full wrapped capn surface: chart -> ask -> list -> bust -> chart -> unchar
   const published = await publish(repo, "capn-cli", exe, "Where are payment webhooks handled?", "They live in src/payments.ts.", ["src/payments.ts"]);
   assert.equal(published.published, true);
 
-  const hit = await ask(repo, "capn-cli", exe, "payment webhooks");
+  const junction = await ask(repo, "capn-cli", exe, "payment webhooks");
+  assert.equal(junction.status, "junction");
+  assert.equal((junction as any).executedOption.tier, "capn-cli");
+
+  const hit = await ask(repo, "capn-cli", exe, "payment webhooks", { autoResolve: true });
   assert.equal(hit.status, "hit");
   assert.equal(hit.provider, "capn-cli");
 

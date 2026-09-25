@@ -3,11 +3,12 @@ import { promisify } from "node:util";
 import { createRequire } from "node:module";
 import type { AstIntent } from "./discoveryRouter.js";
 import { resolveWindowsExecutable } from "./executable.js";
+import type { FuzzyCandidate } from "./types.js";
 
 const require = createRequire(import.meta.url);
 const execFileAsync = promisify(execFile);
 
-interface ResolvedCodedbCommand {
+export interface ResolvedCodedbCommand {
   file: string;
   prefix: string[];
   viaCmdShim: boolean;
@@ -49,6 +50,9 @@ interface CodedbJson {
   ok: boolean;
   tool?: string;
   ambiguous?: boolean;
+  symbol_exists?: boolean;
+  dropped_ambiguous_callers?: number;
+  dropped_ambiguous_callees?: number;
   count?: number;
   path?: string;
   language?: string;
@@ -56,6 +60,8 @@ interface CodedbJson {
   results?: unknown[];
   symbols?: unknown[];
   files?: unknown[];
+  callers?: { count?: number; results?: unknown[] } | unknown[];
+  callees?: { count?: number; results?: unknown[] } | unknown[];
 }
 
 interface CodedbRun {
@@ -111,7 +117,7 @@ interface SymbolHit {
 
 /**
  * Answer a structural intent with the deterministic codedb CLI. `trace_path`
- * uses the resolved fail-closed call graph (`callers`/`callees`);
+ * uses the resolved fail-closed call graph (via single-pass `neighbors`);
  * `search_graph` resolves symbol definitions; `get_architecture` reports repo
  * topology. A clean miss returns `hit: false` — never a guess.
  */
@@ -137,11 +143,44 @@ export async function queryStructural(
 
   if (intent.tool === "trace_path") {
     const fn = intent.functionName || "";
+    // Priority: Try single-pass `neighbors` command first
+    const nRun = await runJson(root, command, ["neighbors", fn, "--json"]);
+    if (nRun.ok && nRun.payload) {
+      if (nRun.payload.ambiguous === true) {
+        const cands = (nRun.payload.results as Neighbor[] | undefined) ?? [];
+        let out = `function: ${fn}\n`;
+        out += `ambiguous: true\n`;
+        out += `candidates (${cands.length}):\n`;
+        for (const c of cands) {
+          out += `  ${c.path}:${c.line} ${c.kind ?? "function"} ${c.name}\n`;
+        }
+        return { hit: true, output: out.trim() };
+      }
+
+      if (nRun.payload.symbol_exists === false) {
+        return { hit: false, output: `Function or method "${fn}" not found.` };
+      }
+
+      const callersData = nRun.payload.callers;
+      const calleesData = nRun.payload.callees;
+      const callerItems = (Array.isArray(callersData) ? callersData : (callersData as { results?: Neighbor[] })?.results) ?? [];
+      const calleeItems = (Array.isArray(calleesData) ? calleesData : (calleesData as { results?: Neighbor[] })?.results) ?? [];
+      const callerNames = callerItems.map((r: any) => r.name);
+      const calleeNames = calleeItems.map((r: any) => r.name);
+
+      let out = `function: ${fn}\n`;
+      out += `direction: both\n`;
+      out += `callees_total: ${calleeNames.length}\n`;
+      out += `callees: ${calleeNames.length > 0 ? calleeNames.join(", ") : "None"}\n`;
+      out += `callers_total: ${callerNames.length}\n`;
+      out += `callers: ${callerNames.length > 0 ? callerNames.join(", ") : "None"}\n`;
+      return { hit: true, output: out.trim() };
+    }
+
+    // Fallback for legacy codedb without `neighbors`
     const callers = await runJson(root, command, ["callers", fn, "--json"]);
     const callees = await runJson(root, command, ["callees", fn, "--json"]);
 
-    // Surface file-scoped candidate definitions on a bare-name collision instead
-    // of merging (old walker) or silently refusing (fail-closed empty).
     if (callers.payload?.ambiguous === true || callees.payload?.ambiguous === true) {
       const source = callers.payload?.ambiguous === true ? callers.payload : callees.payload;
       const cands = (source?.results as Neighbor[] | undefined) ?? [];
@@ -186,4 +225,24 @@ export async function queryStructural(
     out += `  ${r.name} ${r.kind} ${r.path} ${r.line}\n`;
   }
   return { hit: true, output: out.trim() };
+}
+
+/**
+ * Retrieve candidate symbols from codedb for fuzzy ranking.
+ */
+export async function queryFuzzyCandidates(
+  token: string,
+  root: string,
+  executable?: string,
+): Promise<FuzzyCandidate[]> {
+  const command = resolveCodedbCommand(executable);
+  const res = await runJson(root, command, ["symbol", token, "--fuzzy", "--max-results", "100", "--json"]);
+  if (!res.ok || !res.payload?.results) return [];
+  const hits = res.payload.results as Array<{ name: string; path: string; line: number; kind?: string }>;
+  return hits.map((h) => ({
+    name: h.name,
+    path: h.path,
+    line: h.line,
+    kind: h.kind,
+  }));
 }

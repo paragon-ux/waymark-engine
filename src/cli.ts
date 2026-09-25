@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
-import { AdapterProfile, WaymarkError } from "./types.js";
+import { AdapterProfile, WaymarkError, DiscoveryTier } from "./types.js";
 import { repoRoot } from "./paths.js";
 import { ask as capnAsk, initCapn, publish, unchart, bust, prune, listEntries, context } from "./capnAdapter.js";
 import { discoverSymbolsInFile } from "./astExtractor.js";
@@ -14,23 +14,54 @@ interface ParsedArgs {
   values: Map<string, string>;
 }
 
-const VALUE_FLAGS = new Set(["profile", "path", "language", "capn-executable", "question", "answer", "files"]);
+const VALUE_FLAGS = new Set([
+  "profile", "path", "language", "capn-executable", "question", "answer", "files",
+  "tier", "t", "format",
+]);
+
+const BOOLEAN_FLAGS = new Set([
+  "timing", "b", "json", "j", "plain", "p", "auto-resolve",
+]);
 
 function parseArgs(args: readonly string[]): ParsedArgs {
   const positionals: string[] = [];
   const values = new Map<string, string>();
   for (let index = 0; index < args.length; index += 1) {
     const current = args[index];
-    if (!current?.startsWith("--")) {
-      if (current !== undefined) positionals.push(current);
+    if (!current) continue;
+
+    if (current.startsWith("--")) {
+      const flag = current.slice(2);
+      if (BOOLEAN_FLAGS.has(flag)) {
+        values.set(flag, "true");
+        continue;
+      }
+      if (!VALUE_FLAGS.has(flag)) throw new WaymarkError("UNKNOWN_OPTION", `Unknown option --${flag}`);
+      const value = args[index + 1];
+      if (!value || value.startsWith("-")) throw new WaymarkError("MISSING_OPTION_VALUE", `Option --${flag} requires a value`);
+      values.set(flag, value);
+      index += 1;
       continue;
     }
-    const flag = current.slice(2);
-    if (!VALUE_FLAGS.has(flag)) throw new WaymarkError("UNKNOWN_OPTION", `Unknown option --${flag}`);
-    const value = args[index + 1];
-    if (!value || value.startsWith("--")) throw new WaymarkError("MISSING_OPTION_VALUE", `Option --${flag} requires a value`);
-    values.set(flag, value);
-    index += 1;
+
+    if (current.startsWith("-") && current.length > 1) {
+      const flag = current.slice(1);
+      if (BOOLEAN_FLAGS.has(flag)) {
+        const canonical = flag === "b" ? "timing" : flag === "j" ? "json" : flag === "p" ? "plain" : flag;
+        values.set(canonical, "true");
+        continue;
+      }
+      if (flag === "t") {
+        const value = args[index + 1];
+        if (!value || value.startsWith("-")) throw new WaymarkError("MISSING_OPTION_VALUE", `Option -t requires a value`);
+        values.set("tier", value);
+        index += 1;
+        continue;
+      }
+      throw new WaymarkError("UNKNOWN_OPTION", `Unknown option -${flag}`);
+    }
+
+    positionals.push(current);
   }
   return { positionals, values };
 }
@@ -55,7 +86,86 @@ function writeAllSync(fd: number, payload: Buffer): void {
   }
 }
 
-function output(value: unknown): void {
+function formatTimings(timings: Record<string, number>): string {
+  const parts: string[] = [];
+  if (timings.ast_ms !== undefined) parts.push(`ast: ${timings.ast_ms}ms`);
+  if (timings.path_ms !== undefined) parts.push(`path: ${timings.path_ms}ms`);
+  if (timings.fuzzy_ms !== undefined) parts.push(`fuzzy: ${timings.fuzzy_ms}ms`);
+  if (timings.capn_ms !== undefined) parts.push(`capn: ${timings.capn_ms}ms`);
+  if (timings.total_ms !== undefined) parts.push(`total: ${timings.total_ms}ms`);
+  return parts.join(" | ");
+}
+
+function renderPlainText(value: unknown): string {
+  if (!value || typeof value !== "object") return String(value);
+  const record = value as Record<string, unknown>;
+
+  if (record.status === "hit") {
+    const provider = record.provider as string;
+    const confidence = record.confidence ? ` (confidence: ${record.confidence})` : "";
+    let detail = "";
+    if (provider === "codedb" || provider === "literal-path") {
+      detail = String(record.result ?? "");
+    } else if (provider === "fuzzy-lexical") {
+      const res = record.result as Record<string, unknown>;
+      detail = `${res.name} -> ${res.path}:${res.line}${res.score !== undefined ? ` (score: ${res.score})` : ""}`;
+    } else {
+      detail = typeof record.result === "string" ? record.result : JSON.stringify(record.result);
+    }
+    const timingStr = record.timings ? `\n[timing] ${formatTimings(record.timings as Record<string, number>)}` : "";
+    return `[hit: ${provider}]${confidence}\n${detail}${timingStr}`;
+  }
+
+  if (record.status === "junction") {
+    const rec = (record.executedOption as Record<string, unknown>)?.tier ?? "unknown";
+    const signal = record.signal as { shape?: string; candidateTokens?: string[] } | undefined;
+    const tokens = signal?.candidateTokens?.length ? ` (${signal.candidateTokens.join(", ")})` : "";
+    const shapeStr = signal?.shape ? `Signal: ${signal.shape}${tokens}\n` : "";
+
+    const execOpt = record.executedOption as Record<string, unknown>;
+    let resStr = "";
+    if (execOpt?.result && typeof execOpt.result === "object") {
+      const res = execOpt.result as Record<string, unknown>;
+      if (res.name) {
+        resStr = `Result: ${res.name} in ${res.path}:${res.line}${res.score !== undefined ? ` (score: ${res.score})` : ""}\n`;
+      } else {
+        resStr = `Result: ${JSON.stringify(res)}\n`;
+      }
+    } else if (execOpt?.result) {
+      resStr = `Result: ${String(execOpt.result)}\n`;
+    }
+
+    const tip = record.tip ?? (record.alternativeOption as any)?.continuation?.cliCommand;
+    const tipStr = tip ? `Tip: ${tip}\n` : "";
+    const timingStr = record.timings ? `[timing] ${formatTimings(record.timings as Record<string, number>)}\n` : "";
+
+    return `[junction] Recommended: ${rec}\n${shapeStr}${resStr}${tipStr}${timingStr}`.trimEnd();
+  }
+
+  if (record.status === "miss") {
+    const reason = record.reason ?? record.missCode ?? "No match";
+    const timingStr = record.timings ? `\n[timing] ${formatTimings(record.timings as Record<string, number>)}` : "";
+    return `[miss] ${reason}${timingStr}`;
+  }
+
+  if (record.status === "error") {
+    return `[error] ${record.errorCode ?? "ERROR"}: ${record.message ?? record.error}`;
+  }
+
+  return JSON.stringify(value, null, 2);
+}
+
+function output(value: unknown, options?: { json?: boolean; plain?: boolean }): void {
+  if (options?.plain) {
+    const text = renderPlainText(value);
+    try {
+      writeAllSync(1, Buffer.from(`${text}\n`, "utf8"));
+    } catch {
+      process.stdout.write(`${text}\n`);
+    }
+    return;
+  }
+
   try {
     writeAllSync(1, Buffer.from(`${JSON.stringify(value)}\n`, "utf8"));
   } catch {
@@ -103,7 +213,7 @@ async function runCommand(command: string, rawArgs: readonly string[]): Promise<
         "Waymark discovery engine (symbolic + semantic routing)",
         "  init [--capn-executable <path>] (initialize lexical Capn store)",
         "  discover-symbols --path <repository-relative-file> [--language typescript|python]",
-        "  ask <question> [--profile capn-cli|none] [--capn-executable <path>]",
+        "  ask <question> [--profile capn-cli|none] [--tier auto|ast|path|fuzzy|capn] [--timing] [--json|--plain]",
         "  chart --question <q> --answer <a> --files <a,b> [--profile capn-cli|none] [--capn-executable <path>]",
         "  unchart <id> | bust <path> | prune | list | context",
         "  mcp (starts the stdio MCP discovery server)",
@@ -111,6 +221,13 @@ async function runCommand(command: string, rawArgs: readonly string[]): Promise<
         "Explicit wrappers (same engine, one command per action):",
         "  waymark-init | waymark-ask | waymark-discover | waymark-chart | waymark-unchart",
         "  waymark-bust | waymark-prune | waymark-list | waymark-context | waymark-mcp",
+        "",
+        "Options for ask:",
+        "  -t, --tier <tier>    Force discovery tier: auto | ast | path | fuzzy | capn",
+        "  -b, --timing         Collect high-resolution tier execution timings",
+        "  -j, --json           Emit full JSON output",
+        "  -p, --plain          Emit token-minimal plain text output",
+        "  --auto-resolve       Collapse junction responses to top recommendation",
         "",
         "Env: WAYMARK_CAPN_PROFILE (capn-cli|none, default capn-cli), WAYMARK_CAPN_EXECUTABLE (optional override; default: bundled lexical-only capn-hook)",
       ].join("\n"),
@@ -128,7 +245,20 @@ async function runCommand(command: string, rawArgs: readonly string[]): Promise<
 
   if (command === "ask") {
     const question = boundedText(parsed.positionals.join(" "), 240, "question");
-    return { value: await capnAsk(root, resolveProfile(parsed), resolveCapnExecutable(parsed), question) };
+    const rawTier = parsed.values.get("tier");
+    const tier = rawTier as DiscoveryTier | undefined;
+    const timing = parsed.values.has("timing");
+    const autoResolve = parsed.values.has("auto-resolve");
+
+    return {
+      value: await capnAsk(
+        root,
+        resolveProfile(parsed),
+        resolveCapnExecutable(parsed),
+        question,
+        { tier, timing, autoResolve },
+      ),
+    };
   }
 
   if (command === "chart") {
@@ -180,9 +310,12 @@ async function runCommand(command: string, rawArgs: readonly string[]): Promise<
  * waymark-chart) so each action is one process without subcommand parsing.
  */
 export async function runCli(command: string, args: readonly string[]): Promise<void> {
+  const parsed = parseArgs(args);
+  const isJson = parsed.values.has("json");
+  const isPlain = parsed.values.has("plain");
   try {
     const result = await runCommand(command, args);
-    if (result.value !== null) output(result.value);
+    if (result.value !== null) output(result.value, { json: isJson, plain: isPlain });
     // web-tree-sitter's Emscripten runtime leaves teardown hooks on the event loop
     // after any parse; a graceful drain adds seconds of 0%-CPU latency per one-shot
     // CLI call. All output is flushed synchronously by this point, so hard-exit
@@ -190,7 +323,7 @@ export async function runCli(command: string, args: readonly string[]): Promise<
     process.exit(result.exitCode ?? 0);
   } catch (error) {
     const result = errorOutput(error);
-    output(result.value);
+    output(result.value, { json: isJson, plain: isPlain });
     process.exit(result.exitCode ?? 1);
   }
 }

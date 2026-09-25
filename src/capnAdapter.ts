@@ -3,8 +3,8 @@ import fs from "node:fs";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { createRequire } from "node:module";
-import { AdapterProfile, PublicationResult, WaymarkError } from "./types.js";
-import { collectRepoPaths, detectAstIntent, detectLiteralIntent, matchLiteralPath } from "./discoveryRouter.js";
+import { AdapterProfile, PublicationResult, WaymarkError, AskOptions, AskResult } from "./types.js";
+import { collectRepoPaths, detectAstIntent, detectLiteralIntent, matchLiteralPath, routeDiscovery } from "./discoveryRouter.js";
 import { queryStructural } from "./codedbAdapter.js";
 import { resolveWindowsExecutable } from "./executable.js";
 
@@ -188,10 +188,41 @@ export async function publish(
   }
 }
 
+async function queryCapnMemory(
+  root: string,
+  executable: string,
+  question: string,
+): Promise<{ hit: boolean; result: unknown; error?: string }> {
+  try {
+    const result = await execute(root, resolveCapnCommand(executable), ["ask", question]);
+    const stdout = (result.stdout || "").trim();
+    if (stdout && !stdout.startsWith("No charted answer.")) {
+      try {
+        const parsed: unknown = JSON.parse(stdout);
+        return { hit: true, result: parsed };
+      } catch {
+        return { hit: true, result: digestOutput(stdout) };
+      }
+    }
+    return { hit: false, result: null };
+  } catch (error) {
+    const candidate = error as { message?: string; stderr?: string; stdout?: string; code?: string | number };
+    const combined = `${candidate.stdout || ""}\n${candidate.stderr || ""}`;
+    if (combined.includes("No charted answer.")) {
+      return { hit: false, result: null };
+    }
+    return {
+      hit: false,
+      result: null,
+      error: digestOutput(`${candidate.code ?? "CAPN_ERROR"}: ${candidate.stderr || candidate.message || "Capn ask failed"}`),
+    };
+  }
+}
+
 /**
- * The two-phase discovery router: structural questions (who calls / where is /
- * entrypoints) are answered by the deterministic codedb CLI (resolved, fail-closed
- * call graph); everything else falls through to Capn's charted lexical memory.
+ * The multi-tier discovery router: structural questions (who calls / where is /
+ * entrypoints) are answered by the deterministic codedb CLI; literal paths short-circuit;
+ * fuzzy lexical and charted memory form the Discovery Junction.
  * A clean miss is a miss — the router never guesses.
  */
 export async function ask(
@@ -199,71 +230,19 @@ export async function ask(
   profile: AdapterProfile,
   executable: string,
   question: string,
-): Promise<Record<string, unknown>> {
+  options?: AskOptions,
+): Promise<AskResult | Record<string, unknown>> {
   if (profile === "none") return { waymark: 1, kind: "ask", provider: "none", status: "miss", matches: [] };
 
-  const intent = detectAstIntent(question);
-
-  // Structural AST query -> deterministic codedb CLI (resolved call graph).
-  if (intent.requiresParser) {
-    const astResult = await queryStructural(intent, root);
-    if (astResult.hit) {
-      return {
-        waymark: 1,
-        kind: "ask",
-        provider: "codedb",
-        status: "hit",
-        result: digestOutput(astResult.output),
-      };
-    }
-  }
-
-  // Tier 2: literal filename/path short-circuit (deterministic, zero-dep).
-  // Intercepts exact file references before they dilute into BM25.
-  const literal = detectLiteralIntent(question);
-  if (literal.isLiteral) {
-    const matches = matchLiteralPath(literal.normalized, collectRepoPaths(root));
-    if (matches.length > 0) {
-      return {
-        waymark: 1,
-        kind: "ask",
-        provider: "literal-path",
-        status: "hit",
-        result: matches.map((m) => `${m.file}\t[${m.kind}]`).join("\n"),
-      };
-    }
-  }
-
-  // Semantic fallback: deterministic lexical recall ONLY. Throws (fail-closed)
-  // when the store is uninitialized or in embedding mode.
-  assertLexicalStore(root);
-
-  try {
-    const result = await execute(root, resolveCapnCommand(executable), ["ask", question]);
-    const stdout = (result.stdout || "").trim();
-    if (stdout && !stdout.startsWith("No charted answer.")) {
-      try {
-        const parsed: unknown = JSON.parse(stdout);
-        return { waymark: 1, kind: "ask", provider: "capn-cli", status: "hit", result: parsed };
-      } catch {
-        return { waymark: 1, kind: "ask", provider: "capn-cli", status: "hit", result: digestOutput(stdout) };
-      }
-    }
-    return { waymark: 1, kind: "ask", provider: "capn-cli", status: "miss", matches: [] };
-  } catch (error) {
-    const candidate = error as { message?: string; stderr?: string; stdout?: string; code?: string | number };
-    const combined = `${candidate.stdout || ""}\n${candidate.stderr || ""}`;
-    if (combined.includes("No charted answer.")) {
-      return { waymark: 1, kind: "ask", provider: "capn-cli", status: "miss", matches: [] };
-    }
-    return {
-      waymark: 1,
-      kind: "ask",
-      provider: "capn-cli",
-      status: "error",
-      error: digestOutput(`${candidate.code ?? "CAPN_ERROR"}: ${candidate.stderr || candidate.message || "Capn ask failed"}`),
-    };
-  }
+  return await routeDiscovery({
+    root,
+    question,
+    options,
+    capnExecutable: executable,
+    profile,
+    queryCapnMemory,
+    assertLexicalStore,
+  });
 }
 
 // ---------------------------------------------------------------------------

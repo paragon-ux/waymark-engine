@@ -71,15 +71,28 @@ export const capnAskTool: McpToolHandler = {
       const payload: Record<string, unknown> = {
         waymark: 1,
         kind: "ask",
-        provider: result.provider,
+        provider: result.provider ?? "waymark-engine",
         status: result.status,
       };
       if (result.status === "hit") {
         payload.result = result.result;
+        if (result.timings) payload.timings = result.timings;
+      } else if (result.status === "junction") {
+        payload.query = result.query;
+        payload.signal = result.signal;
+        payload.options = result.options;
+        payload.executedOption = result.executedOption;
+        payload.alternativeOption = result.alternativeOption;
+        payload.chartHint = result.chartHint;
+        if (result.recommendation) payload.recommendation = result.recommendation;
+        if (result.tip) payload.tip = result.tip;
+        if (result.timings) payload.timings = result.timings;
       } else if (result.status === "error") {
-        payload.error = result.error;
+        payload.error = "error" in result ? result.error : ("message" in result ? result.message : "Error");
       } else {
-        payload.matches = result.matches ?? [];
+        payload.matches = "matches" in result ? result.matches : [];
+        if ("missCode" in result) payload.missCode = result.missCode;
+        if ("reason" in result) payload.reason = result.reason;
       }
       return jsonResult(payload);
     } catch (error) {

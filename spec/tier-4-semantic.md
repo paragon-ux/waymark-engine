@@ -1,7 +1,7 @@
 # Specification: Tier 4 — Charted Semantic Memory (BM25)
 
 **Tier Identifier**: `capn` / `capn-cli`  
-**Owning Module**: [`src/capnAdapter.ts`](file:///c:/Users/USER/Desktop/Frameworks/deepseek-playground-2/Waymark-grill-logic/src/capnAdapter.ts)  
+**Owning Module**: [`src/capnAdapter.ts`](../src/capnAdapter.ts)  
 **Upstream Engine**: [`@paragon-ux/capn-hook`](https://github.com/paragon-ux/capn-hook) (v1.1.0, bundled lexical fork)  
 **Status**: Stable
 

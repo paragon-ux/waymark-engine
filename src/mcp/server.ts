@@ -23,6 +23,8 @@ export interface McpServerOptions {
   tools?: McpToolHandler[];
   resources?: McpResourceDefinition[];
   prompts?: McpPromptDefinition[];
+  root?: string;
+  enableDaemon?: boolean;
 }
 
 export class McpServer {
@@ -31,6 +33,9 @@ export class McpServer {
   private readonly serverVersion: string;
   private readonly resources: McpResourceDefinition[];
   private readonly prompts: McpPromptDefinition[];
+  private readonly root: string;
+  private readonly enableDaemon: boolean;
+  private daemon: any = null;
 
   constructor(optionsOrHandlers: McpServerOptions | McpToolHandler[] = CAPN_TOOLS) {
     if (Array.isArray(optionsOrHandlers)) {
@@ -38,6 +43,8 @@ export class McpServer {
       this.serverVersion = "2.0.0";
       this.resources = CAPN_RESOURCES;
       this.prompts = [];
+      this.root = process.cwd();
+      this.enableDaemon = true;
       for (const item of optionsOrHandlers) {
         this.toolMap.set(item.definition.name, item);
       }
@@ -47,6 +54,8 @@ export class McpServer {
       const tools = optionsOrHandlers.tools ?? CAPN_TOOLS;
       this.resources = optionsOrHandlers.resources ?? CAPN_RESOURCES;
       this.prompts = optionsOrHandlers.prompts ?? [];
+      this.root = optionsOrHandlers.root ?? process.cwd();
+      this.enableDaemon = optionsOrHandlers.enableDaemon !== false;
       for (const item of tools) {
         this.toolMap.set(item.definition.name, item);
       }
@@ -250,7 +259,36 @@ export class McpServer {
     };
   }
 
+  public async startResidentDaemon(): Promise<void> {
+    if (!this.enableDaemon || this.daemon) return;
+    try {
+      const { WaymarkDaemon } = await import("../daemon.js");
+      this.daemon = new WaymarkDaemon(this.root, 0); // 0 = keep alive for entire MCP session
+      await this.daemon.start();
+    } catch {
+      // non-fatal: fail closed to cold query path
+    }
+  }
+
+  public close(): void {
+    if (this.daemon) {
+      try {
+        this.daemon.stop();
+      } catch {
+        // ignore
+      }
+      this.daemon = null;
+    }
+  }
+
   public async runStdio(): Promise<void> {
+    await this.startResidentDaemon();
+
+    const cleanup = () => this.close();
+    process.once("SIGINT", cleanup);
+    process.once("SIGTERM", cleanup);
+    process.once("exit", cleanup);
+
     process.stdin.setEncoding("utf8");
     let buffer = "";
 
@@ -275,6 +313,7 @@ export class McpServer {
           process.stdout.write(`${response}\n`);
         }
       }
+      this.close();
     });
   }
 }

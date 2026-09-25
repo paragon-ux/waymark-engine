@@ -1,7 +1,7 @@
 # Specification: Discovery Junction (Fuzzy ⇄ Semantic)
 
 **Layer Identifier**: `junction`  
-**Owning Module**: [`src/discoveryRouter.ts`](file:///c:/Users/USER/Desktop/Frameworks/deepseek-playground-2/Waymark-grill-logic/src/discoveryRouter.ts)  
+**Owning Module**: [`src/discoveryRouter.ts`](../src/discoveryRouter.ts)  
 **Status**: Stable
 
 ---

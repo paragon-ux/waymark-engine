@@ -9,8 +9,9 @@ experiments/**/.tmp-*/
 .capn/
 .claude/
 .codex/
-.capn/
 
 # Ad-hoc local verification harnesses (machine-specific absolute paths)
 claude-probes.mjs
 precision-probes.mjs
+scratch/
+*.log

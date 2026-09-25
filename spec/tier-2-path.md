@@ -1,7 +1,7 @@
 # Specification: Tier 2 — Literal Path & Filename Router
 
 **Tier Identifier**: `path` / `literal-path`  
-**Owning Module**: [`src/discoveryRouter.ts`](file:///c:/Users/USER/Desktop/Frameworks/deepseek-playground-2/Waymark-grill-logic/src/discoveryRouter.ts)  
+**Owning Module**: [`src/discoveryRouter.ts`](../src/discoveryRouter.ts)  
 **Status**: Stable
 
 ---

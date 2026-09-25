@@ -1,3 +1,4 @@
+import os from "node:os";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { createRequire } from "node:module";
@@ -46,49 +47,36 @@ export function resolveCodedbCommand(executable?: string): ResolvedCodedbCommand
   return { file: resolved, prefix: [], viaCmdShim: ext === "cmd" || ext === "bat" };
 }
 
-interface CodedbJson {
-  ok: boolean;
-  tool?: string;
-  ambiguous?: boolean;
-  symbol_exists?: boolean;
-  dropped_ambiguous_callers?: number;
-  dropped_ambiguous_callees?: number;
-  count?: number;
-  path?: string;
-  language?: string;
-  line_count?: number;
-  results?: unknown[];
-  symbols?: unknown[];
-  files?: unknown[];
-  callers?: { count?: number; results?: unknown[] } | unknown[];
-  callees?: { count?: number; results?: unknown[] } | unknown[];
-}
+import { getResidentClient, type CodedbJson, type CodedbRun } from "./residentCodedb.js";
+import { tryDaemonQuery, autoStartDaemon } from "./daemon.js";
 
-interface CodedbRun {
-  ok: boolean;
-  payload: CodedbJson | null;
-  error: string;
-}
+export type { CodedbJson, CodedbRun };
 
-async function execute(root: string, command: ResolvedCodedbCommand, args: readonly string[]): Promise<{ stdout: string; stderr: string }> {
+async function executeCold(root: string, command: ResolvedCodedbCommand, args: readonly string[]): Promise<{ stdout: string; stderr: string }> {
   const fullArgs = [...command.prefix, ...args];
   const timeoutMs = process.env.WAYMARK_CODEDB_TIMEOUT
     ? parseInt(process.env.WAYMARK_CODEDB_TIMEOUT, 10) || 120_000
     : 120_000;
+  const defaultThreads = Math.max(1, (os.availableParallelism?.() || os.cpus().length || 2) - 1);
+  const maxThreads = process.env.CODEDB_MAX_THREADS || String(defaultThreads);
   return await execFileAsync(command.file, fullArgs, {
     cwd: root,
     windowsHide: true,
     shell: false,
     timeout: timeoutMs,
     maxBuffer: 16 * 1024 * 1024,
-    env: { ...process.env, CODEDB_QUIET: "1" },
+    env: {
+      ...process.env,
+      CODEDB_QUIET: "1",
+      CODEDB_MAX_THREADS: maxThreads,
+    },
   });
 }
 
-/** Run one codedb query with `--json` and return the parsed payload. */
-async function runJson(root: string, command: ResolvedCodedbCommand, args: readonly string[]): Promise<CodedbRun> {
+/** Cold execution fallback: spawns a one-shot codedb process. */
+async function runJsonCold(root: string, command: ResolvedCodedbCommand, args: readonly string[]): Promise<CodedbRun> {
   try {
-    const result = await execute(root, command, args);
+    const result = await executeCold(root, command, args);
     const stdout = (result.stdout || "").trim();
     const lines = stdout.split(/\r?\n/u).filter((line) => line.trim().length > 0);
     const jsonLine = lines[lines.length - 1] ?? "";
@@ -101,6 +89,50 @@ async function runJson(root: string, command: ResolvedCodedbCommand, args: reado
   } catch (error) {
     const candidate = error as { message?: string; stderr?: string; stdout?: string };
     return { ok: false, payload: null, error: candidate.stderr || candidate.stdout || candidate.message || "codedb failed" };
+  }
+}
+
+/** Run one codedb query with `--json`, preferring resident daemon/client with cold fallback. */
+export async function runJson(root: string, command: ResolvedCodedbCommand, args: readonly string[]): Promise<CodedbRun> {
+  // 1. Explicit escape hatch to force one-shot cold execute
+  if (process.env.WAYMARK_DISABLE_RESIDENT === "1") {
+    return await runJsonCold(root, command, args);
+  }
+
+  // 2. Query active daemon if running
+  try {
+    const daemonRes = await tryDaemonQuery(root, args);
+    if (daemonRes !== null) {
+      return daemonRes;
+    }
+  } catch {
+    // Daemon unreachable; continue
+  }
+
+  // 3. Only auto-start daemon if explicitly opted-in via env or flag (default is OFF)
+  // Preserves zero-background-daemon invariant for standard CLI commands.
+  const explicitAutoDaemon = process.env.WAYMARK_AUTO_DAEMON === "1" || process.env.WAYMARK_DAEMON === "1";
+  if (explicitAutoDaemon && !command.prefix.length) {
+    try {
+      const started = await autoStartDaemon(root, 15_000);
+      if (started) {
+        const daemonRes = await tryDaemonQuery(root, args);
+        if (daemonRes !== null) {
+          return daemonRes;
+        }
+      }
+    } catch {
+      // Auto-start failed; continue
+    }
+  }
+
+  // 4. In-process resident client (for tests, programmatic ask() callers, or single processes)
+  try {
+    const client = getResidentClient(root, command);
+    return await client.send(args);
+  } catch {
+    // Resident client failed; fail-closed fallback to cold execution
+    return await runJsonCold(root, command, args);
   }
 }
 
@@ -117,6 +149,14 @@ interface SymbolHit {
   kind: string;
   name: string;
 }
+
+const HIGH_COLLISION_NAMES = new Set([
+  "new", "init", "close", "run", "start", "stop", "reset",
+  "get", "set", "create", "update", "delete", "destroy",
+  "handle", "register", "string", "error", "write", "read",
+  "execute", "process", "build", "parse", "format", "render",
+  "load", "save", "flush", "clear", "open", "connect", "disconnect",
+]);
 
 /**
  * Answer a structural intent with the deterministic codedb CLI. `trace_path`
@@ -146,6 +186,29 @@ export async function queryStructural(
 
   if (intent.tool === "trace_path") {
     const fn = intent.functionName || "";
+
+    // Fast-path ambiguity & existence check for bare identifiers (LEDGER-07)
+    // If a bare identifier has >= 25 candidate definitions across the repo, return ambiguity immediately
+    // rather than spending 25+ seconds computing and deduplicating massive caller sets.
+    if (!fn.includes(".") && !fn.includes(":")) {
+      const symRun = await runJson(root, command, ["symbol", fn, "--json"]);
+      if (symRun.ok && symRun.payload) {
+        const cands = (symRun.payload.results as Neighbor[] | undefined) ?? [];
+        if (cands.length >= 25) {
+          let out = `function: ${fn}\n`;
+          out += `ambiguous: true\n`;
+          out += `candidates (${cands.length}):\n`;
+          for (const c of cands) {
+            out += `  ${c.path}:${c.line} ${c.kind ?? "function"} ${c.name}\n`;
+          }
+          return { hit: true, output: out.trim() };
+        }
+        if (cands.length === 0) {
+          return { hit: false, output: `Function or method "${fn}" not found.` };
+        }
+      }
+    }
+
     // Priority: Try single-pass `neighbors` command first
     const nRun = await runJson(root, command, ["neighbors", fn, "--json"]);
     if (nRun.ok && nRun.payload) {
@@ -230,6 +293,8 @@ export async function queryStructural(
   return { hit: true, output: out.trim() };
 }
 
+const fuzzyCandidateCache = new Map<string, { at: number; candidates: FuzzyCandidate[] }>();
+
 /**
  * Retrieve candidate symbols from codedb for fuzzy ranking.
  */
@@ -238,14 +303,21 @@ export async function queryFuzzyCandidates(
   root: string,
   executable?: string,
 ): Promise<FuzzyCandidate[]> {
+  const cacheKey = `${root}::${token}`;
+  const cached = fuzzyCandidateCache.get(cacheKey);
+  if (cached && Date.now() - cached.at < 60_000) {
+    return cached.candidates;
+  }
   const command = resolveCodedbCommand(executable);
   const res = await runJson(root, command, ["symbol", token, "--fuzzy", "--max-results", "100", "--json"]);
   if (!res.ok || !res.payload?.results) return [];
   const hits = res.payload.results as Array<{ name: string; path: string; line: number; kind?: string }>;
-  return hits.map((h) => ({
+  const candidates = hits.map((h) => ({
     name: h.name,
     path: h.path,
     line: h.line,
     kind: h.kind,
   }));
+  fuzzyCandidateCache.set(cacheKey, { at: Date.now(), candidates });
+  return candidates;
 }

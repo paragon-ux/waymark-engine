@@ -73,6 +73,14 @@ test("unchart rejects unknown ids with a typed error", async () => {
   assert.match(String(result.error), /unknown id/);
 });
 
+test("unchart with ifExists: true succeeds idempotently on missing id (LEDGER-08)", async () => {
+  const repo = setupRepo();
+  const result = await unchart(repo, "", "deadbeef", true);
+  assert.equal(result.ok, true);
+  assert.equal(result.exitCode, 0);
+  assert.match(String(result.output), /not found/);
+});
+
 test("initCapn initializes store in deterministic lexical mode", async () => {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), "waymark-init-test-"));
   execFileSync("git", ["init", "-q", "-b", "main"], { cwd: repo });

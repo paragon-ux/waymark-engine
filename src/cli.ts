@@ -7,7 +7,6 @@ import { fileURLToPath } from "node:url";
 import { AdapterProfile, WaymarkError, DiscoveryTier } from "./types.js";
 import { repoRoot } from "./paths.js";
 import { ask as capnAsk, initCapn, publish, unchart, bust, prune, listEntries, context } from "./capnAdapter.js";
-import { discoverSymbolsInFile } from "./astExtractor.js";
 
 interface ParsedArgs {
   positionals: string[];
@@ -16,11 +15,11 @@ interface ParsedArgs {
 
 const VALUE_FLAGS = new Set([
   "profile", "path", "language", "capn-executable", "question", "answer", "files",
-  "tier", "t", "format",
+  "tier", "t", "format", "idle-timeout",
 ]);
 
 const BOOLEAN_FLAGS = new Set([
-  "timing", "b", "json", "j", "plain", "p", "auto-resolve",
+  "timing", "b", "json", "j", "plain", "p", "auto-resolve", "if-exists", "force", "daemon", "d",
 ]);
 
 function parseArgs(args: readonly string[]): ParsedArgs {
@@ -47,7 +46,7 @@ function parseArgs(args: readonly string[]): ParsedArgs {
     if (current.startsWith("-") && current.length > 1) {
       const flag = current.slice(1);
       if (BOOLEAN_FLAGS.has(flag)) {
-        const canonical = flag === "b" ? "timing" : flag === "j" ? "json" : flag === "p" ? "plain" : flag;
+        const canonical = flag === "b" ? "timing" : flag === "j" ? "json" : flag === "p" ? "plain" : flag === "d" ? "daemon" : flag;
         values.set(canonical, "true");
         continue;
       }
@@ -148,8 +147,41 @@ function renderPlainText(value: unknown): string {
     return `[miss] ${reason}${timingStr}`;
   }
 
-  if (record.status === "error") {
-    return `[error] ${record.errorCode ?? "ERROR"}: ${record.message ?? record.error}`;
+  if (record.kind === "daemon") {
+    const action = record.action as string;
+    if (action === "list") {
+      const daemons = (record.daemons as Array<{ pid: number; uptime: number; root: string; address: string }>) || [];
+      if (daemons.length === 0) return "[daemon] No active daemons running.";
+      let out = `[daemon] Active Daemons (${daemons.length}):\n`;
+      for (const d of daemons) {
+        out += `  PID ${d.pid} | Uptime: ${d.uptime}s | Root: ${d.root}\n    Address: ${d.address}\n`;
+      }
+      return out.trimEnd();
+    }
+    if (action === "status") {
+      if (record.status === "running") {
+        const up = record.uptime ? Math.round(Number(record.uptime)) : 0;
+        return `[daemon] Status: running | PID: ${record.pid} | Uptime: ${up}s\n  Root: ${record.root}\n  Address: ${record.address}`;
+      }
+      return `[daemon] Status: stopped\n  Root: ${record.root}`;
+    }
+    if (action === "start") {
+      if (record.status === "already_running") {
+        const up = record.uptime ? Math.round(Number(record.uptime)) : 0;
+        return `[daemon] Already running (PID: ${record.pid}, uptime: ${up}s)`;
+      }
+      return record.ok ? `[daemon] Started successfully (PID: ${record.pid})` : `[daemon] Failed to start resident daemon`;
+    }
+    if (action === "stop") {
+      return record.ok ? `[daemon] Stopped resident service for ${record.root}` : `[daemon] Service not running for ${record.root}`;
+    }
+    if (action === "restart") {
+      return record.ok ? `[daemon] Restarted successfully (PID: ${record.pid})` : `[daemon] Failed to restart daemon`;
+    }
+    if (action === "ping") {
+      const up = record.uptime ? Math.round(Number(record.uptime)) : 0;
+      return record.ok ? `[daemon] Pong (PID: ${record.pid}, uptime: ${up}s)` : `[daemon] Service unreachable`;
+    }
   }
 
   return JSON.stringify(value, null, 2);
@@ -215,19 +247,26 @@ async function runCommand(command: string, rawArgs: readonly string[]): Promise<
         "  discover-symbols --path <repository-relative-file> [--language typescript|python]",
         "  ask <question> [--profile capn-cli|none] [--tier auto|ast|path|fuzzy|capn] [--timing] [--json|--plain]",
         "  chart --question <q> --answer <a> --files <a,b> [--profile capn-cli|none] [--capn-executable <path>]",
-        "  unchart <id> | bust <path> | prune | list | context",
+        "  unchart <id> [--if-exists] | bust <path> | prune | list | context",
         "  mcp (starts the stdio MCP discovery server)",
+        "  daemon [start|stop|restart|status|list|ping] [--path <root>] [--idle-timeout <sec>] [--force]",
         "",
         "Explicit wrappers (same engine, one command per action):",
         "  waymark-init | waymark-ask | waymark-discover | waymark-chart | waymark-unchart",
-        "  waymark-bust | waymark-prune | waymark-list | waymark-context | waymark-mcp",
+        "  waymark-bust | waymark-prune | waymark-list | waymark-context | waymark-mcp | waymark-daemon",
         "",
         "Options for ask:",
         "  -t, --tier <tier>    Force discovery tier: auto | ast | path | fuzzy | capn",
         "  -b, --timing         Collect high-resolution tier execution timings",
         "  -j, --json           Emit full JSON output",
         "  -p, --plain          Emit token-minimal plain text output",
+        "  -d, --daemon         Accelerate queries via persistent in-memory background daemon",
         "  --auto-resolve       Collapse junction responses to top recommendation",
+        "",
+        "Options for daemon:",
+        "  --path <root>        Target repository root (default: current repository)",
+        "  --idle-timeout <sec> Inactivity timeout before auto-shutdown in seconds (default: 600)",
+        "  --force              Force-kill process if graceful IPC stop fails",
         "",
         "Env: WAYMARK_CAPN_PROFILE (capn-cli|none, default capn-cli), WAYMARK_CAPN_EXECUTABLE (optional override; default: bundled lexical-only capn-hook)",
       ].join("\n"),
@@ -240,6 +279,7 @@ async function runCommand(command: string, rawArgs: readonly string[]): Promise<
 
   if (command === "discover-symbols") {
     const storedPath = requiredValue(parsed, "path");
+    const { discoverSymbolsInFile } = await import("./astExtractor.js");
     return { value: await discoverSymbolsInFile(root, storedPath, parsed.values.get("language")) };
   }
 
@@ -249,6 +289,7 @@ async function runCommand(command: string, rawArgs: readonly string[]): Promise<
     const tier = rawTier as DiscoveryTier | undefined;
     const timing = parsed.values.has("timing");
     const autoResolve = parsed.values.has("auto-resolve");
+    const daemon = parsed.values.has("daemon");
 
     return {
       value: await capnAsk(
@@ -256,7 +297,7 @@ async function runCommand(command: string, rawArgs: readonly string[]): Promise<
         resolveProfile(parsed),
         resolveCapnExecutable(parsed),
         question,
-        { tier, timing, autoResolve },
+        { tier, timing, autoResolve, daemon },
       ),
     };
   }
@@ -273,7 +314,10 @@ async function runCommand(command: string, rawArgs: readonly string[]): Promise<
   if (command === "unchart") {
     const id = parsed.positionals[0];
     if (!id) throw new WaymarkError("MISSING_ARGUMENT", "unchart requires an id");
-    return { value: await unchart(root, resolveCapnExecutable(parsed), id) };
+    const ifExists = parsed.values.has("if-exists");
+    const res = await unchart(root, resolveCapnExecutable(parsed), id, ifExists);
+    const exitCode = res.exitCode as number | undefined ?? (res.ok ? 0 : 1);
+    return { value: res, exitCode };
   }
 
   if (command === "bust") {
@@ -296,9 +340,137 @@ async function runCommand(command: string, rawArgs: readonly string[]): Promise<
 
   if (command === "mcp") {
     const { McpServer } = await import("./mcp/server.js");
-    const server = new McpServer();
+    const server = new McpServer({ root });
     await server.runStdio();
     return { value: null };
+  }
+
+  if (command === "daemon") {
+    const action = parsed.positionals[0] || "status";
+    const targetRoot = parsed.values.get("path") || root;
+    const force = parsed.values.has("force");
+    const idleSec = parsed.values.get("idle-timeout") ? parseInt(parsed.values.get("idle-timeout")!, 10) : undefined;
+    const idleMs = idleSec !== undefined ? idleSec * 1000 : undefined;
+    const { autoStartDaemon, stopDaemon, restartDaemon, tryDaemonPing, listActiveDaemons, WaymarkDaemon, getDaemonAddress } = await import("./daemon.js");
+
+    if (action === "start") {
+      const active = await tryDaemonPing(targetRoot, 300);
+      if (active && active.ok) {
+        return {
+          value: {
+            waymark: 1,
+            kind: "daemon",
+            action: "start",
+            ok: true,
+            status: "already_running",
+            pid: active.pid,
+            uptime: active.uptime,
+            root: targetRoot,
+            address: getDaemonAddress(targetRoot),
+          },
+        };
+      }
+      const started = await autoStartDaemon(targetRoot, 20_000, idleMs);
+      const ping = await tryDaemonPing(targetRoot, 1000);
+      return {
+        value: {
+          waymark: 1,
+          kind: "daemon",
+          action: "start",
+          ok: started,
+          status: started ? "running" : "failed",
+          pid: ping?.pid,
+          root: targetRoot,
+          address: getDaemonAddress(targetRoot),
+        },
+      };
+    }
+
+    if (action === "stop") {
+      const stopped = await stopDaemon(targetRoot, { force });
+      return {
+        value: {
+          waymark: 1,
+          kind: "daemon",
+          action: "stop",
+          ok: stopped,
+          status: stopped ? "stopped" : "not_running",
+          root: targetRoot,
+        },
+      };
+    }
+
+    if (action === "restart") {
+      const restarted = await restartDaemon(targetRoot, { force, idleTimeoutMs: idleMs });
+      const ping = await tryDaemonPing(targetRoot, 1000);
+      return {
+        value: {
+          waymark: 1,
+          kind: "daemon",
+          action: "restart",
+          ok: restarted,
+          status: restarted ? "running" : "failed",
+          pid: ping?.pid,
+          root: targetRoot,
+          address: getDaemonAddress(targetRoot),
+        },
+      };
+    }
+
+    if (action === "status") {
+      const active = await tryDaemonPing(targetRoot, 500);
+      return {
+        value: {
+          waymark: 1,
+          kind: "daemon",
+          action: "status",
+          ok: Boolean(active && active.ok),
+          status: active?.ok ? "running" : "stopped",
+          pid: active?.pid,
+          uptime: active?.uptime,
+          root: targetRoot,
+          address: getDaemonAddress(targetRoot),
+        },
+      };
+    }
+
+    if (action === "list") {
+      const daemons = await listActiveDaemons();
+      return {
+        value: {
+          waymark: 1,
+          kind: "daemon",
+          action: "list",
+          ok: true,
+          daemons,
+        },
+      };
+    }
+
+    if (action === "ping") {
+      const active = await tryDaemonPing(targetRoot, 500);
+      return {
+        value: {
+          waymark: 1,
+          kind: "daemon",
+          action: "ping",
+          ok: Boolean(active && active.ok),
+          status: active?.ok ? "pong" : "unreachable",
+          pid: active?.pid,
+          uptime: active?.uptime,
+          root: targetRoot,
+        },
+        exitCode: active?.ok ? 0 : 1,
+      };
+    }
+
+    if (action === "run") {
+      const daemon = new WaymarkDaemon(targetRoot, idleMs);
+      await daemon.start();
+      return { value: null };
+    }
+
+    throw new WaymarkError("UNKNOWN_COMMAND", `Unknown daemon action: ${action}. Use start, stop, restart, status, list, ping, or run.`);
   }
 
   throw new WaymarkError("UNKNOWN_COMMAND", `Unknown command: ${command}`);
@@ -315,12 +487,14 @@ export async function runCli(command: string, args: readonly string[]): Promise<
   const isPlain = parsed.values.has("plain");
   try {
     const result = await runCommand(command, args);
-    if (result.value !== null) output(result.value, { json: isJson, plain: isPlain });
-    // web-tree-sitter's Emscripten runtime leaves teardown hooks on the event loop
-    // after any parse; a graceful drain adds seconds of 0%-CPU latency per one-shot
-    // CLI call. All output is flushed synchronously by this point, so hard-exit
-    // with the intended code.
-    process.exit(result.exitCode ?? 0);
+    if (result.value !== null) {
+      output(result.value, { json: isJson, plain: isPlain });
+      // web-tree-sitter's Emscripten runtime leaves teardown hooks on the event loop
+      // after any parse; a graceful drain adds seconds of 0%-CPU latency per one-shot
+      // CLI call. All output is flushed synchronously by this point, so hard-exit
+      // with the intended code.
+      process.exit(result.exitCode ?? 0);
+    }
   } catch (error) {
     const result = errorOutput(error);
     output(result.value, { json: isJson, plain: isPlain });

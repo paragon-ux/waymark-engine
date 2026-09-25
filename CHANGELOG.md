@@ -4,6 +4,48 @@ All notable changes to `waymark-engine` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.0] - 2026-09-25
+
+### Resident Process Bridge, Daemon IPC, and Performance Hardening
+
+Version 2.1.0 introduces in-memory resident AST acceleration, cross-process IPC communication, and automatic MCP persistence while preserving the engine's zero-background-daemon invariant by default.
+
+### Added
+
+- **Resident Codedb Process Bridge (`src/residentCodedb.ts`)**:
+  - Implements `ResidentCodedbClient` managing long-running `codedb <root> serve` via stdio with line-buffered JSON-RPC.
+  - Strict sequential FIFO queue with request timeouts to prevent command interleaving.
+  - Configurable idle timeout with automatic cleanup.
+  - Synchronous process `exit`, `SIGINT`, and `SIGTERM` listeners ensuring immediate subprocess termination and zero orphaned binaries.
+- **Cross-Process Waymark Daemon & IPC Bridge (`src/daemon.ts`)**:
+  - Implements `WaymarkDaemon` communicating over Windows Named Pipes (`\\.\pipe\waymark-<hash>`) and POSIX domain sockets (`/tmp/waymark-<hash>.sock`).
+  - System-wide registry tracking active daemons in `os.tmpdir()/waymark-daemons.json`.
+  - Added standalone `waymark-daemon` CLI wrapper (`bin/waymark-daemon.mjs`).
+  - Management subcommands: `waymark daemon [start|stop|restart|status|list|ping]` with `--path`, `--idle-timeout`, and `--force` options.
+- **MCP Server In-Process Persistence (`src/mcp/server.ts`)**:
+  - `McpServer` instantiates `WaymarkDaemon` in-process during stdio sessions, warming the AST graph once and serving sub-20ms queries for agent workflows without spawning background processes.
+  - Exposes the IPC bridge for concurrent terminal commands during agent sessions.
+  - Clean lifecycle teardown on stdio disconnect.
+- **CLI Opt-in Acceleration (`src/cli.ts`)**:
+  - Added `-d, --daemon` flag to `waymark ask`: allows one-shot CLI commands to opt-in to background resident acceleration.
+  - Default CLI remains strictly stateless, preserving the zero-background-daemon invariant.
+- **Persistent Path Cache (`src/discoveryRouter.ts`)**:
+  - Implemented mtime-backed disk cache (`.capn/paths.cache`) bringing warm CLI path resolution from 758ms down to 41ms (18.4x speedup).
+- **Fast-Path Ambiguity Detection (`src/codedbAdapter.ts`)**:
+  - Added threshold check ($\ge 25$ candidate definitions) for bare identifiers, bypassing expensive caller graph deduplication and reducing ambiguity resolution time by 86.7% (from 32.2s to 4.2s on common verbs like `New`).
+- **Idempotent Uncharting (`src/capnAdapter.ts`)**:
+  - Added `--if-exists` flag to `waymark-unchart` (and `ifExists` programmatic option) exiting 0 if an entry was already invalidated or deleted.
+- **Interactive Headroom & Lazy WASM Loading**:
+  - Thread budgeting (`CODEDB_MAX_THREADS: max(1, cpus - 1)`) prevents 100% CPU lockups during cold scans.
+  - Lazy dynamic import of `web-tree-sitter` in CLI so AST extraction modules only load when explicitly invoked.
+
+### Changed
+
+- Updated `@paragon-ux/codedb-core` dependency to `^1.1.0`.
+- Normalized repository root paths across Windows NTFS and POSIX in `collectRepoPaths` and `isInside`.
+- Preserved compound dotted qualified identifiers (`EventStore.verifyChain`) in `extractCandidateTokens`.
+- Full test suite expanded to **43/43 tests passing green** (`npm run verify`).
+
 ---
 
 ## [2.0.0] - 2026-09-25

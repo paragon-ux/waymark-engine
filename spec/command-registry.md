@@ -27,17 +27,18 @@ Waymark Engine provides both a unified binary (`waymark <command>`) and explicit
 
 | Command / Wrapper | Status | Owning Module | Input Shape / Syntax | Purpose |
 | :--- | :--- | :--- | :--- | :--- |
-| `waymark ask <question>`<br>`waymark-ask <question>` | **Stable** | [`src/cli.ts`](file:///c:/Users/USER/Desktop/Frameworks/deepseek-playground-2/Waymark-grill-logic/src/cli.ts) | Positional string query ($\le 240$ chars), flags | Primary discovery entrypoint. Cascades across structural, path, and junction tiers. |
-| `waymark init`<br>`waymark-init` | **Stable** | [`src/capnAdapter.ts`](file:///c:/Users/USER/Desktop/Frameworks/deepseek-playground-2/Waymark-grill-logic/src/capnAdapter.ts) | Optional `--capn-executable <path>` | Initializes the deterministic BM25 lexical store in the current repository root. Refuses embeddings. |
-| `waymark discover-symbols`<br>`waymark-discover` | **Stable** | [`src/astExtractor.ts`](file:///c:/Users/USER/Desktop/Frameworks/deepseek-playground-2/Waymark-grill-logic/src/astExtractor.ts) | `--path <file>`<br>`[--language <lang>]` | Extracts structured AST symbols (functions, classes, interfaces, methods) with byte spans and signatures. |
-| `waymark chart`<br>`waymark-chart` | **Stable** | [`src/capnAdapter.ts`](file:///c:/Users/USER/Desktop/Frameworks/deepseek-playground-2/Waymark-grill-logic/src/capnAdapter.ts) | `--question <q>`<br>`--answer <a>`<br>`--files <paths>` | Records consensus ground truth into lexical long-term memory. Decoupled from syntactic query routing. |
-| `waymark unchart <id>`<br>`waymark-unchart <id>` | **Stable** | [`src/capnAdapter.ts`](file:///c:/Users/USER/Desktop/Frameworks/deepseek-playground-2/Waymark-grill-logic/src/capnAdapter.ts) | Positional string entry ID | Removes a specific charted consensus entry from memory. |
-| `waymark bust <path>`<br>`waymark-bust <path>` | **Stable** | [`src/capnAdapter.ts`](file:///c:/Users/USER/Desktop/Frameworks/deepseek-playground-2/Waymark-grill-logic/src/capnAdapter.ts) | Positional repository-relative path | Evicts or invalidates charted memory entries referencing a modified or deleted source file. |
-| `waymark prune`<br>`waymark-prune` | **Stable** | [`src/capnAdapter.ts`](file:///c:/Users/USER/Desktop/Frameworks/deepseek-playground-2/Waymark-grill-logic/src/capnAdapter.ts) | None | Cleans stale entries, defragments SQLite FTS5 indexes, and verifies integrity. |
-| `waymark list`<br>`waymark-list` | **Stable** | [`src/capnAdapter.ts`](file:///c:/Users/USER/Desktop/Frameworks/deepseek-playground-2/Waymark-grill-logic/src/capnAdapter.ts) | None | Lists all active charted consensus memory entries. |
-| `waymark context`<br>`waymark-context` | **Stable** | [`src/capnAdapter.ts`](file:///c:/Users/USER/Desktop/Frameworks/deepseek-playground-2/Waymark-grill-logic/src/capnAdapter.ts) | None | Summarizes repository memory state, entry counts, and configuration profile. |
-| `waymark mcp`<br>`waymark-mcp` | **Stable** | [`src/mcp/server.ts`](file:///c:/Users/USER/Desktop/Frameworks/deepseek-playground-2/Waymark-grill-logic/src/mcp/server.ts) | None (runs over `stdio`) | Launches the standard Model Context Protocol (MCP) server for IDE and agent integration. |
-| `waymark help` / `-h` / `--help` | **Stable** | [`src/cli.ts`](file:///c:/Users/USER/Desktop/Frameworks/deepseek-playground-2/Waymark-grill-logic/src/cli.ts) | None | Outputs brief command options, flags, and environment variable configuration. |
+| `waymark ask <question>`<br>`waymark-ask <question>` | **Stable** | [`src/cli.ts`](../src/cli.ts) | Positional string query ($\le 240$ chars), flags | Primary discovery entrypoint. Cascades across structural, path, and junction tiers. |
+| `waymark init`<br>`waymark-init` | **Stable** | [`src/capnAdapter.ts`](../src/capnAdapter.ts) | Optional `--capn-executable <path>` | Initializes the deterministic BM25 lexical store in the current repository root. Refuses embeddings. |
+| `waymark discover-symbols`<br>`waymark-discover` | **Stable** | [`src/astExtractor.ts`](../src/astExtractor.ts) | `--path <file>`<br>`[--language <lang>]` | Extracts structured AST symbols (functions, classes, interfaces, methods) with byte spans and signatures. |
+| `waymark chart`<br>`waymark-chart` | **Stable** | [`src/capnAdapter.ts`](../src/capnAdapter.ts) | `--question <q>`<br>`--answer <a>`<br>`--files <paths>` | Records consensus ground truth into lexical long-term memory. Decoupled from syntactic query routing. |
+| `waymark unchart <id>`<br>`waymark-unchart <id>` | **Stable** | [`src/capnAdapter.ts`](../src/capnAdapter.ts) | Positional entry ID<br>`[--if-exists]` | Removes a specific charted consensus entry from memory. Supports idempotent removal. |
+| `waymark bust <path>`<br>`waymark-bust <path>` | **Stable** | [`src/capnAdapter.ts`](../src/capnAdapter.ts) | Positional repository-relative path | Evicts or invalidates charted memory entries referencing a modified or deleted source file. |
+| `waymark prune`<br>`waymark-prune` | **Stable** | [`src/capnAdapter.ts`](../src/capnAdapter.ts) | None | Cleans stale entries, defragments SQLite FTS5 indexes, and verifies integrity. |
+| `waymark list`<br>`waymark-list` | **Stable** | [`src/capnAdapter.ts`](../src/capnAdapter.ts) | None | Lists all active charted consensus memory entries. |
+| `waymark context`<br>`waymark-context` | **Stable** | [`src/capnAdapter.ts`](../src/capnAdapter.ts) | None | Summarizes repository memory state, entry counts, and configuration profile. |
+| `waymark mcp`<br>`waymark-mcp` | **Stable** | [`src/mcp/server.ts`](../src/mcp/server.ts) | None (runs over `stdio`) | Launches the standard Model Context Protocol (MCP) server for IDE and agent integration. |
+| `waymark daemon [start\|stop\|restart\|status\|list\|ping\|run]`<br>`waymark-daemon [start\|stop\|restart\|status\|list\|ping]` | **Stable** | [`src/daemon.ts`](../src/daemon.ts) | Subcommand (`start`, `stop`, `restart`, `status`, `list`, `ping`, `run`), `[--path <root>]` | Manages background resident codedb server (`serve --stdio`) and IPC socket/pipe bridge for sub-10ms warm query execution. |
+| `waymark help` / `-h` / `--help` | **Stable** | [`src/cli.ts`](../src/cli.ts) | None | Outputs brief command options, flags, and environment variable configuration. |
 
 ---
 
@@ -54,11 +55,15 @@ Options and flags modify discovery routing, execution format, performance instru
 | `--auto-resolve` | — | Flag | Boolean | `false` | `ask` | **Stable** | Automatically flattens an inspectable `junction` status into a synthetic `hit` by resolving directly to the top recommendation's result. |
 | `--profile` | — | Value | `capn-cli`, `none` | `capn-cli` | `ask`, `chart` | **Stable** | Configures semantic memory backend adapter. `none` disables memory queries without failing. |
 | `--capn-executable`| — | Value | Filesystem path | Bundled fork / PATH | `ask`, `chart`, `init`, etc. | **Stable** | Explicit escape hatch to specify an external `capn` binary location. Bundled fork is tested default. |
-| `--path` | — | Value | Repository path | None (Required) | `discover-symbols` | **Stable** | Target repository-relative source file to parse into AST symbols. |
+| `--path` | — | Value | Repository path | None (Required) | `discover-symbols`, `daemon` | **Stable** | Target repository-relative source file to parse into AST symbols, or target repository root for daemon management. |
 | `--language` | — | Value | `typescript`, `python` | Auto from file ext | `discover-symbols` | **Stable** | Explicit parser grammar override when file extension is ambiguous or non-standard. |
 | `--question` | — | Value | String ($\le 240$ chars) | None (Required) | `chart` | **Stable** | The ground-truth question being charted. |
 | `--answer` | — | Value | String ($\le 4000$ chars) | None (Required) | `chart` | **Stable** | Verified, conclusive architectural answer to commit to memory. |
 | `--files` | — | Value | Comma-delimited list | `""` | `chart` | **Stable** | Source file paths associated with the charted answer for cache invalidation tracking. |
+| `--if-exists` | — | Flag | Boolean | `false` | `unchart` | **Stable** | Allows idempotent removal of charted entries. If the entry ID was already removed or invalidated by `bust`, exits 0 with a notice instead of failing with exit code 1. |
+| `--daemon` | `-d` | Flag | Boolean | `false` | `ask` | **Stable** | Opts in to resident in-memory daemon acceleration. Connects to existing daemon/MCP or starts background daemon if not running. |
+| `--idle-timeout` | — | Value | Integer seconds | `600` | `daemon` | **Stable** | Configures inactivity duration before the resident daemon automatically terminates to free system memory. |
+| `--force` | — | Flag | Boolean | `false` | `daemon` | **Stable** | Forces immediate termination of resident daemon via PID kill if graceful IPC shutdown is unresponsive. |
 
 ---
 

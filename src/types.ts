@@ -188,4 +188,5 @@ export interface AskOptions {
   forceTier?: "fuzzy-lexical" | "capn-cli";
   autoResolve?: boolean;
   timing?: boolean;
+  daemon?: boolean;
 }

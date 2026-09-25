@@ -1,7 +1,7 @@
 # Specification: Tier 1 — AST Structural & Call Graph Intelligence
 
 **Tier Identifier**: `ast` / `codedb`  
-**Owning Module**: [`src/codedbAdapter.ts`](file:///c:/Users/USER/Desktop/Frameworks/deepseek-playground-2/Waymark-grill-logic/src/codedbAdapter.ts)  
+**Owning Module**: [`src/codedbAdapter.ts`](../src/codedbAdapter.ts)  
 **Upstream Engine**: [`@paragon-ux/codedb-core`](https://github.com/paragon-ux/codedb-core) (v1.0.2)  
 **Status**: Stable
 

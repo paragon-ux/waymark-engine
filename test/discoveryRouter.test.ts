@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { collectRepoPaths, detectAstIntent, detectLiteralIntent, matchLiteralPath } from "../src/discoveryRouter.js";
+import { collectRepoPaths, detectAstIntent, detectLiteralIntent, matchLiteralPath, extractCandidateTokens } from "../src/discoveryRouter.js";
 import { queryStructural, resolveCodedbCommand } from "../src/codedbAdapter.js";
 import { ask } from "../src/capnAdapter.js";
 
@@ -60,6 +60,17 @@ test("detectAstIntent classifies structural queries correctly", () => {
   // Conceptual query must remain semantic fallback
   const i8 = detectAstIntent("Where are payment webhooks handled?");
   assert.equal(i8.requiresParser, false);
+
+  // Literal root filenames must not be classified as AST structural bare identifiers (LEDGER-01)
+  assert.equal(detectAstIntent("embed.go").requiresParser, false);
+  assert.equal(detectAstIntent("package.json").requiresParser, false);
+  assert.equal(detectAstIntent("Dockerfile").requiresParser, false);
+
+  // Narrative questions with 'architecture' must not capture project topology tree (LEDGER-03)
+  const iArchNarrative = detectAstIntent("Explain plugin architecture");
+  assert.notEqual(iArchNarrative.tool, "get_architecture");
+  const iArchTopological = detectAstIntent("Architecture");
+  assert.equal(iArchTopological.tool, "get_architecture");
 });
 
 test("queryStructural answers trace_path and search_graph directly", { skip: skipCodedb }, async () => {
@@ -97,8 +108,10 @@ function literalWorkspace(): string {
 }
 
 test("detectLiteralIntent classifies literal queries and leaves natural language alone", () => {
-  assert.deepEqual(detectLiteralIntent("sample.ts"), { isLiteral: true, normalized: "sample.ts" });
+  assert.deepEqual(detectLiteralIntent("sample.ts"), { isLiteral: true, normalized: "sample.ts", isExplicitPath: false });
   assert.equal(detectLiteralIntent("src/auth/utils.ts").isLiteral, true);
+  assert.equal(detectLiteralIntent("src/auth/utils.ts").isExplicitPath, true);
+  assert.equal(detectLiteralIntent("./README.md").isExplicitPath, true);
   assert.equal(detectLiteralIntent(".gitignore").isLiteral, true);
   assert.equal(detectLiteralIntent("Dockerfile").isLiteral, true);
   assert.equal(detectLiteralIntent("Where is function capnChartArgs declared?").isLiteral, false);
@@ -121,12 +134,23 @@ test("collectRepoPaths + matchLiteralPath resolve literals and fail closed on am
   assert.deepEqual(matchLiteralPath("src/auth/utils.ts", paths), [{ file: "src/auth/utils.ts", kind: "exact" }]);
   assert.deepEqual(matchLiteralPath("auth/utils.ts", paths), [{ file: "src/auth/utils.ts", kind: "suffix" }]);
   assert.deepEqual(matchLiteralPath("utils.ts", paths), []);
+
+  // Bare repeated basename must fail closed, explicit relative path must succeed (LEDGER-02)
+  const multiReadme = ["README.md", "packages/grafana-ui/README.md"];
+  assert.deepEqual(matchLiteralPath("README.md", multiReadme, false), []);
+  assert.deepEqual(matchLiteralPath("./README.md", multiReadme, true), [{ file: "README.md", kind: "exact" }]);
 });
 
 test("matchLiteralPath prioritizes a case-sensitive exact match", () => {
   const paths = ["src/foo.ts", "src/Foo.ts"];
   assert.deepEqual(matchLiteralPath("src/Foo.ts", paths), [{ file: "src/Foo.ts", kind: "exact" }]);
   assert.deepEqual(matchLiteralPath("src/foo.ts", paths), [{ file: "src/foo.ts", kind: "exact" }]);
+});
+
+test("extractCandidateTokens preserves compound dotted qualified identifiers (LEDGER-09)", () => {
+  const { candidateTokens, shape } = extractCandidateTokens("Where is EventStore.verifyChain declared?");
+  assert.equal(shape, "identifier-like");
+  assert.ok(candidateTokens.includes("EventStore.verifyChain"));
 });
 
 test("ask() short-circuits a literal filename to provider literal-path", async () => {

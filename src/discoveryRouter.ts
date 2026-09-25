@@ -25,20 +25,78 @@ export interface AstIntent {
   query?: string;
 }
 
+// ---------------------------------------------------------------------------
+// Tier 2: literal filename / path router (deterministic, zero-dependency)
+//
+// Bridges the filename blind spot inherited from BM25 tokenization: a bare
+// literal like "sample.ts", "src/api/webhooks.ts", ".gitignore", or "Dockerfile"
+// never reaches the statistical engine. Matching is a fail-closed rule cascade
+// (never guess on ambiguity) over an in-memory, memoized path array.
+// ---------------------------------------------------------------------------
+
+const LITERAL_EXTENSIONS = new Set<string>([
+  "ts", "tsx", "js", "jsx", "mjs", "cjs", "cts", "mts", "py", "pyi", "ipynb",
+  "go", "rs", "java", "kt", "kts", "scala", "c", "h", "cpp", "hpp", "cc",
+  "cxx", "m", "cs", "rb", "php", "swift", "sh", "bash", "zsh", "fish", "ps1",
+  "bat", "cmd", "lua", "zig", "dart", "el", "ex", "exs", "elm", "ml", "mli",
+  "res", "sol", "json", "jsonc", "json5", "yaml", "yml", "toml", "ini", "cfg",
+  "conf", "properties", "editorconfig", "md", "mdx", "rst", "txt", "adoc",
+  "css", "scss", "sass", "less", "svg", "xml", "html", "graphql", "gql",
+  "proto", "prisma", "csv", "tsv", "tf", "tfvars", "hcl", "mod", "sum", "lock",
+  "mk", "sql",
+]);
+
+const NO_EXT_FILENAMES = new Set<string>([
+  "dockerfile", "makefile", "jenkinsfile", "procfile", "justfile",
+]);
+
+export interface LiteralIntent {
+  isLiteral: boolean;
+  normalized: string;
+  isExplicitPath: boolean;
+}
+
+export function detectLiteralIntent(question: string): LiteralIntent {
+  const q = question.trim().replace(/^['"`]+|['"`]+$/g, "");
+  const normalized = q.replace(/\\/g, "/").replace(/^\.\//, "");
+  const lower = normalized.toLowerCase();
+
+  const hasSep = normalized.includes("/");
+  const hasExplicitPrefix = q.startsWith("./") || q.startsWith(".\\") || q.startsWith("/");
+  const extMatch = lower.match(/\.([a-z0-9]+)[?!.,;)]*$/);
+  const hasExt = extMatch !== null && LITERAL_EXTENSIONS.has(extMatch[1] ?? "");
+  const leadingDot = lower.startsWith(".");
+  const noExt = NO_EXT_FILENAMES.has(lower);
+
+  const isExplicitPath = hasSep || hasExplicitPrefix;
+
+  return { isLiteral: hasSep || hasExt || leadingDot || noExt, normalized, isExplicitPath };
+}
+
 export function detectAstIntent(question: string): AstIntent {
   const q = question.trim();
   const lower = q.toLowerCase();
 
   // 1. Architecture / Entrypoints intent
-  if (
-    lower.includes("entrypoint") ||
-    lower.includes("entry point") ||
-    lower.includes("architecture") ||
-    lower.includes("hotspots") ||
-    lower.includes("high-level structure") ||
-    lower.includes("overview of the repo") ||
-    lower.includes("project topology")
-  ) {
+  const isNarrativeQuestion =
+    /^(explain|describe|how|why|what\s+is|tell\s+me)\b/i.test(q);
+
+  const architectureMatch =
+    !isNarrativeQuestion &&
+    (
+      lower === "architecture" ||
+      lower === "architecture?" ||
+      /\b(repo|codebase|project|system)\s+architecture\b/i.test(q) ||
+      /\b(show|get|display|dump)\s+(the\s+)?architecture\b/i.test(q) ||
+      lower.includes("entrypoint") ||
+      lower.includes("entry point") ||
+      lower.includes("hotspots") ||
+      lower.includes("high-level structure") ||
+      lower.includes("overview of the repo") ||
+      lower.includes("project topology")
+    );
+
+  if (architectureMatch) {
     return { requiresParser: true, tool: "get_architecture" };
   }
 
@@ -111,7 +169,9 @@ export function detectAstIntent(question: string): AstIntent {
   }
 
   // 4. Bare identifier or method syntax (e.g. "computeSha256", "EventStore.verifyChain")
-  if (/^[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)?(?:\(\))?\??$/.test(q)) {
+  // Exclude literal filenames and paths (e.g. "embed.go", "package.json", "src/foo.ts")
+  const literalIntent = detectLiteralIntent(q);
+  if (!literalIntent.isLiteral && /^[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)?(?:\(\))?\??$/.test(q)) {
     return {
       requiresParser: true,
       tool: "search_graph",
@@ -122,50 +182,6 @@ export function detectAstIntent(question: string): AstIntent {
   return { requiresParser: false, tool: "search_graph" };
 }
 
-// ---------------------------------------------------------------------------
-// Tier 2: literal filename / path router (deterministic, zero-dependency)
-//
-// Bridges the filename blind spot inherited from BM25 tokenization: a bare
-// literal like "sample.ts", "src/api/webhooks.ts", ".gitignore", or "Dockerfile"
-// never reaches the statistical engine. Matching is a fail-closed rule cascade
-// (never guess on ambiguity) over an in-memory, memoized path array.
-// ---------------------------------------------------------------------------
-
-const LITERAL_EXTENSIONS = new Set<string>([
-  "ts", "tsx", "js", "jsx", "mjs", "cjs", "cts", "mts", "py", "pyi", "ipynb",
-  "go", "rs", "java", "kt", "kts", "scala", "c", "h", "cpp", "hpp", "cc",
-  "cxx", "m", "cs", "rb", "php", "swift", "sh", "bash", "zsh", "fish", "ps1",
-  "bat", "cmd", "lua", "zig", "dart", "el", "ex", "exs", "elm", "ml", "mli",
-  "res", "sol", "json", "jsonc", "json5", "yaml", "yml", "toml", "ini", "cfg",
-  "conf", "properties", "editorconfig", "md", "mdx", "rst", "txt", "adoc",
-  "css", "scss", "sass", "less", "svg", "xml", "html", "graphql", "gql",
-  "proto", "prisma", "csv", "tsv", "tf", "tfvars", "hcl", "mod", "sum", "lock",
-  "mk", "sql",
-]);
-
-const NO_EXT_FILENAMES = new Set<string>([
-  "dockerfile", "makefile", "jenkinsfile", "procfile", "justfile",
-]);
-
-export interface LiteralIntent {
-  isLiteral: boolean;
-  normalized: string;
-}
-
-export function detectLiteralIntent(question: string): LiteralIntent {
-  const q = question.trim().replace(/^['"`]+|['"`]+$/g, "");
-  const normalized = q.replace(/\\/g, "/").replace(/^\.\//, "");
-  const lower = normalized.toLowerCase();
-
-  const hasSep = normalized.includes("/");
-  const extMatch = lower.match(/\.([a-z0-9]+)[?!.,;)]*$/);
-  const hasExt = extMatch !== null && LITERAL_EXTENSIONS.has(extMatch[1] ?? "");
-  const leadingDot = lower.startsWith(".");
-  const noExt = NO_EXT_FILENAMES.has(lower);
-
-  return { isLiteral: hasSep || hasExt || leadingDot || noExt, normalized };
-}
-
 const SKIP_DIRS = new Set<string>([
   "node_modules", "dist", "out", "build", "coverage", "next", "nuxt",
   "capn", "waymark", "qmd", "claude", "codex", "zed",
@@ -173,11 +189,40 @@ const SKIP_DIRS = new Set<string>([
   "__pycache__",
 ]);
 
+function canonicalRoot(r: string): string {
+  return path.resolve(r).replace(/^[a-zA-Z]:/, (m) => m.toLowerCase());
+}
+
 let pathCache: { root: string; at: number; paths: string[] } | null = null;
 
-export function collectRepoPaths(root: string, maxAgeMs = 30_000): string[] {
-  if (pathCache && pathCache.root === root && Date.now() - pathCache.at < maxAgeMs) {
+function getCacheFilePath(root: string): string {
+  if (fs.existsSync(path.join(root, ".capn"))) {
+    return path.join(root, ".capn", "paths.cache");
+  }
+  return path.join(root, ".waymark", "paths.cache");
+}
+
+export function collectRepoPaths(root: string, maxAgeMs = 60_000): string[] {
+  const normRoot = canonicalRoot(root);
+  if (pathCache && pathCache.root === normRoot && Date.now() - pathCache.at < maxAgeMs) {
     return pathCache.paths;
+  }
+
+  const cacheFile = getCacheFilePath(root);
+  try {
+    if (fs.existsSync(cacheFile)) {
+      const stat = fs.statSync(cacheFile);
+      if (Date.now() - stat.mtimeMs < maxAgeMs) {
+        const content = fs.readFileSync(cacheFile, "utf8");
+        const lines = content.split("\n").filter(Boolean);
+        if (lines.length > 0) {
+          pathCache = { root: normRoot, at: stat.mtimeMs, paths: lines };
+          return lines;
+        }
+      }
+    }
+  } catch {
+    // Disk cache read failed; fall back to filesystem walk
   }
 
   const base = path.resolve(root);
@@ -204,7 +249,18 @@ export function collectRepoPaths(root: string, maxAgeMs = 30_000): string[] {
   };
   walk(base);
 
-  pathCache = { root, at: Date.now(), paths: out };
+  pathCache = { root: normRoot, at: Date.now(), paths: out };
+
+  try {
+    const dir = path.dirname(cacheFile);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    fs.writeFileSync(cacheFile, out.join("\n"), "utf8");
+  } catch {
+    // Fail silent if repository is read-only
+  }
+
   return out;
 }
 
@@ -215,8 +271,24 @@ export interface LiteralMatch {
   kind: LiteralMatchKind;
 }
 
-export function matchLiteralPath(normalized: string, paths: string[]): LiteralMatch[] {
+export function matchLiteralPath(
+  rawNormalized: string,
+  paths: string[],
+  isExplicitPath: boolean = false
+): LiteralMatch[] {
+  const isExplicit = isExplicitPath || rawNormalized.startsWith("./") || rawNormalized.startsWith(".\\");
+  const normalized = rawNormalized.replace(/\\/g, "/").replace(/^\.\//, "");
   const lower = normalized.toLowerCase();
+  const baseName = lower.split("/").pop() ?? "";
+  const basenames = paths.filter(
+    (p) => (p.split("/").pop() ?? "").toLowerCase() === baseName
+  );
+
+  // If a bare basename query has multiple collision candidates across the repository,
+  // refuse to arbitrarily select the root-level file unless explicitly qualified with ./
+  if (!isExplicit && !normalized.includes("/") && basenames.length > 1) {
+    return [];
+  }
 
   const exact = paths.filter((p) => p.toLowerCase() === lower);
   if (exact.length > 0) {
@@ -226,10 +298,6 @@ export function matchLiteralPath(normalized: string, paths: string[]): LiteralMa
       : exact.map((file) => ({ file, kind: "exact" }));
   }
 
-  const baseName = lower.split("/").pop() ?? "";
-  const basenames = paths.filter(
-    (p) => (p.split("/").pop() ?? "").toLowerCase() === baseName
-  );
   if (basenames.length === 1) {
     const file = basenames[0];
     if (file !== undefined) return [{ file, kind: "basename" }];
@@ -271,8 +339,12 @@ export function extractCandidateTokens(question: string): {
   candidateTokens: string[];
   plainTokens: string[];
 } {
-  const rawWords = question
-    .replace(/[?().,;:!'"\[\]{}<>\/\\`]/g, " ")
+  // Preserve internal dots in compound identifiers like EventStore.verifyChain
+  const cleaned = question
+    .replace(/[?(),;:!'"\[\]{}<>\/\\`]/g, " ")
+    .replace(/(?<![A-Za-z0-9_])\.|\.(?![A-Za-z0-9_])/g, " ");
+
+  const rawWords = cleaned
     .split(/\s+/)
     .map((w) => w.trim())
     .filter(Boolean);
@@ -385,7 +457,7 @@ export async function routeDiscovery(ctx: DiscoveryRouteContext): Promise<AskRes
     const literal = detectLiteralIntent(question);
     if (literal.isLiteral || tier === "path") {
       const paths = collectRepoPaths(root);
-      const matches = matchLiteralPath(literal.normalized, paths);
+      const matches = matchLiteralPath(literal.normalized, paths, literal.isExplicitPath);
       if (recordTiming) timings.path_ms = Math.round((performance.now() - tPath0) * 100) / 100;
 
       if (matches.length > 0) {
@@ -399,7 +471,10 @@ export async function routeDiscovery(ctx: DiscoveryRouteContext): Promise<AskRes
           result: matches.map((m) => `${m.file}\t[${m.kind}]`).join("\n"),
           ...(recordTiming ? { timings } : {}),
         };
-      } else if (tier === "path") {
+      } else if (
+        tier === "path" ||
+        (tier === "auto" && literal.isLiteral)
+      ) {
         if (recordTiming) timings.total_ms = Math.round((performance.now() - startTime) * 100) / 100;
         return {
           waymark: 1,

@@ -1,7 +1,7 @@
 # Specification: Tier 3 — Deterministic Fuzzy Lexical Matcher
 
 **Tier Identifier**: `fuzzy` / `fuzzy-lexical`  
-**Owning Module**: [`src/fuzzyMatcher.ts`](file:///c:/Users/USER/Desktop/Frameworks/deepseek-playground-2/Waymark-grill-logic/src/fuzzyMatcher.ts)  
+**Owning Module**: [`src/fuzzyMatcher.ts`](../src/fuzzyMatcher.ts)  
 **Algorithm Origin**: Junegunn Choi (`fzf` `algo.go`)  
 **Status**: Stable
 

@@ -33,7 +33,9 @@ export function repoRoot(cwd = process.cwd()): string {
 }
 
 function isInside(root: string, candidate: string): boolean {
-  const relative = path.relative(root, candidate);
+  const normRoot = path.resolve(root);
+  const normCand = path.resolve(candidate);
+  const relative = path.relative(normRoot, normCand);
   return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
 

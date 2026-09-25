@@ -232,6 +232,10 @@ export async function ask(
   question: string,
   options?: AskOptions,
 ): Promise<AskResult | Record<string, unknown>> {
+  if (options?.daemon) {
+    process.env.WAYMARK_AUTO_DAEMON = "1";
+  }
+
   if (profile === "none") return { waymark: 1, kind: "ask", provider: "none", status: "miss", matches: [] };
 
   return await routeDiscovery({
@@ -266,8 +270,17 @@ async function runCapnSimple(root: string, executable: string, args: readonly st
 }
 
 /** Delete one chart entry by id. */
-export async function unchart(root: string, executable: string, id: string): Promise<Record<string, unknown>> {
+export async function unchart(root: string, executable: string, id: string, ifExists: boolean = false): Promise<Record<string, unknown>> {
   const result = await runCapnSimple(root, executable, ["unchart", id]);
+  if (!result.ok && ifExists && (result.output.toLowerCase().includes("unknown id") || result.output.toLowerCase().includes("not found"))) {
+    return {
+      waymark: 1,
+      kind: "unchart",
+      ok: true,
+      exitCode: 0,
+      output: `Entry ${id} not found (already removed or invalid).`,
+    };
+  }
   return { waymark: 1, kind: "unchart", ok: result.ok, exitCode: result.exitCode, ...(result.ok ? { output: result.output } : { error: result.output }) };
 }
 

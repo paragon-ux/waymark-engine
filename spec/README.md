@@ -50,6 +50,7 @@ Query Input
 | [**`command-registry.md`**](./command-registry.md) | Command & Interface Registry | Canonical registry of CLI commands, flags, Discovery tiers, and MCP tools. | **Authoritative** |
 | [**`error-codes.md`**](./error-codes.md) | Error & Status Registry | Machine-readable status values, error codes, miss codes, and exit code semantics. | **Authoritative** |
 | [**`metrics.md`**](./metrics.md) | Measurable Tier Metrics | Standardized metrics schema (tokens, latency, limits, resources) and benchmarks across all tiers. | **Authoritative** |
+| [**`adversarial-benchmark-grafana.md`**](./adversarial-benchmark-grafana.md) | Adversarial Benchmark | Empirical stress test on `grafana/grafana` (23,517 files, Go + TypeScript polyglot monorepo). | **Empirical** |
 
 ---
 

@@ -72,12 +72,15 @@ interface CodedbRun {
 
 async function execute(root: string, command: ResolvedCodedbCommand, args: readonly string[]): Promise<{ stdout: string; stderr: string }> {
   const fullArgs = [...command.prefix, ...args];
+  const timeoutMs = process.env.WAYMARK_CODEDB_TIMEOUT
+    ? parseInt(process.env.WAYMARK_CODEDB_TIMEOUT, 10) || 120_000
+    : 120_000;
   return await execFileAsync(command.file, fullArgs, {
     cwd: root,
     windowsHide: true,
     shell: false,
-    timeout: 30_000,
-    maxBuffer: 1024 * 1024,
+    timeout: timeoutMs,
+    maxBuffer: 16 * 1024 * 1024,
     env: { ...process.env, CODEDB_QUIET: "1" },
   });
 }

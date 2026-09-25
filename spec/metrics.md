@@ -78,6 +78,7 @@ For future benchmarking across hardware architectures (Linux x86_64, Windows ARM
    - Small: `paragon-ux/waymark-engine` (~35 source files).
    - Medium: `expressjs/express` (~250 source files).
    - Large: `openai/codex` (~8,590 source files).
+   - Enterprise Polyglot Monorepo: `grafana/grafana` (23,517 files — see [`spec/adversarial-benchmark-grafana.md`](./adversarial-benchmark-grafana.md)).
 2. **Measurement Harness**:
    - Warm cache: 100 consecutive iterations after 5 warmup cycles.
    - Metrics to record: Median latency ($p_{50}$), tail latency ($p_{99}$), and Peak RSS memory delta.

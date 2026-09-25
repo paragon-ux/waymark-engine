@@ -4,6 +4,14 @@ All notable changes to `waymark-engine` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.1] - 2026-09-25
+
+### Fixed
+
+- **POSIX Prebuilt Binary Permissions**: Automatic `chmod 0o755` on bundled `codedb` binaries unpacked without executable bits on Linux and macOS environments.
+- **POSIX Temporary Root Indexing**: Propagate `CODEDB_ALLOW_TEMP=1` across resident and cold `codedb` execution, permitting seamless indexing of temporary repositories under `/tmp` and `/var` across Linux and macOS CI runners.
+- **Cross-Platform Verification**: Validated 100% green test matrix (43/43 tests) across Ubuntu, macOS, and Windows.
+
 ## [2.1.0] - 2026-09-25
 
 ### Resident Process Bridge, Daemon IPC, and Performance Hardening

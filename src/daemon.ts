@@ -22,7 +22,9 @@ export interface DaemonRegistryEntry {
 }
 
 export function getDaemonAddress(root: string): string {
-  const canonical = path.resolve(root).toLowerCase();
+  let canonical = path.resolve(root);
+  try { canonical = fs.realpathSync.native(canonical); } catch {}
+  canonical = canonical.toLowerCase();
   const hash = crypto.createHash("sha256").update(canonical).digest("hex").slice(0, 16);
   if (process.platform === "win32") {
     return path.join("\\\\.\\pipe", `waymark-${hash}`);
@@ -31,7 +33,9 @@ export function getDaemonAddress(root: string): string {
 }
 
 export function getPidFilePath(root: string): string {
-  const canonical = path.resolve(root).toLowerCase();
+  let canonical = path.resolve(root);
+  try { canonical = fs.realpathSync.native(canonical); } catch {}
+  canonical = canonical.toLowerCase();
   const hash = crypto.createHash("sha256").update(canonical).digest("hex").slice(0, 16);
   const capnDir = path.join(root, ".capn");
   if (fs.existsSync(capnDir)) {
@@ -65,14 +69,18 @@ export function writeRegistry(registry: Record<string, DaemonRegistryEntry>): vo
 
 export function registerDaemon(root: string, pid: number, address: string): void {
   const reg = readRegistry();
-  const canonical = path.resolve(root).toLowerCase();
+  let canonical = path.resolve(root);
+  try { canonical = fs.realpathSync.native(canonical); } catch {}
+  canonical = canonical.toLowerCase();
   reg[canonical] = { root: path.resolve(root), pid, address, startedAt: Date.now() };
   writeRegistry(reg);
 }
 
 export function unregisterDaemon(root: string): void {
   const reg = readRegistry();
-  const canonical = path.resolve(root).toLowerCase();
+  let canonical = path.resolve(root);
+  try { canonical = fs.realpathSync.native(canonical); } catch {}
+  canonical = canonical.toLowerCase();
   if (reg[canonical]) {
     delete reg[canonical];
     writeRegistry(reg);
@@ -222,7 +230,7 @@ export async function tryDaemonPing(
 /** Invalidate in-memory path trie and caches on the running daemon. */
 export async function tryDaemonReload(
   root: string,
-  timeoutMs = 1000,
+  timeoutMs = 5000,
 ): Promise<{ ok: boolean; status?: string } | null> {
   const address = getDaemonAddress(root);
 
@@ -466,7 +474,9 @@ export class WaymarkDaemon {
   private isStopping = false;
 
   constructor(root: string, idleTimeoutMs = 600_000) {
-    this.root = path.resolve(root);
+    let canonical = path.resolve(root);
+    try { canonical = fs.realpathSync.native(canonical); } catch {}
+    this.root = canonical;
     this.address = getDaemonAddress(this.root);
     this.pidFile = getPidFilePath(this.root);
     this.idleTimeoutMs = idleTimeoutMs;

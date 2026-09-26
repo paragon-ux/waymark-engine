@@ -33,8 +33,10 @@ export function repoRoot(cwd = process.cwd()): string {
 }
 
 function isInside(root: string, candidate: string): boolean {
-  const normRoot = path.resolve(root);
-  const normCand = path.resolve(candidate);
+  let normRoot = path.resolve(root);
+  let normCand = path.resolve(candidate);
+  try { normRoot = fs.realpathSync.native(normRoot); } catch {}
+  try { normCand = fs.realpathSync.native(normCand); } catch {}
   const relative = path.relative(normRoot, normCand);
   return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
@@ -45,8 +47,10 @@ export function normalizeRelativePath(input: string, root?: string): string {
   }
   const slashPath = input.replaceAll("\\", "/");
   if (root && (path.isAbsolute(input) || /^[A-Za-z]:/u.test(slashPath) || path.posix.isAbsolute(slashPath))) {
-    const normRoot = path.resolve(root);
-    const normInput = path.resolve(input);
+    let normRoot = path.resolve(root);
+    let normInput = path.resolve(input);
+    try { normRoot = fs.realpathSync.native(normRoot); } catch {}
+    try { normInput = fs.realpathSync.native(normInput); } catch {}
     if (isInside(normRoot, normInput)) {
       const rel = path.relative(normRoot, normInput).replaceAll("\\", "/");
       return rel === "" ? "." : rel.replace(/^\.\//u, "");

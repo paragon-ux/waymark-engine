@@ -48,7 +48,7 @@ export function normalizeRelativePath(input: string, root?: string): string {
   const slashPath = input.replaceAll("\\", "/");
   if (root && (path.isAbsolute(input) || /^[A-Za-z]:/u.test(slashPath) || path.posix.isAbsolute(slashPath))) {
     let normRoot = path.resolve(root);
-    let normInput = path.resolve(input);
+    let normInput = path.resolve(slashPath);
     try { normRoot = fs.realpathSync.native(normRoot); } catch {}
     try { normInput = fs.realpathSync.native(normInput); } catch {}
     if (isInside(normRoot, normInput)) {

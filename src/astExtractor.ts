@@ -155,43 +155,173 @@ function collectStructuredSymbols(rootNode: any): StructuredSymbol[] {
   return symbols;
 }
 
+const CODEDB_OUTLINE_EXTENSIONS = new Set<string>([
+  ".go", ".rs", ".java", ".c", ".h", ".cpp", ".hpp", ".cc", ".cxx",
+  ".cs", ".rb", ".php", ".swift", ".kt", ".scala", ".js", ".jsx", ".mjs", ".cjs"
+]);
+
+async function discoverSymbolsViaCodedbOutline(
+  repoRoot: string,
+  storedPath: string,
+): Promise<SymbolDiscoveryResult> {
+  const { resolveCodedbCommand, runJson } = await import("./codedbAdapter.js");
+  const command = resolveCodedbCommand();
+
+  try {
+    const run = await runJson(repoRoot, command, ["outline", storedPath, "--json"]);
+    const parsed = run.payload;
+    if (!run.ok || !parsed || !Array.isArray(parsed.symbols)) {
+      return { ok: true, path: storedPath, language: (parsed?.language || "unknown") as any, symbols: [] };
+    }
+    const symbols: StructuredSymbol[] = parsed.symbols.map((s: any) => {
+      let kind: StructuredSymbolKind = "function";
+      const rawKind = String(s.kind || "").toLowerCase();
+      if (rawKind.includes("class")) kind = "class";
+      else if (rawKind.includes("method")) kind = "method";
+      else if (rawKind.includes("interface")) kind = "interface";
+      else if (rawKind.includes("type")) kind = "type";
+      return {
+        name: s.name,
+        kind,
+        start: { line: s.line_start || 1, column: 0 },
+        end: { line: s.line_end || s.line_start || 1, column: 0 },
+      };
+    });
+    return {
+      ok: true,
+      path: storedPath,
+      language: (parsed.language || path.extname(storedPath).replace(".", "")) as any,
+      symbols,
+    };
+  } catch {
+    throw new WaymarkError("UNSUPPORTED_LANGUAGE", `Cannot detect a supported discovery language for ${storedPath}`, 2);
+  }
+}
+
+export interface RepoSymbolHit {
+  name: string;
+  path: string;
+  line: number;
+  kind: string;
+  detail?: string;
+}
+
+export interface RepoSymbolDiscoveryResult {
+  ok: true;
+  tool: "symbol";
+  query: string;
+  count: number;
+  results: RepoSymbolHit[];
+}
+
+export async function discoverSymbolsInRepo(
+  repoRoot: string,
+  query: string,
+): Promise<RepoSymbolDiscoveryResult> {
+  const { resolveCodedbCommand, runJson } = await import("./codedbAdapter.js");
+  const command = resolveCodedbCommand();
+
+  try {
+    const run = await runJson(repoRoot, command, ["symbol", query, "--json"]);
+    const results = run.ok && run.payload && Array.isArray(run.payload.results) ? run.payload.results : [];
+    return {
+      ok: true,
+      tool: "symbol",
+      query,
+      count: results.length,
+      results: results.map((r: any) => ({
+        name: r.name,
+        path: r.path,
+        line: r.line,
+        kind: r.kind || "symbol",
+        detail: r.detail,
+      })),
+    };
+  } catch {
+    return {
+      ok: true,
+      tool: "symbol",
+      query,
+      count: 0,
+      results: [],
+    };
+  }
+}
+
 export async function discoverSymbolsInFile(
   repoRoot: string,
   rawPath: string,
   requestedLanguage?: string,
+  query?: string,
 ): Promise<SymbolDiscoveryResult> {
-  const storedPath = normalizeRelativePath(rawPath);
-  const language = resolveStructuredLanguage(storedPath, requestedLanguage);
+  const storedPath = normalizeRelativePath(rawPath, repoRoot);
+  const ext = path.extname(storedPath).toLowerCase();
   const file = readFileText(repoRoot, storedPath);
 
   if (file.bytes.byteLength > MAX_SYMBOL_DISCOVERY_FILE_BYTES) {
     throw new WaymarkError("FILE_TOO_LARGE", `Discovery only accepts files up to ${MAX_SYMBOL_DISCOVERY_FILE_BYTES} bytes`, 2);
   }
 
-  let grammar: unknown | null;
-  try {
-    grammar = await getLanguageForWasm(STRUCTURED_LANGUAGE_WASM[language]);
-  } catch {
-    throw new WaymarkError("PARSER_UNAVAILABLE", `Waymark grammar is unavailable for ${language}`, 2);
-  }
-  if (!grammar) throw new WaymarkError("PARSER_UNAVAILABLE", `Waymark grammar is unavailable for ${language}`, 2);
+  let result: SymbolDiscoveryResult;
 
-  const parser = new Parser();
-  let tree: any;
-  try {
-    parser.setLanguage(grammar as any);
-    tree = parser.parse(file.text);
-  } catch {
-    throw new WaymarkError("PARSE_ERROR", `Unable to parse ${language} source: ${storedPath}`, 2);
-  }
-  if (tree.rootNode.hasError) {
-    throw new WaymarkError("PARSE_ERROR", `Malformed ${language} source: ${storedPath}`, 2);
+  if (CODEDB_OUTLINE_EXTENSIONS.has(ext) && !STRUCTURED_EXTENSIONS[ext] && !requestedLanguage) {
+    result = await discoverSymbolsViaCodedbOutline(repoRoot, storedPath);
+  } else {
+    let language: StructuredLanguage;
+    try {
+      language = resolveStructuredLanguage(storedPath, requestedLanguage);
+    } catch (err) {
+      if (CODEDB_OUTLINE_EXTENSIONS.has(ext)) {
+        result = await discoverSymbolsViaCodedbOutline(repoRoot, storedPath);
+        if (query && query.trim()) {
+          const q = query.trim().toLowerCase();
+          result.symbols = result.symbols.filter((s) => s.name.toLowerCase().includes(q));
+        }
+        return result;
+      }
+      throw err;
+    }
+
+    let grammar: unknown | null;
+    try {
+      grammar = await getLanguageForWasm(STRUCTURED_LANGUAGE_WASM[language]);
+    } catch {
+      throw new WaymarkError("PARSER_UNAVAILABLE", `Waymark grammar is unavailable for ${language}`, 2);
+    }
+    if (!grammar) throw new WaymarkError("PARSER_UNAVAILABLE", `Waymark grammar is unavailable for ${language}`, 2);
+
+    const parser = new Parser();
+    let tree: any;
+    try {
+      parser.setLanguage(grammar as any);
+      tree = parser.parse(file.text);
+      if (tree.rootNode.hasError) {
+        throw new WaymarkError("PARSE_ERROR", `Malformed ${language} source: ${storedPath}`, 2);
+      }
+      result = {
+        ok: true,
+        path: storedPath,
+        language,
+        symbols: collectStructuredSymbols(tree.rootNode),
+      };
+    } catch (err) {
+      if (err instanceof WaymarkError) throw err;
+      throw new WaymarkError("PARSE_ERROR", `Unable to parse ${language} source: ${storedPath}`, 2);
+    } finally {
+      if (tree) {
+        try {
+          tree.delete();
+        } catch {
+          // ignore
+        }
+      }
+    }
   }
 
-  return {
-    ok: true,
-    path: storedPath,
-    language,
-    symbols: collectStructuredSymbols(tree.rootNode),
-  };
+  if (query && query.trim()) {
+    const q = query.trim().toLowerCase();
+    result.symbols = result.symbols.filter((s) => s.name.toLowerCase().includes(q));
+  }
+
+  return result;
 }

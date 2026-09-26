@@ -76,7 +76,7 @@ export class McpServer {
   constructor(optionsOrHandlers: McpServerOptions | McpToolHandler[] = CAPN_TOOLS) {
     if (Array.isArray(optionsOrHandlers)) {
       this.serverName = "waymark-engine";
-      this.serverVersion = "2.2.0";
+      this.serverVersion = "2.3.0";
       this.resources = CAPN_RESOURCES;
       this.prompts = CAPN_PROMPTS;
       this.root = process.cwd();
@@ -86,7 +86,7 @@ export class McpServer {
       }
     } else {
       this.serverName = optionsOrHandlers.name ?? "waymark-engine";
-      this.serverVersion = optionsOrHandlers.version ?? "2.2.0";
+      this.serverVersion = optionsOrHandlers.version ?? "2.3.0";
       const tools = optionsOrHandlers.tools ?? CAPN_TOOLS;
       this.resources = optionsOrHandlers.resources ?? CAPN_RESOURCES;
       this.prompts = optionsOrHandlers.prompts ?? CAPN_PROMPTS;
@@ -212,9 +212,7 @@ export class McpServer {
     }
 
     if (method === "tools/call") {
-      let toolName = typeof params?.name === "string" ? params.name : "";
-      if (toolName === "waymark_ask") toolName = "capn_ask";
-      if (toolName === "waymark_chart") toolName = "capn_chart";
+      const toolName = typeof params?.name === "string" ? params.name : "";
       const toolArgs = (params?.arguments && typeof params.arguments === "object" ? params.arguments : {}) as Record<string, unknown>;
 
       const handler = this.toolMap.get(toolName);
@@ -347,7 +345,7 @@ export class McpServer {
                 role: "user",
                 content: {
                   type: "text",
-                  text: `Please explore the codebase using waymark-engine MCP tools for: "${query}". First use capn_ask to check Tier 1 AST call graphs or Tier 3 Discovery Junction recommendations, inspect relevant files with waymark_discover_symbols, and chart findings with capn_chart.`,
+                  text: `Please explore the codebase using waymark-engine MCP tools for: "${query}". First use waymark_ask to check Tier 1 AST call graphs or Tier 3 Discovery Junction recommendations, inspect relevant files with waymark_discover_symbols, and chart findings with waymark_chart.`,
                 },
               },
             ],
@@ -366,7 +364,7 @@ export class McpServer {
                 role: "user",
                 content: {
                   type: "text",
-                  text: `Trace the architectural call chain and execution flow for: "${topic}". Use capn_ask to resolve callers and callees, verify exact file paths, and summarize the policy in long-term memory via capn_chart.`,
+                  text: `Trace the architectural call chain and execution flow for: "${topic}". Use waymark_ask to resolve callers and callees, verify exact file paths, and summarize the policy in long-term memory via waymark_chart.`,
                 },
               },
             ],

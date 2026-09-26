@@ -56,19 +56,20 @@ test("ask() refuses the semantic fallback without a lexical store (structural pa
     assert.equal(astResult.provider, "codedb");
   }
 
-  // Non-structural question: semantic fallback must fail closed on an uninitialized store.
-  await assert.rejects(
-    () => ask(repo, "capn-cli", "capn", "How does authentication work in this project?"),
-    (error: any) => error.code === "CAPN_STORE_UNINITIALIZED",
-  );
+  // Non-structural question: semantic fallback must fail closed cleanly on an uninitialized store.
+  const uninitResult = await ask(repo, "capn-cli", "capn", "How does authentication work in this project?");
+  assert.equal(uninitResult.status, "miss");
 
-  // Embedding-mode store: same fail-closed behavior.
+  const tierCapnResult = await ask(repo, "capn-cli", "capn", "How does authentication work in this project?", { tier: "capn" });
+  assert.equal(tierCapnResult.status, "miss");
+  assert.equal((tierCapnResult as any).missCode, "STORE_UNINITIALIZED");
+
+  // Embedding-mode store: fail-closed clean miss with CAPN_NON_DETERMINISTIC_MODE.
   fs.mkdirSync(path.join(repo, ".capn"), { recursive: true });
   fs.writeFileSync(path.join(repo, ".capn", "config.json"), '{"embedding": true}');
-  await assert.rejects(
-    () => ask(repo, "capn-cli", "capn", "How does authentication work in this project?"),
-    (error: any) => error.code === "CAPN_NON_DETERMINISTIC_MODE",
-  );
+  const embedResult = await ask(repo, "capn-cli", "capn", "How does authentication work in this project?", { tier: "capn" });
+  assert.equal(embedResult.status, "miss");
+  assert.equal((embedResult as any).missCode, "CAPN_NON_DETERMINISTIC_MODE");
 
   // Lexical store: the guard passes and the bundled fork decides (hit/miss/error,
   // but never the mode error).

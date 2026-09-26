@@ -2,12 +2,14 @@
 // One import surface for consumers: `import { ask, discoverSymbolsInFile, verifyHop } from "waymark-engine";`
 
 export { ask, initCapn, publish, capnChartArgs, resolveWindowsExecutable, resolveCapnCommand, assertLexicalStore, readCapnConfig, unchart, bust, prune, listEntries, context } from "./capnAdapter.js";
-export { renderPlainText, formatTimings } from "./renderPlainText.js";
+export { renderPlainText, renderCallGraph, formatTimings } from "./renderPlainText.js";
 
-export { detectAstIntent, detectLiteralIntent, collectRepoPaths, matchLiteralPath, extractCandidateTokens, routeDiscovery, type AstIntent, type DiscoveryRouteContext } from "./discoveryRouter.js";
+export { detectAstIntent, detectLiteralIntent, collectRepoPaths, getRepoPrefixTrie, invalidatePathsCache, matchLiteralPath, extractCandidateTokens, routeDiscovery, type AstIntent, type DiscoveryRouteContext } from "./discoveryRouter.js";
+export { PrefixTrie, PrefixTrieNode } from "./prefixTrie.js";
+export { tryDaemonResolvePath, tryDaemonReload } from "./daemon.js";
 export { classifyTokenShape, scoreFzf, rankFzf, tracebackFzf, normalizeScore, SCORE_MATCH, SCORE_GAP_START, SCORE_GAP_EXTENSION, BONUS_BOUNDARY, BONUS_CAMEL_123, BONUS_CONSECUTIVE, BONUS_FIRST_CHAR_MULTIPLIER } from "./fuzzyMatcher.js";
-export { queryStructural, queryFuzzyCandidates, resolveCodedbCommand } from "./codedbAdapter.js";
-export { discoverSymbolsInFile, type SymbolDiscoveryResult, type StructuredSymbol } from "./astExtractor.js";
+export { queryStructural, queryMultiHopCallGraph, queryFuzzyCandidates, queryMultiSymbols, isTestFile, resolveCodedbCommand, type MultiSymbolQueryResult, type MultiSymbolResultItem, type MultiSymbolResultItem as MultiSymbolItem } from "./codedbAdapter.js";
+export { discoverSymbolsInFile, discoverSymbolsInRepo, type SymbolDiscoveryResult, type StructuredSymbol, type RepoSymbolDiscoveryResult, type RepoSymbolHit } from "./astExtractor.js";
 export { verifyHop } from "./integrity.js";
 export { anchorForRange, normalizeRange, repoRoot, sha256, structuralSignature, normalizeSpan } from "./paths.js";
 export {
@@ -33,4 +35,6 @@ export {
   type TokenShape,
   type WaymarkErrorCode,
   type WaymarkMissCode,
+  type CallGraphData,
+  type CallGraphHopNode,
 } from "./types.js";

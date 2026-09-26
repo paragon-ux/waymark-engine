@@ -1,3 +1,5 @@
+import type { CallGraphData, CallGraphHopNode } from "./types.js";
+
 export function formatTimings(timings: Record<string, number>): string {
   const parts: string[] = [];
   if (timings.ast_ms !== undefined) parts.push(`ast: ${timings.ast_ms}ms`);
@@ -8,14 +10,95 @@ export function formatTimings(timings: Record<string, number>): string {
   return parts.join(" | ");
 }
 
+/** Formats structured CallGraphData as an indented plain text tree (LEDGER-08 / DOD-11). */
+export function renderCallGraph(graph: CallGraphData): string {
+  const depthStr = `[call-graph: depth ${graph.depth}]${graph.truncated ? " (truncated at 50 nodes)" : ""}`;
+  const rootLoc = graph.path && graph.line ? ` (${graph.path}:${graph.line})` : "";
+  let out = `${depthStr}\n${graph.function}${rootLoc}\n`;
+
+  function renderSubtree(nodes: CallGraphHopNode[], indent: number, relType: "callers" | "callees") {
+    const pad = " ".repeat(indent);
+    out += `${pad}↳ ${relType}:\n`;
+    for (const node of nodes) {
+      const loc = node.path ? ` (${node.path}:${node.line})` : "";
+      out += `${pad}    - ${node.name}${loc}\n`;
+      if (node[relType] && node[relType]!.length > 0) {
+        renderSubtree(node[relType]!, indent + 4, relType);
+      }
+    }
+  }
+
+  if (graph.callers && graph.callers.length > 0) {
+    renderSubtree(graph.callers, 2, "callers");
+  }
+  if (graph.callees && graph.callees.length > 0) {
+    renderSubtree(graph.callees, 2, "callees");
+  }
+  if ((!graph.callers || graph.callers.length === 0) && (!graph.callees || graph.callees.length === 0)) {
+    out += `  (no ${graph.direction === "both" ? "callers or callees" : graph.direction} found)\n`;
+  }
+
+  return out.trimEnd();
+}
+
 export function renderPlainText(value: unknown): string {
   if (!value || typeof value !== "object") return String(value);
   const record = value as Record<string, unknown>;
+
+  if (record.tool === "call_graph") {
+    return renderCallGraph(record as unknown as CallGraphData);
+  }
+
+  if (record.kind === "multi-symbol") {
+    const hits = (record.hits as number) ?? 0;
+    const misses = (record.misses as number) ?? 0;
+    const syms = (record.symbols as Record<string, { status: string; path?: string; line?: number; kind?: string }>) || {};
+    let out = `[multi-symbol] (${hits} hit${hits === 1 ? "" : "s"}, ${misses} miss${misses === 1 ? "" : "es"})\n`;
+    for (const [name, info] of Object.entries(syms)) {
+      if (info.status === "hit") {
+        out += `${name}: ${info.path}:${info.line} (${info.kind ?? "symbol"})\n`;
+      } else {
+        out += `${name}: [miss] (not found)\n`;
+      }
+    }
+    return out.trimEnd();
+  }
+
+  if ("symbols" in record && Array.isArray(record.symbols) && "path" in record) {
+    const symbols = record.symbols as Array<{ name: string; kind: string; start?: { line: number }; end?: { line: number }; line?: number }>;
+    const filePath = record.path as string;
+    let out = `[symbols: ${filePath}] (${symbols.length} symbol${symbols.length === 1 ? "" : "s"})\n`;
+    for (const s of symbols) {
+      const lineStr = s.start && s.end
+        ? `L${s.start.line}${s.end.line !== s.start.line ? `-L${s.end.line}` : ""}`
+        : `L${s.line ?? 1}`;
+      out += `${s.name}: ${s.kind} ${lineStr}\n`;
+    }
+    return out.trimEnd();
+  }
+
+  if (record.tool === "symbol" && "results" in record && Array.isArray(record.results) && "query" in record) {
+    const results = record.results as Array<{ name: string; kind: string; path: string; line: number }>;
+    const query = record.query as string;
+    if (results.length === 0) {
+      return `[symbols: '${query}'] (0 matches)`;
+    }
+    let out = `[symbols: '${query}'] (${results.length} match${results.length === 1 ? "" : "es"})\n`;
+    for (const r of results) {
+      out += `${r.name}: ${r.kind} ${r.path}:${r.line}\n`;
+    }
+    return out.trimEnd();
+  }
 
   if (record.status === "hit") {
     const provider = record.provider as string;
     const confidence = record.confidence ? ` (confidence: ${record.confidence})` : "";
     let detail = "";
+    if (record.result && typeof record.result === "object" && (record.result as any).tool === "call_graph") {
+      const graphStr = renderCallGraph(record.result as CallGraphData);
+      const timingStr = record.timings ? `\n[timing] ${formatTimings(record.timings as Record<string, number>)}` : "";
+      return `${graphStr}${timingStr}`;
+    }
     if (provider === "codedb" || provider === "literal-path") {
       detail = String(record.result ?? "");
     } else if (provider === "fuzzy-lexical") {

@@ -84,15 +84,16 @@ When an agent or client editor launches `waymark-engine` via stdio, the server d
 
 ### Exposed MCP Surface
 * **Tools**:
-  * `waymark_ask` (alias: `capn_ask`): 4-tier discovery question query with full CLI flag parity (`tier: "auto"|"ast"|"path"|"fuzzy"|"capn"`, `auto_resolve`, `timing`, `plain`, `daemon`).
-  * `waymark_chart` (alias: `capn_chart`): Publish architectural consensus memory with backing files.
-  * `waymark_discover_symbols`: Extract classes, methods, functions, and types from TS/Python files.
-  * `waymark_unchart` (alias: `capn_unchart`): Invalidate and delete charted consensus memory entry by ID.
-  * `waymark_bust` (alias: `capn_bust`): Invalidate every charted memory entry backed by a specific repository file.
-  * `waymark_prune` (alias: `capn_prune`): Cleanly remove all stale charted memory entries whose backing files vanished.
-  * `waymark_list` (alias: `capn_list`): List all charted repository consensus memories.
-  * `waymark_context` (alias: `capn_context`): Retrieve the ask-first charting contract and routing guidelines.
+  * `waymark_ask`: 4-tier discovery question query with full CLI flag parity (`tier: "auto"|"ast"|"path"|"fuzzy"|"capn"`, `auto_resolve` default `true`, `timing`, `plain`, `daemon`) or explicit multi-symbol array (`symbols: [...]`).
+  * `waymark_chart`: Publish architectural consensus memory with validated backing files (auto-initializes store if uninitialized).
+  * `waymark_discover_symbols`: Bimodal symbol extraction: single-file tree-sitter AST (with codedb outline fallback) or repo-wide symbol search (`query`).
+  * `waymark_unchart`: Invalidate and delete charted consensus memory entry by ID.
+  * `waymark_bust`: Invalidate every charted memory entry backed by a specific repository file.
+  * `waymark_prune`: Cleanly remove all stale charted memory entries whose backing files vanished.
+  * `waymark_list`: List all charted repository consensus memories (graceful degrade on uninitialized store).
+  * `waymark_context`: Retrieve the ask-first charting contract and routing guidelines (graceful degrade on uninitialized store).
   * `waymark_daemon_status`: Inspect resident in-memory background daemon health, PID, address, and uptime.
+  * `waymark_init`: Initialize deterministic lexical store (`.capn`) with embedding mode disabled.
 * **Resources**:
   * `capn://status`: Memory store configuration and adapter status.
   * `waymark://manifest`: Engine capabilities, tier metadata, and versioning.
@@ -113,7 +114,9 @@ waymark-ask "refundOrdr"                         # Discovery Junction (fuzzy rec
 waymark-ask "refundOrdr" -t fuzzy -b             # Isolate Tier 3 with high-resolution timings
 waymark-ask "refundOrdr" --plain                 # Token-minimal plain text for agents (~16 tokens)
 waymark-ask "How does authentication work?"      # Tier 4 charted-memory answer or miss
-waymark-discover --path src/index.ts
+waymark-symbols User Service ApiWorker           # Batch symbol resolution across the codebase
+waymark-discover --path src/index.ts             # Mode A: structured AST extraction for file
+waymark-discover --query Greeter                 # Mode B: repo-wide symbol discovery
 waymark-chart --question "<q>" --answer "<a>" --files "<a,b>"
 waymark-unchart <id>   waymark-bust <path>   waymark-prune
 waymark-list           waymark-context      waymark-mcp
@@ -133,4 +136,4 @@ The canonical specifications, contracts, and registries are maintained under [`/
 
 ## Library
 
-`import { ask, discoverSymbolsInFile, detectAstIntent, scoreFzf, rankFzf, verifyHop, anchorForRange } from "waymark-engine";`
+`import { ask, queryMultiSymbols, discoverSymbolsInFile, discoverSymbolsInRepo, detectAstIntent, scoreFzf, rankFzf, verifyHop, anchorForRange } from "waymark-engine";`

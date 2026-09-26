@@ -1,5 +1,7 @@
+import fs from "node:fs";
+import path from "node:path";
 import { repoRoot } from "../paths.js";
-import { ask, publish, unchart, bust, prune, listEntries, context } from "../capnAdapter.js";
+import { ask, publish, unchart, bust, prune, listEntries, context, initCapn } from "../capnAdapter.js";
 import { discoverSymbolsInFile } from "../astExtractor.js";
 import { tryDaemonPing, getDaemonAddress } from "../daemon.js";
 import { renderPlainText } from "../renderPlainText.js";
@@ -35,9 +37,9 @@ function resolveExecutable(args: Record<string, unknown>): string {
   return (typeof args.capn_executable === "string" && args.capn_executable.trim()) || process.env.WAYMARK_CAPN_EXECUTABLE || "";
 }
 
-export const capnAskTool: McpToolHandler = {
+export const waymarkAskTool: McpToolHandler = {
   definition: {
-    name: "capn_ask",
+    name: "waymark_ask",
     description: "Query repository memory and tiered discovery (AST structural, literal path, deterministic fuzzy, charted consensus) to answer code questions without hallucination.",
     inputSchema: {
       type: "object",
@@ -53,7 +55,7 @@ export const capnAskTool: McpToolHandler = {
         },
         auto_resolve: {
           type: "boolean",
-          description: "Collapse junction responses directly to top recommendation.",
+          description: "Collapse junction responses directly to top recommendation. Defaults to true in MCP for agent workflows.",
         },
         timing: {
           type: "boolean",
@@ -66,6 +68,24 @@ export const capnAskTool: McpToolHandler = {
         daemon: {
           type: "boolean",
           description: "Accelerate query via persistent in-memory background daemon IPC.",
+        },
+        depth: {
+          type: "integer",
+          description: "Call graph traversal depth (1-5) for structural AST queries. Defaults to 1.",
+        },
+        direction: {
+          type: "string",
+          enum: ["callers", "callees", "both"],
+          description: "Call graph traversal direction: callers | callees | both. Defaults to both.",
+        },
+        exclude_tests: {
+          type: "boolean",
+          description: "Optional. Filter out test files (e.g. tests/, *_test.*, *.spec.*) from call graph results to reduce token noise.",
+        },
+        symbols: {
+          type: "array",
+          items: { type: "string" },
+          description: "Optional list of multiple symbol identifiers to inspect concurrently across the AST call graph.",
         },
         capn_executable: {
           type: "string",
@@ -81,27 +101,48 @@ export const capnAskTool: McpToolHandler = {
           description: "Optional repository root path. Defaults to current working directory.",
         },
       },
-      required: ["question"],
     },
   },
   handler: async (args) => {
     try {
       const root = resolveRoot(args);
       const question = typeof args.question === "string" ? args.question.trim() : "";
-      if (!question) throw new WaymarkError("MISSING_ARGUMENT", "question is required");
-
-      const rawTier = typeof args.tier === "string" ? args.tier.trim() : undefined;
-      const tier = rawTier as DiscoveryTier | undefined;
-      const autoResolve = args.auto_resolve === true || args.autoResolve === true;
       const timing = args.timing === true;
       const plain = args.plain === true;
       const daemon = args.daemon === true;
+      const depth = typeof args.depth === "number" ? Math.min(Math.max(1, args.depth), 5) : undefined;
+      const direction = (args.direction === "callers" || args.direction === "callees" || args.direction === "both")
+        ? args.direction
+        : undefined;
+      const excludeTests = args.exclude_tests === true || args.excludeTests === true;
+
+      const rawSymbols = Array.isArray(args.symbols) ? args.symbols.filter((s): s is string => typeof s === "string" && s.trim().length > 0) : [];
+      if (rawSymbols.length > 0) {
+        const { queryMultiSymbols } = await import("../codedbAdapter.js");
+        const res = await queryMultiSymbols(root, rawSymbols, resolveExecutable(args));
+        if (plain) {
+          return {
+            content: [{ type: "text", text: renderPlainText(res) }],
+            isError: false,
+          };
+        }
+        return jsonResult(res);
+      }
+
+      if (!question) throw new WaymarkError("MISSING_ARGUMENT", "question or symbols is required");
+
+      const rawTier = typeof args.tier === "string" ? args.tier.trim() : undefined;
+      const tier = rawTier as DiscoveryTier | undefined;
+      const autoResolve = args.auto_resolve !== false && args.autoResolve !== false;
 
       const result = await ask(root, resolveProfile(args), resolveExecutable(args), question, {
         tier,
         autoResolve,
         timing,
         daemon,
+        depth,
+        direction,
+        excludeTests,
       });
 
       if (plain) {
@@ -145,19 +186,10 @@ export const capnAskTool: McpToolHandler = {
   },
 };
 
-export const waymarkAskTool: McpToolHandler = {
+export const waymarkChartTool: McpToolHandler = {
   definition: {
-    ...capnAskTool.definition,
-    name: "waymark_ask",
-    description: "Query the codebase using Waymark 4-tier discovery (AST structural, literal path, deterministic fuzzy, charted consensus memory).",
-  },
-  handler: capnAskTool.handler,
-};
-
-export const capnChartTool: McpToolHandler = {
-  definition: {
-    name: "capn_chart",
-    description: "Directly chart a question, answer, and associated file references into Capn's long-term consensus memory.",
+    name: "waymark_chart",
+    description: "Directly chart a question, answer, and associated file references into Waymark long-term consensus memory.",
     inputSchema: {
       type: "object",
       properties: {
@@ -200,6 +232,17 @@ export const capnChartTool: McpToolHandler = {
       if (!question) throw new WaymarkError("MISSING_ARGUMENT", "question is required");
       if (!answer) throw new WaymarkError("MISSING_ARGUMENT", "answer is required");
 
+      for (const relPath of files) {
+        const fullPath = path.resolve(root, relPath);
+        if (!fs.existsSync(fullPath)) {
+          throw new WaymarkError("INVALID_ARGUMENT", `Chart backing file not found: "${relPath}" (resolved to "${fullPath}"). Pass valid repository files.`);
+        }
+        const stat = fs.statSync(fullPath);
+        if (!stat.isFile()) {
+          throw new WaymarkError("INVALID_ARGUMENT", `Chart backing path is not a file: "${relPath}" (is directory).`);
+        }
+      }
+
       const result = await publish(root, resolveProfile(args), resolveExecutable(args), question, answer, files);
       const payload: Record<string, unknown> = {
         waymark: 1,
@@ -218,46 +261,73 @@ export const capnChartTool: McpToolHandler = {
   },
 };
 
-export const waymarkChartTool: McpToolHandler = {
-  definition: {
-    ...capnChartTool.definition,
-    name: "waymark_chart",
-    description: "Directly chart a question, answer, and associated file references into Waymark/Capn long-term repository memory.",
-  },
-  handler: capnChartTool.handler,
-};
-
 export const discoverSymbolsTool: McpToolHandler = {
   definition: {
     name: "waymark_discover_symbols",
-    description: "Discover syntax symbols in one repository-relative file without changing any state.",
+    description: "Discover syntax symbols in one file, filter symbols by name, or discover symbols across the repository without changing any state.",
     inputSchema: {
       type: "object",
       properties: {
         path: {
           type: "string",
-          description: "Repository-relative source file path.",
+          description: "Optional repository-relative source file path to extract symbols from.",
+        },
+        query: {
+          type: "string",
+          description: "Optional symbol query to search across the repository or filter within a file.",
+        },
+        symbol: {
+          type: "string",
+          description: "Optional symbol query alias for query.",
         },
         language: {
           type: "string",
           enum: ["typescript", "python"],
           description: "Optional source language when the file extension is not sufficient.",
         },
+        plain: {
+          type: "boolean",
+          description: "Emit token-minimal plain text formatted result for LLM context efficiency.",
+        },
         root: {
           type: "string",
           description: "Optional repository root path. Defaults to current working directory.",
         },
       },
-      required: ["path"],
     },
   },
   handler: async (args) => {
     try {
       const root = resolveRoot(args);
       const storedPath = typeof args.path === "string" ? args.path.trim() : "";
+      const rawQuery = (typeof args.query === "string" ? args.query.trim() : "") || (typeof args.symbol === "string" ? args.symbol.trim() : "");
       const language = typeof args.language === "string" ? args.language : undefined;
-      if (!storedPath) throw new WaymarkError("MISSING_ARGUMENT", "path is required");
-      return jsonResult(await discoverSymbolsInFile(root, storedPath, language));
+      const plain = args.plain === true;
+
+      if (!storedPath && !rawQuery) {
+        throw new WaymarkError("MISSING_ARGUMENT", "Either path or query is required");
+      }
+
+      if (storedPath) {
+        const res = await discoverSymbolsInFile(root, storedPath, language, rawQuery);
+        if (plain) {
+          return {
+            content: [{ type: "text", text: renderPlainText(res) }],
+            isError: false,
+          };
+        }
+        return jsonResult(res);
+      } else {
+        const { discoverSymbolsInRepo } = await import("../astExtractor.js");
+        const res = await discoverSymbolsInRepo(root, rawQuery);
+        if (plain) {
+          return {
+            content: [{ type: "text", text: renderPlainText(res) }],
+            isError: false,
+          };
+        }
+        return jsonResult(res);
+      }
     } catch (error) {
       return errorResult(error);
     }
@@ -305,14 +375,6 @@ export const waymarkUnchartTool: McpToolHandler = {
   },
 };
 
-export const capnUnchartTool: McpToolHandler = {
-  definition: {
-    ...waymarkUnchartTool.definition,
-    name: "capn_unchart",
-  },
-  handler: waymarkUnchartTool.handler,
-};
-
 export const waymarkBustTool: McpToolHandler = {
   definition: {
     name: "waymark_bust",
@@ -349,14 +411,6 @@ export const waymarkBustTool: McpToolHandler = {
   },
 };
 
-export const capnBustTool: McpToolHandler = {
-  definition: {
-    ...waymarkBustTool.definition,
-    name: "capn_bust",
-  },
-  handler: waymarkBustTool.handler,
-};
-
 export const waymarkPruneTool: McpToolHandler = {
   definition: {
     name: "waymark_prune",
@@ -384,14 +438,6 @@ export const waymarkPruneTool: McpToolHandler = {
       return errorResult(error);
     }
   },
-};
-
-export const capnPruneTool: McpToolHandler = {
-  definition: {
-    ...waymarkPruneTool.definition,
-    name: "capn_prune",
-  },
-  handler: waymarkPruneTool.handler,
 };
 
 export const waymarkListTool: McpToolHandler = {
@@ -423,14 +469,6 @@ export const waymarkListTool: McpToolHandler = {
   },
 };
 
-export const capnListTool: McpToolHandler = {
-  definition: {
-    ...waymarkListTool.definition,
-    name: "capn_list",
-  },
-  handler: waymarkListTool.handler,
-};
-
 export const waymarkContextTool: McpToolHandler = {
   definition: {
     name: "waymark_context",
@@ -460,14 +498,6 @@ export const waymarkContextTool: McpToolHandler = {
   },
 };
 
-export const capnContextTool: McpToolHandler = {
-  definition: {
-    ...waymarkContextTool.definition,
-    name: "capn_context",
-  },
-  handler: waymarkContextTool.handler,
-};
-
 export const waymarkDaemonStatusTool: McpToolHandler = {
   definition: {
     name: "waymark_daemon_status",
@@ -479,12 +509,32 @@ export const waymarkDaemonStatusTool: McpToolHandler = {
           type: "string",
           description: "Optional repository root path. Defaults to current working directory.",
         },
+        reload: {
+          type: "boolean",
+          description: "Optional. If true, reloads and invalidates the in-memory PrefixTrie and path cache for the resident daemon.",
+        },
       },
     },
   },
   handler: async (args) => {
     try {
       const root = resolveRoot(args);
+
+      if (args.reload === true) {
+        const { tryDaemonReload } = await import("../daemon.js");
+        const { invalidatePathsCache } = await import("../discoveryRouter.js");
+        invalidatePathsCache();
+        const reloadRes = await tryDaemonReload(root);
+        return jsonResult({
+          waymark: 1,
+          kind: "daemon",
+          action: "reload",
+          status: reloadRes?.ok ? "reloaded" : "not_running",
+          ok: Boolean(reloadRes && reloadRes.ok),
+          root,
+        });
+      }
+
       const ping = await tryDaemonPing(root, 500);
       if (ping && ping.ok) {
         return jsonResult({
@@ -511,21 +561,46 @@ export const waymarkDaemonStatusTool: McpToolHandler = {
   },
 };
 
-export const CAPN_TOOLS: McpToolHandler[] = [
-  capnAskTool,
+export const waymarkInitTool: McpToolHandler = {
+  definition: {
+    name: "waymark_init",
+    description: "Initialize the repository's deterministic lexical store (.capn) with embedding mode disabled.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        capn_executable: {
+          type: "string",
+          description: "Optional custom path to the Capn executable.",
+        },
+        root: {
+          type: "string",
+          description: "Optional repository root path. Defaults to current working directory.",
+        },
+      },
+    },
+  },
+  handler: async (args) => {
+    try {
+      const root = resolveRoot(args);
+      const res = await initCapn(root, resolveExecutable(args));
+      return jsonResult(res, !res.ok);
+    } catch (error) {
+      return errorResult(error);
+    }
+  },
+};
+
+export const WAYMARK_TOOLS: McpToolHandler[] = [
   waymarkAskTool,
-  capnChartTool,
   waymarkChartTool,
   discoverSymbolsTool,
   waymarkUnchartTool,
-  capnUnchartTool,
   waymarkBustTool,
-  capnBustTool,
   waymarkPruneTool,
-  capnPruneTool,
   waymarkListTool,
-  capnListTool,
   waymarkContextTool,
-  capnContextTool,
   waymarkDaemonStatusTool,
+  waymarkInitTool,
 ];
+
+export const CAPN_TOOLS = WAYMARK_TOOLS;

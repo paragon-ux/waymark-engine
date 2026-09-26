@@ -39,11 +39,20 @@ function isInside(root: string, candidate: string): boolean {
   return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
 
-export function normalizeRelativePath(input: string): string {
+export function normalizeRelativePath(input: string, root?: string): string {
   if (typeof input !== "string" || input.length === 0 || input.includes("\0")) {
     throw new WaymarkError("INVALID_PATH", "Path must be a nonempty repository-relative path");
   }
   const slashPath = input.replaceAll("\\", "/");
+  if (root && (path.isAbsolute(input) || /^[A-Za-z]:/u.test(slashPath) || path.posix.isAbsolute(slashPath))) {
+    const normRoot = path.resolve(root);
+    const normInput = path.resolve(input);
+    if (isInside(normRoot, normInput)) {
+      const rel = path.relative(normRoot, normInput).replaceAll("\\", "/");
+      return rel === "" ? "." : rel.replace(/^\.\//u, "");
+    }
+    throw new WaymarkError("INVALID_PATH", `Absolute path "${input}" escapes repository root`);
+  }
   if (path.posix.isAbsolute(slashPath) || /^[A-Za-z]:/u.test(slashPath)) {
     throw new WaymarkError("INVALID_PATH", "Absolute paths are not allowed");
   }
@@ -55,7 +64,7 @@ export function normalizeRelativePath(input: string): string {
 }
 
 export function resolveRepositoryFile(root: string, storedPath: string): { lexical: string; real: string } {
-  const relative = normalizeRelativePath(storedPath);
+  const relative = normalizeRelativePath(storedPath, root);
   const lexical = path.resolve(root, ...relative.split("/"));
   if (!isInside(root, lexical)) throw new WaymarkError("INVALID_PATH", "Path escapes repository root");
   let real: string;

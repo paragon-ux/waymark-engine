@@ -4,6 +4,42 @@ All notable changes to `waymark-engine` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.0] - 2026-09-26
+
+### Bounded Multi-Hop Call Graph DAGs, Persistent In-Memory PrefixTrie, Multi-Symbol Batch Discovery, and Polyglot Fallbacks
+
+Version 2.3.0 adds bounded multi-hop call graph expansion with cycle detection, in-memory PrefixTrie literal path indexing, batch symbol resolution across CLI and MCP surfaces, store auto-initialization, and polyglot outline fallbacks for non-TS/Python languages.
+
+### Added
+
+- **Bounded Multi-Hop BFS Call Graph (`queryMultiHopCallGraph`)**:
+  - Added `--depth 1..5` (default: 1) and `--direction callers | callees | both` parameters to `waymark ask` and MCP `waymark_ask`.
+  - Added `--exclude-tests` (MCP: `exclude_tests: boolean`) filter suppressing test files (`tests/`, `*_test.*`, `*.spec.*`) from call graphs, reducing agent context noise by up to 94% on libraries like Apache Arrow.
+  - BFS traversal with visited node cycle defense (`Set<string>`) to safely map recursive and circular call chains.
+  - Hard cap of 50 nodes per traversal with `truncated: true` and truncated notice in plain text to safeguard agent context limits.
+  - Indented visual tree renderer (`renderCallGraph` in `src/renderPlainText.ts`) outputting hierarchical call chains in token-minimal format.
+  - Full backward compatibility: single-hop queries without explicit `depth` retain the existing flat format.
+- **Persistent In-Memory PrefixTrie & Daemon Reload (`src/prefixTrie.ts`, `src/daemon.ts`)**:
+  - Custom in-memory prefix trie with $O(\text{len})$ exact matching and $O(1)$ basename map with collision detection.
+  - Resident daemon IPC action `resolve_path`, delivering warm path queries in 7.56ms on 21,144-file codebases.
+  - Added `waymark daemon reload` CLI command and `reload: true` parameter on MCP `waymark_daemon_status` (`tryDaemonReload`) to cleanly invalidate resident caches and trie snapshots upon file mutations.
+  - Fail-closed collision defense: ambiguous bare filenames occurring in multiple directories fail closed cleanly with `[miss]`, requiring relative paths to disambiguate.
+- **Multi-Symbol Batch Discovery**:
+  - Added `queryMultiSymbols` function in `src/codedbAdapter.ts` resolving multiple identifiers across the repository with deduplication and line ranges.
+  - Added standalone binary `waymark-symbols` and CLI command `waymark symbols <sym1> <sym2>...`.
+  - Added `symbols: string[]` parameter to MCP `waymark_ask` / `capn_ask` returning consolidated multi-symbol locations in JSON and plain text.
+- **Store Auto-Initialization & Graceful Read-Only Degradation**:
+  - Added safe argument escaping (`capnChartArgs`, `capnUnsafeArgs`) in `src/capnAdapter.ts` preventing shell and argument injection vulnerabilities.
+  - Read-only tools (`waymark_list`, `waymark_context`) return clean `{ initialized: false, count: 0, items: [] }` rather than throwing errors on uninitialized repositories.
+  - Write tool (`waymark_chart`) automatically initializes the deterministic lexical store if uninitialized.
+  - Added MCP tool `waymark_init` (`capn_init`) and standalone CLI binary `waymark-init` (`waymark init`) for one-shot lexical store initialization.
+- **Polyglot Parser Fallback (`discoverSymbolsInFile`)**:
+  - Tree-sitter file outline extraction now transparently falls back to `codedb outline` for non-TypeScript/non-Python files (C++, Rust, Go, Java, C#, etc.).
+- **Reusable External Stress Benchmark (`scratch/benchmarks/suites/benchmark_arrow_and_pydantic.mjs`)**:
+  - End-to-end automated stress benchmark testing Apache Arrow (5,335 polyglot files) and Pydantic (851 Python/Rust files), exporting structured metrics to `scratch/benchmark_results/arrow_and_pydantic_results.json`.
+
+---
+
 ## [2.2.0] - 2026-09-25
 
 ### MCP Surface Parity, Discovery Precision Hardening, and Maintenance Tools

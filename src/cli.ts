@@ -16,11 +16,12 @@ interface ParsedArgs {
 
 const VALUE_FLAGS = new Set([
   "profile", "path", "language", "capn-executable", "question", "answer", "files",
-  "tier", "t", "format", "idle-timeout",
+  "tier", "t", "format", "idle-timeout", "query", "symbol", "symbols", "q", "s",
+  "depth", "direction",
 ]);
 
 const BOOLEAN_FLAGS = new Set([
-  "timing", "b", "json", "j", "plain", "p", "auto-resolve", "if-exists", "force", "daemon", "d",
+  "timing", "b", "json", "j", "plain", "p", "auto-resolve", "if-exists", "force", "daemon", "d", "exclude-tests",
 ]);
 
 function parseArgs(args: readonly string[]): ParsedArgs {
@@ -55,6 +56,20 @@ function parseArgs(args: readonly string[]): ParsedArgs {
         const value = args[index + 1];
         if (!value || value.startsWith("-")) throw new WaymarkError("MISSING_OPTION_VALUE", `Option -t requires a value`);
         values.set("tier", value);
+        index += 1;
+        continue;
+      }
+      if (flag === "q") {
+        const value = args[index + 1];
+        if (!value || value.startsWith("-")) throw new WaymarkError("MISSING_OPTION_VALUE", `Option -q requires a value`);
+        values.set("query", value);
+        index += 1;
+        continue;
+      }
+      if (flag === "s") {
+        const value = args[index + 1];
+        if (!value || value.startsWith("-")) throw new WaymarkError("MISSING_OPTION_VALUE", `Option -s requires a value`);
+        values.set("symbol", value);
         index += 1;
         continue;
       }
@@ -145,15 +160,16 @@ async function runCommand(command: string, rawArgs: readonly string[]): Promise<
       value: [
         "Waymark discovery engine (symbolic + semantic routing)",
         "  init [--capn-executable <path>] (initialize lexical Capn store)",
-        "  discover-symbols --path <repository-relative-file> [--language typescript|python]",
-        "  ask <question> [--profile capn-cli|none] [--tier auto|ast|path|fuzzy|capn] [--timing] [--json|--plain]",
+        "  discover-symbols [--path <file>] [--query <q>] [--language typescript|python] [--plain]",
+        "  symbols <symbol1> [symbol2 ...] [--plain] (batch query symbol definitions across repo)",
+        "  ask <question> [--symbols a,b] [--profile capn-cli|none] [--tier auto|ast|path|fuzzy|capn] [--timing] [--json|--plain]",
         "  chart --question <q> --answer <a> --files <a,b> [--profile capn-cli|none] [--capn-executable <path>]",
         "  unchart <id> [--if-exists] | bust <path> | prune | list | context",
         "  mcp (starts the stdio MCP discovery server)",
         "  daemon [start|stop|restart|status|list|ping] [--path <root>] [--idle-timeout <sec>] [--force]",
         "",
         "Explicit wrappers (same engine, one command per action):",
-        "  waymark-init | waymark-ask | waymark-discover | waymark-chart | waymark-unchart",
+        "  waymark-init | waymark-ask | waymark-discover | waymark-symbols | waymark-chart | waymark-unchart",
         "  waymark-bust | waymark-prune | waymark-list | waymark-context | waymark-mcp | waymark-daemon",
         "",
         "Options for ask:",
@@ -163,6 +179,12 @@ async function runCommand(command: string, rawArgs: readonly string[]): Promise<
         "  -p, --plain          Emit token-minimal plain text output",
         "  -d, --daemon         Accelerate queries via persistent in-memory background daemon",
         "  --auto-resolve       Collapse junction responses to top recommendation",
+        "  --depth <n>          Call graph BFS traversal depth (1-5, default: 1)",
+        "  --direction <dir>    Call graph direction: callers | callees | both (default: both)",
+        "  --exclude-tests      Filter out test files (*_test.*, test/*) from call graph results",
+        "",
+        "Commands for daemon:",
+        "  waymark daemon [start|stop|restart|reload|status|list|ping]",
         "",
         "Options for daemon:",
         "  --path <root>        Target repository root (default: current repository)",
@@ -179,18 +201,53 @@ async function runCommand(command: string, rawArgs: readonly string[]): Promise<
   }
 
   if (command === "discover-symbols") {
-    const storedPath = requiredValue(parsed, "path");
-    const { discoverSymbolsInFile } = await import("./astExtractor.js");
-    return { value: await discoverSymbolsInFile(root, storedPath, parsed.values.get("language")) };
+    const rawPath = parsed.values.get("path") ?? (parsed.positionals.length > 0 && !parsed.values.has("query") && !parsed.values.has("symbol") ? parsed.positionals[0] : undefined);
+    const query = parsed.values.get("query") ?? parsed.values.get("symbol") ?? (rawPath ? undefined : parsed.positionals[0]);
+    const { discoverSymbolsInFile, discoverSymbolsInRepo } = await import("./astExtractor.js");
+
+    if (rawPath) {
+      return { value: await discoverSymbolsInFile(root, rawPath, parsed.values.get("language"), query) };
+    }
+    if (query) {
+      return { value: await discoverSymbolsInRepo(root, query) };
+    }
+    throw new WaymarkError("MISSING_ARGUMENT", "discover-symbols requires --path or --query");
+  }
+
+  if (command === "symbols") {
+    let symbolsList: string[] = [];
+    if (parsed.values.has("symbols")) {
+      symbolsList = parsed.values.get("symbols")!.split(",").map((s) => s.trim()).filter(Boolean);
+    }
+    if (parsed.positionals.length > 0) {
+      symbolsList.push(...parsed.positionals.map((s) => s.trim()).filter(Boolean));
+    }
+    if (symbolsList.length === 0) {
+      throw new WaymarkError("MISSING_ARGUMENT", "symbols command requires at least one symbol identifier");
+    }
+    const { queryMultiSymbols } = await import("./codedbAdapter.js");
+    return { value: await queryMultiSymbols(root, symbolsList) };
   }
 
   if (command === "ask") {
+    if (parsed.values.has("symbols")) {
+      const symbolsList = parsed.values.get("symbols")!.split(",").map((s) => s.trim()).filter(Boolean);
+      const { queryMultiSymbols } = await import("./codedbAdapter.js");
+      return { value: await queryMultiSymbols(root, symbolsList) };
+    }
     const question = boundedText(parsed.positionals.join(" "), 240, "question");
     const rawTier = parsed.values.get("tier");
     const tier = rawTier as DiscoveryTier | undefined;
     const timing = parsed.values.has("timing");
     const autoResolve = parsed.values.has("auto-resolve");
     const daemon = parsed.values.has("daemon");
+    const excludeTests = parsed.values.has("exclude-tests");
+    const rawDepth = parsed.values.get("depth");
+    const depth = rawDepth ? parseInt(rawDepth, 10) : undefined;
+    const rawDirection = parsed.values.get("direction");
+    const direction = (rawDirection === "callers" || rawDirection === "callees" || rawDirection === "both")
+      ? rawDirection
+      : undefined;
 
     return {
       value: await capnAsk(
@@ -198,7 +255,7 @@ async function runCommand(command: string, rawArgs: readonly string[]): Promise<
         resolveProfile(parsed),
         resolveCapnExecutable(parsed),
         question,
-        { tier, timing, autoResolve, daemon },
+        { tier, timing, autoResolve, daemon, depth, direction, excludeTests },
       ),
     };
   }
@@ -318,6 +375,23 @@ async function runCommand(command: string, rawArgs: readonly string[]): Promise<
       };
     }
 
+    if (action === "reload") {
+      const { tryDaemonReload } = await import("./daemon.js");
+      const { invalidatePathsCache } = await import("./discoveryRouter.js");
+      invalidatePathsCache();
+      const reloaded = await tryDaemonReload(targetRoot);
+      return {
+        value: {
+          waymark: 1,
+          kind: "daemon",
+          action: "reload",
+          ok: Boolean(reloaded && reloaded.ok),
+          status: reloaded?.ok ? "reloaded" : "not_running",
+          root: targetRoot,
+        },
+      };
+    }
+
     if (action === "status") {
       const active = await tryDaemonPing(targetRoot, 500);
       return {
@@ -371,7 +445,7 @@ async function runCommand(command: string, rawArgs: readonly string[]): Promise<
       return { value: null };
     }
 
-    throw new WaymarkError("UNKNOWN_COMMAND", `Unknown daemon action: ${action}. Use start, stop, restart, status, list, ping, or run.`);
+    throw new WaymarkError("UNKNOWN_COMMAND", `Unknown daemon action: ${action}. Use start, stop, restart, reload, status, list, ping, or run.`);
   }
 
   throw new WaymarkError("UNKNOWN_COMMAND", `Unknown command: ${command}`);

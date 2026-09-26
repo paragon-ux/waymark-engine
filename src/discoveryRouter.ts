@@ -3,6 +3,8 @@ import path from "node:path";
 import { performance } from "node:perf_hooks";
 import { classifyTokenShape, rankFzf } from "./fuzzyMatcher.js";
 import { queryStructural, queryFuzzyCandidates } from "./codedbAdapter.js";
+import { PrefixTrie } from "./prefixTrie.js";
+import { tryDaemonResolvePath } from "./daemon.js";
 import {
   AskHitResult,
   AskJunctionResult,
@@ -14,7 +16,11 @@ import {
   FuzzyScoreResult,
   JunctionOption,
   WaymarkError,
+  LiteralMatch,
+  LiteralMatchKind,
 } from "./types.js";
+
+export type { LiteralMatch, LiteralMatchKind };
 
 export { classifyTokenShape };
 
@@ -108,6 +114,7 @@ export function detectAstIntent(question: string): AstIntent {
     lower.includes("trace path") ||
     lower.includes("trace ") ||
     lower.includes("what calls") ||
+    /\bwhat does \w+ call\b/i.test(lower) ||
     lower.includes("which functions call") ||
     lower.includes("call hierarchy");
 
@@ -115,7 +122,7 @@ export function detectAstIntent(question: string): AstIntent {
     const tokens = q.match(/[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)*/g) || [];
     const stopWords = new Set([
       "who", "calls", "call", "what", "which", "functions", "trace", "path",
-      "of", "in", "to", "the", "and", "is", "where", "function", "method"
+      "of", "in", "to", "the", "and", "is", "where", "function", "method", "does"
     ]);
     const candidates = tokens.filter(t => !stopWords.has(t.toLowerCase()) && t.length > 1);
     const rawTarget = candidates[candidates.length - 1] ?? candidates[0] ?? q;
@@ -194,6 +201,23 @@ function canonicalRoot(r: string): string {
 }
 
 let pathCache: { root: string; at: number; paths: string[] } | null = null;
+let pathTrieCache: { root: string; at: number; trie: PrefixTrie } | null = null;
+
+export function invalidatePathsCache(): void {
+  pathCache = null;
+  pathTrieCache = null;
+}
+
+export function getRepoPrefixTrie(root: string, maxAgeMs = 60_000): PrefixTrie {
+  const normRoot = canonicalRoot(root);
+  if (pathTrieCache && pathTrieCache.root === normRoot && Date.now() - pathTrieCache.at < maxAgeMs) {
+    return pathTrieCache.trie;
+  }
+  const paths = collectRepoPaths(root, maxAgeMs);
+  const trie = new PrefixTrie(paths, Date.now());
+  pathTrieCache = { root: normRoot, at: Date.now(), trie };
+  return trie;
+}
 
 function getCacheFilePath(root: string): string {
   if (fs.existsSync(path.join(root, ".capn"))) {
@@ -262,13 +286,6 @@ export function collectRepoPaths(root: string, maxAgeMs = 60_000): string[] {
   }
 
   return out;
-}
-
-export type LiteralMatchKind = "exact" | "basename" | "suffix" | "substring";
-
-export interface LiteralMatch {
-  file: string;
-  kind: LiteralMatchKind;
 }
 
 export function matchLiteralPath(
@@ -385,7 +402,7 @@ export interface DiscoveryRouteContext {
   codedbExecutable?: string;
   capnExecutable?: string;
   profile?: string;
-  queryCapnMemory: (root: string, executable: string, question: string) => Promise<{ hit: boolean; result: unknown; error?: string }>;
+  queryCapnMemory: (root: string, executable: string, question: string) => Promise<{ hit: boolean; result: unknown; error?: string; reason?: string; note?: string }>;
   assertLexicalStore?: (root: string) => void;
   overrideCandidates?: FuzzyCandidate[];
 }
@@ -427,7 +444,12 @@ export async function routeDiscovery(ctx: DiscoveryRouteContext): Promise<AskRes
       const structuralIntent = hasStructuralIntent
         ? astIntent
         : { requiresParser: true, tool: "search_graph" as const, query: question };
-      const astResult = await queryStructural(structuralIntent, root, codedbExecutable);
+      const astResult = await queryStructural(
+        structuralIntent,
+        root,
+        codedbExecutable,
+        options ? { depth: options.depth, direction: options.direction, excludeTests: options.excludeTests } : undefined,
+      );
       if (recordTiming) timings.ast_ms = Math.round((performance.now() - tAst0) * 100) / 100;
 
       if (astResult.hit) {
@@ -462,8 +484,16 @@ export async function routeDiscovery(ctx: DiscoveryRouteContext): Promise<AskRes
     const tPath0 = performance.now();
     const literal = detectLiteralIntent(question);
     if (literal.isLiteral || tier === "path") {
-      const paths = collectRepoPaths(root);
-      const matches = matchLiteralPath(literal.normalized, paths, literal.isExplicitPath);
+      let matches: LiteralMatch[] | null = null;
+      try {
+        matches = await tryDaemonResolvePath(root, literal.normalized, literal.isExplicitPath, 300);
+      } catch {
+        matches = null;
+      }
+      if (matches === null) {
+        const trie = getRepoPrefixTrie(root);
+        matches = trie.match(literal.normalized, literal.isExplicitPath);
+      }
       if (recordTiming) timings.path_ms = Math.round((performance.now() - tPath0) * 100) / 100;
 
       if (matches.length > 0) {
@@ -600,7 +630,6 @@ export async function routeDiscovery(ctx: DiscoveryRouteContext): Promise<AskRes
   // Branch 2: Forced Tier capn
   if (tier === "capn") {
     const tCapn0 = performance.now();
-    if (assertLexicalStore) assertLexicalStore(root);
     const capnRes = await queryCapnMemory(root, capnExecutable, question);
     if (recordTiming) timings.capn_ms = Math.round((performance.now() - tCapn0) * 100) / 100;
     if (recordTiming) timings.total_ms = Math.round((performance.now() - startTime) * 100) / 100;
@@ -660,8 +689,14 @@ export async function routeDiscovery(ctx: DiscoveryRouteContext): Promise<AskRes
       kind: "ask",
       status: "miss",
       provider: "capn-cli",
-      missCode: "NO_CHARTED_MEMORY",
-      reason: `No charted memory found for "${question}".`,
+      missCode: capnRes.reason === "STORE_UNINITIALIZED" || capnRes.reason === "CAPN_NON_DETERMINISTIC_MODE"
+        ? capnRes.reason
+        : "NO_CHARTED_MEMORY",
+      reason: capnRes.reason === "STORE_UNINITIALIZED"
+        ? capnRes.note || "Repository consensus memory is not initialized (.capn missing). Run waymark_init to enable Tier 4."
+        : (capnRes.reason === "CAPN_NON_DETERMINISTIC_MODE"
+          ? capnRes.note || "Capn store is in embedding mode. Re-initialize with deterministic lexical mode."
+          : `No charted memory found for "${question}".`),
       matches: [],
       ...(recordTiming ? { timings } : {}),
     };
@@ -759,7 +794,6 @@ export async function routeDiscovery(ctx: DiscoveryRouteContext): Promise<AskRes
 
   // Stage 2: No identifier-shaped tokens or fuzzy below threshold -> semantic recommendation executes eagerly
   const tCapn0 = performance.now();
-  if (assertLexicalStore) assertLexicalStore(root);
   const capnRes = await queryCapnMemory(root, capnExecutable, question);
   if (recordTiming) timings.capn_ms = Math.round((performance.now() - tCapn0) * 100) / 100;
 

@@ -5,7 +5,7 @@ import { promisify } from "node:util";
 import { createRequire } from "node:module";
 import type { AstIntent } from "./discoveryRouter.js";
 import { resolveWindowsExecutable } from "./executable.js";
-import type { FuzzyCandidate } from "./types.js";
+import type { FuzzyCandidate, CallGraphData, CallGraphHopNode } from "./types.js";
 
 const require = createRequire(import.meta.url);
 const execFileAsync = promisify(execFile);
@@ -175,6 +175,224 @@ const HIGH_COLLISION_NAMES = new Set([
   "load", "save", "flush", "clear", "open", "connect", "disconnect",
 ]);
 
+export function isTestFile(filePath: string): boolean {
+  const normalized = filePath.replace(/\\/g, "/");
+  return (
+    /(?:^|\/)(?:tests?|__tests__|spec|testing)\//i.test(normalized) ||
+    /(?:[._-]test|[._-]spec)\.[^/]+$/i.test(normalized)
+  );
+}
+
+/**
+ * Bounded Multi-Hop BFS Subgraph Traversal (LEDGER-08 / DOD-11).
+ * Traverses caller/callee relationships level by level with:
+ * 1. Directionality filter ('callers', 'callees', or 'both')
+ * 2. 50-node maximum expansion cap (sets truncated: true)
+ * 3. Cycle guard (Set<string> tracking path:line:name tuples)
+ * 4. Optional test file filter (excludeTests) to suppress test noise
+ */
+export async function queryMultiHopCallGraph(
+  root: string,
+  fn: string,
+  depth = 1,
+  direction: "callers" | "callees" | "both" = "both",
+  command?: ResolvedCodedbCommand,
+  excludeTests = false,
+): Promise<{ hit: boolean; output: CallGraphData | string }> {
+  const cmd = command ?? resolveCodedbCommand();
+  const maxDepth = Math.min(Math.max(1, depth), 5);
+
+  // Fast-path ambiguity & existence check for bare identifiers
+  if (!fn.includes(".") && !fn.includes(":")) {
+    const symRun = await runJson(root, cmd, ["symbol", fn, "--json"]);
+    if (symRun.ok && symRun.payload) {
+      const cands = (symRun.payload.results as Neighbor[] | undefined) ?? [];
+      if (cands.length >= 25) {
+        let out = `function: ${fn}\n`;
+        out += `ambiguous: true\n`;
+        out += `candidates (${cands.length}):\n`;
+        for (const c of cands) {
+          out += `  ${c.path}:${c.line} ${c.kind ?? "function"} ${c.name}\n`;
+        }
+        return { hit: true, output: out.trim() };
+      }
+      if (cands.length === 0) {
+        return { hit: false, output: `Function or method "${fn}" not found.` };
+      }
+    }
+  }
+
+  const nRun = await runJson(root, cmd, ["neighbors", fn, "--json"]);
+  if (!nRun.ok || !nRun.payload) {
+    return { hit: false, output: nRun.error || `Function or method "${fn}" not found.` };
+  }
+
+  if (nRun.payload.ambiguous === true) {
+    const cands = (nRun.payload.results as Neighbor[] | undefined) ?? [];
+    let out = `function: ${fn}\n`;
+    out += `ambiguous: true\n`;
+    out += `candidates (${cands.length}):\n`;
+    for (const c of cands) {
+      out += `  ${c.path}:${c.line} ${c.kind ?? "function"} ${c.name}\n`;
+    }
+    return { hit: true, output: out.trim() };
+  }
+
+  if (nRun.payload.symbol_exists === false) {
+    return { hit: false, output: `Function or method "${fn}" not found.` };
+  }
+
+  let rootPath: string | undefined;
+  let rootLine: number | undefined;
+  let rootKind: string | undefined;
+  const symRun = await runJson(root, cmd, ["symbol", fn, "--json"]);
+  if (symRun.ok && symRun.payload && Array.isArray(symRun.payload.results) && symRun.payload.results.length > 0) {
+    const r0 = symRun.payload.results[0] as { path?: string; line?: number; kind?: string };
+    rootPath = r0.path;
+    rootLine = r0.line;
+    rootKind = r0.kind;
+  }
+
+  const visited = new Set<string>();
+  const rootKey = rootPath && rootLine ? `${rootPath}:${rootLine}:${fn}` : fn;
+  visited.add(rootKey);
+
+  let totalNodes = 1;
+  let truncated = false;
+
+  const callersData = nRun.payload.callers;
+  const calleesData = nRun.payload.callees;
+  const callerItems = ((Array.isArray(callersData) ? callersData : (callersData as { results?: Neighbor[] })?.results) ?? []) as Neighbor[];
+  const calleeItems = ((Array.isArray(calleesData) ? calleesData : (calleesData as { results?: Neighbor[] })?.results) ?? []) as Neighbor[];
+
+  const rootCallers: CallGraphHopNode[] = [];
+  const rootCallees: CallGraphHopNode[] = [];
+  let currentCallerQueue: CallGraphHopNode[] = [];
+  let currentCalleeQueue: CallGraphHopNode[] = [];
+
+  if (direction === "callers" || direction === "both") {
+    for (const c of callerItems) {
+      if (excludeTests && isTestFile(c.path)) continue;
+      const key = `${c.path}:${c.line}:${c.name}`;
+      if (!visited.has(key)) {
+        if (totalNodes >= 50) {
+          truncated = true;
+          break;
+        }
+        visited.add(key);
+        totalNodes++;
+        const node: CallGraphHopNode = { name: c.name, path: c.path, line: c.line, kind: c.kind ?? "function" };
+        rootCallers.push(node);
+        currentCallerQueue.push(node);
+      }
+    }
+  }
+
+  if (direction === "callees" || direction === "both") {
+    for (const c of calleeItems) {
+      if (excludeTests && isTestFile(c.path)) continue;
+      const key = `${c.path}:${c.line}:${c.name}`;
+      if (!visited.has(key)) {
+        if (totalNodes >= 50) {
+          truncated = true;
+          break;
+        }
+        visited.add(key);
+        totalNodes++;
+        const node: CallGraphHopNode = { name: c.name, path: c.path, line: c.line, kind: c.kind ?? "function" };
+        rootCallees.push(node);
+        currentCalleeQueue.push(node);
+      }
+    }
+  }
+
+  for (let currentLevel = 2; currentLevel <= maxDepth; currentLevel++) {
+    if (truncated || (currentCallerQueue.length === 0 && currentCalleeQueue.length === 0)) {
+      break;
+    }
+
+    if (direction === "callers" || direction === "both") {
+      const nextCallerQueue: CallGraphHopNode[] = [];
+      for (const parent of currentCallerQueue) {
+        if (totalNodes >= 50) {
+          truncated = true;
+          break;
+        }
+        const hopRes = await runJson(root, cmd, ["neighbors", parent.name, "--json"]);
+        if (hopRes.ok && hopRes.payload) {
+          const hopCallersData = hopRes.payload.callers;
+          const hopCallers = ((Array.isArray(hopCallersData) ? hopCallersData : (hopCallersData as { results?: Neighbor[] })?.results) ?? []) as Neighbor[];
+          for (const c of hopCallers) {
+            if (excludeTests && isTestFile(c.path)) continue;
+            const key = `${c.path}:${c.line}:${c.name}`;
+            if (!visited.has(key)) {
+              if (totalNodes >= 50) {
+                truncated = true;
+                break;
+              }
+              visited.add(key);
+              totalNodes++;
+              const child: CallGraphHopNode = { name: c.name, path: c.path, line: c.line, kind: c.kind ?? "function" };
+              if (!parent.callers) parent.callers = [];
+              parent.callers.push(child);
+              nextCallerQueue.push(child);
+            }
+          }
+        }
+      }
+      currentCallerQueue = nextCallerQueue;
+    }
+
+    if (direction === "callees" || direction === "both") {
+      const nextCalleeQueue: CallGraphHopNode[] = [];
+      for (const parent of currentCalleeQueue) {
+        if (totalNodes >= 50) {
+          truncated = true;
+          break;
+        }
+        const hopRes = await runJson(root, cmd, ["neighbors", parent.name, "--json"]);
+        if (hopRes.ok && hopRes.payload) {
+          const hopCalleesData = hopRes.payload.callees;
+          const hopCallees = ((Array.isArray(hopCalleesData) ? hopCalleesData : (hopCalleesData as { results?: Neighbor[] })?.results) ?? []) as Neighbor[];
+          for (const c of hopCallees) {
+            if (excludeTests && isTestFile(c.path)) continue;
+            const key = `${c.path}:${c.line}:${c.name}`;
+            if (!visited.has(key)) {
+              if (totalNodes >= 50) {
+                truncated = true;
+                break;
+              }
+              visited.add(key);
+              totalNodes++;
+              const child: CallGraphHopNode = { name: c.name, path: c.path, line: c.line, kind: c.kind ?? "function" };
+              if (!parent.callees) parent.callees = [];
+              parent.callees.push(child);
+              nextCalleeQueue.push(child);
+            }
+          }
+        }
+      }
+      currentCalleeQueue = nextCalleeQueue;
+    }
+  }
+
+  const callGraph: CallGraphData = {
+    tool: "call_graph",
+    function: fn,
+    ...(rootPath ? { path: rootPath } : {}),
+    ...(rootLine ? { line: rootLine } : {}),
+    ...(rootKind ? { kind: rootKind } : {}),
+    depth: maxDepth,
+    direction,
+    totalNodes,
+    truncated,
+    ...(direction === "callers" || direction === "both" ? { callers: rootCallers } : {}),
+    ...(direction === "callees" || direction === "both" ? { callees: rootCallees } : {}),
+  };
+
+  return { hit: true, output: callGraph };
+}
+
 /**
  * Answer a structural intent with the deterministic codedb CLI. `trace_path`
  * uses the resolved fail-closed call graph (via single-pass `neighbors`);
@@ -185,7 +403,8 @@ export async function queryStructural(
   intent: AstIntent,
   root: string,
   executable?: string,
-): Promise<{ hit: boolean; output: string }> {
+  options?: { depth?: number; direction?: "callers" | "callees" | "both"; excludeTests?: boolean },
+): Promise<{ hit: boolean; output: string | CallGraphData }> {
   const command = resolveCodedbCommand(executable);
 
   if (intent.tool === "get_architecture") {
@@ -203,6 +422,10 @@ export async function queryStructural(
 
   if (intent.tool === "trace_path") {
     const fn = intent.functionName || "";
+
+    if (options?.depth !== undefined || options?.excludeTests) {
+      return await queryMultiHopCallGraph(root, fn, options?.depth ?? 1, options?.direction ?? "both", command, Boolean(options?.excludeTests));
+    }
 
     // Fast-path ambiguity & existence check for bare identifiers (LEDGER-07)
     // If a bare identifier has >= 25 candidate definitions across the repo, return ambiguity immediately
@@ -246,8 +469,10 @@ export async function queryStructural(
 
       const callersData = nRun.payload.callers;
       const calleesData = nRun.payload.callees;
-      const callerItems = (Array.isArray(callersData) ? callersData : (callersData as { results?: Neighbor[] })?.results) ?? [];
-      const calleeItems = (Array.isArray(calleesData) ? calleesData : (calleesData as { results?: Neighbor[] })?.results) ?? [];
+      const rawCallerItems = (Array.isArray(callersData) ? callersData : (callersData as { results?: Neighbor[] })?.results) ?? [];
+      const rawCalleeItems = (Array.isArray(calleesData) ? calleesData : (calleesData as { results?: Neighbor[] })?.results) ?? [];
+      const callerItems = options?.excludeTests ? rawCallerItems.filter((r: any) => !isTestFile(r.path || "")) : rawCallerItems;
+      const calleeItems = options?.excludeTests ? rawCalleeItems.filter((r: any) => !isTestFile(r.path || "")) : rawCalleeItems;
       const callerNames = callerItems.map((r: any) => r.name);
       const calleeNames = calleeItems.map((r: any) => r.name);
 
@@ -337,4 +562,77 @@ export async function queryFuzzyCandidates(
   }));
   fuzzyCandidateCache.set(cacheKey, { at: Date.now(), candidates });
   return candidates;
+}
+
+export interface MultiSymbolResultItem {
+  status: "hit" | "miss";
+  path?: string;
+  line?: number;
+  kind?: string;
+  detail?: string;
+}
+
+export interface MultiSymbolQueryResult {
+  waymark: 1;
+  kind: "multi-symbol";
+  status: "hit" | "partial" | "miss";
+  total: number;
+  hits: number;
+  misses: number;
+  symbols: Record<string, MultiSymbolResultItem>;
+}
+
+/**
+ * Concurrently query codedb for multiple symbol identifiers and return a consolidated record.
+ */
+export async function queryMultiSymbols(
+  root: string,
+  symbols: string[],
+  executable?: string,
+): Promise<MultiSymbolQueryResult> {
+  const command = resolveCodedbCommand(executable);
+  const results: Record<string, MultiSymbolResultItem> = {};
+  let hitCount = 0;
+  let missCount = 0;
+
+  await Promise.all(
+    symbols.map(async (sym) => {
+      const trimmed = sym.trim();
+      if (!trimmed) return;
+      try {
+        const res = await runJson(root, command, ["symbol", trimmed, "--json"]);
+        const hits = Array.isArray(res.payload?.results) ? (res.payload.results as Array<{ name: string; path: string; line: number; kind?: string; detail?: string }>) : [];
+        const first = hits[0];
+        if (first) {
+          hitCount++;
+          results[trimmed] = {
+            status: "hit",
+            path: first.path,
+            line: first.line,
+            kind: first.kind || "symbol",
+            detail: first.detail,
+          };
+        } else {
+          missCount++;
+          results[trimmed] = { status: "miss" };
+        }
+      } catch {
+        missCount++;
+        results[trimmed] = { status: "miss" };
+      }
+    })
+  );
+
+  const total = Object.keys(results).length;
+  const status: "hit" | "partial" | "miss" = hitCount === total && total > 0 ? "hit" : hitCount > 0 ? "partial" : "miss";
+
+  return {
+    waymark: 1,
+    kind: "multi-symbol",
+    status,
+    total,
+    hits: hitCount,
+    misses: missCount,
+    symbols: results,
+  };
 }

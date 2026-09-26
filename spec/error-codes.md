@@ -62,6 +62,8 @@ Miss codes identify why a query did not match, enabling caller agents to disting
 | `NO_CHARTED_MEMORY` | Tier 4 (Capn Memory) | Capn BM25 query returned zero consensus matches above relevance threshold. | Investigate code manually, then chart the answer using `waymark-chart`. |
 | `JUNCTION_EXHAUSTED` | Discovery Junction | Both Stage 1 (candidate fuzzy), Stage 2 (Capn memory), and Stage 3 (exhaustive fuzzy) returned no confident matches. | Query represents an unindexed concept or novel question; chart once solved. |
 | `TIER_FORCED_MISS` | Router / CLI Flag | Caller explicitly forced a specific tier via `--tier <name>` which did not match, suppressing fallback cascade. | Retry without tier restriction (`--tier auto`) or force a different tier. |
+| `STORE_UNINITIALIZED` | Tier 4 (Capn Memory) | Capn consensus memory store (`.capn`) is uninitialized in repository root. | Call `waymark_init` or `waymark_chart` to enable Tier 4 semantic memory. |
+| `CAPN_NON_DETERMINISTIC_MODE` | Invariant Guard | Capn store is configured in non-deterministic embedding mode. | Re-initialize store with deterministic lexical BM25 mode. |
 
 ---
 

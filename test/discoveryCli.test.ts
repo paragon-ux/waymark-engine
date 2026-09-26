@@ -85,19 +85,13 @@ test("MCP discovery server exposes exactly the discovery tools", async () => {
   const parsed = JSON.parse(response ?? "{}") as { result?: { tools?: Array<{ name: string }> } };
   const names = (parsed.result?.tools ?? []).map((tool) => tool.name);
   assert.deepEqual(names.sort(), [
-    "capn_ask",
-    "capn_bust",
-    "capn_chart",
-    "capn_context",
-    "capn_list",
-    "capn_prune",
-    "capn_unchart",
     "waymark_ask",
     "waymark_bust",
     "waymark_chart",
     "waymark_context",
     "waymark_daemon_status",
     "waymark_discover_symbols",
+    "waymark_init",
     "waymark_list",
     "waymark_prune",
     "waymark_unchart",

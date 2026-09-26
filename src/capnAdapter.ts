@@ -67,7 +67,7 @@ interface ResolvedCapnCommand {
  */
 export function resolveCapnCommand(executable?: string): ResolvedCapnCommand {
   const override = (executable && executable.trim()) || process.env.WAYMARK_CAPN_EXECUTABLE;
-  if (override) {
+  if (override && override !== "capn") {
     const resolved = resolveWindowsExecutable(override);
     const ext = path.extname(resolved).toLowerCase();
     return { file: resolved, prefix: [], viaCmdShim: ext === ".cmd" || ext === ".bat" };
@@ -168,6 +168,9 @@ export async function publish(
   const selectedFiles = uniqueFiles(files);
   if (profile === "none") return { published: false, adapter: profile, output: "publication disabled" };
 
+  if (readCapnConfig(root) === null) {
+    await initCapn(root, executable);
+  }
   assertLexicalStore(root);
   const args = capnChartArgs(question, answer, selectedFiles);
   try {
@@ -192,7 +195,24 @@ async function queryCapnMemory(
   root: string,
   executable: string,
   question: string,
-): Promise<{ hit: boolean; result: unknown; error?: string }> {
+): Promise<{ hit: boolean; result: unknown; error?: string; reason?: string; note?: string }> {
+  const config = readCapnConfig(root);
+  if (config === null) {
+    return {
+      hit: false,
+      result: null,
+      reason: "STORE_UNINITIALIZED",
+      note: "Repository consensus memory is not initialized (.capn missing). Run waymark_init to enable Tier 4.",
+    };
+  }
+  if (config.embedding !== false) {
+    return {
+      hit: false,
+      result: null,
+      reason: "CAPN_NON_DETERMINISTIC_MODE",
+      note: "Capn store is in embedding mode. Re-initialize with deterministic lexical mode.",
+    };
+  }
   try {
     const result = await execute(root, resolveCapnCommand(executable), ["ask", question]);
     const stdout = (result.stdout || "").trim();
@@ -298,13 +318,23 @@ export async function prune(root: string, executable: string): Promise<Record<st
 
 /** List charted entries, human-readable. */
 export async function listEntries(root: string, executable: string): Promise<Record<string, unknown>> {
+  if (readCapnConfig(root) === null) {
+    return {
+      waymark: 1,
+      kind: "list",
+      ok: true,
+      exitCode: 0,
+      count: 0,
+      entries: [],
+      output: "No charted entries (store uninitialized). Run waymark_init or waymark_chart to create consensus memory.",
+    };
+  }
   const result = await runCapnSimple(root, executable, ["list"]);
   return { waymark: 1, kind: "list", ok: result.ok, exitCode: result.exitCode, ...(result.ok ? { output: result.output } : { error: result.output }) };
 }
 
 /** Print the ask-first charting contract. */
 export async function context(root: string, executable: string): Promise<Record<string, unknown>> {
-  const result = await runCapnSimple(root, executable, ["context"]);
   const routingHints = [
     "<waymark-engine>",
     "waymark-ask routes questions in two phases. Use exact phrasing for the symbolic (codedb) phase:",
@@ -326,6 +356,18 @@ export async function context(root: string, executable: string): Promise<Record<
     "</waymark-engine>",
     "",
   ].join("\n");
+
+  if (readCapnConfig(root) === null) {
+    return {
+      waymark: 1,
+      kind: "context",
+      ok: true,
+      exitCode: 0,
+      store: "uninitialized",
+      output: routingHints + "Store is currently uninitialized (.capn missing). Run waymark_init to enable Tier 4 semantic memory.",
+    };
+  }
+  const result = await runCapnSimple(root, executable, ["context"]);
   return { waymark: 1, kind: "context", ok: result.ok, exitCode: result.exitCode, ...(result.ok ? { output: routingHints + result.output } : { error: result.output }) };
 }
 

@@ -76,11 +76,11 @@ test("detectAstIntent classifies structural queries correctly", () => {
 test("queryStructural answers trace_path and search_graph directly", { skip: skipCodedb }, async () => {
   const traceRes = await queryStructural({ requiresParser: true, tool: "trace_path", functionName: "capnChartArgs" }, waymarkRoot);
   assert.equal(traceRes.hit, true);
-  assert.ok(traceRes.output.includes("publish"));
+  assert.ok((traceRes.output as string).includes("publish"));
 
   const symbolRes = await queryStructural({ requiresParser: true, tool: "search_graph", query: "capnChartArgs" }, waymarkRoot);
   assert.equal(symbolRes.hit, true);
-  assert.ok(symbolRes.output.includes("src/capnAdapter.ts"));
+  assert.ok((symbolRes.output as string).includes("src/capnAdapter.ts"));
 });
 
 test("ask() automatically delegates AST queries to the codedb call graph", { skip: skipCodedb }, async () => {

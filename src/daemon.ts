@@ -8,6 +8,9 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { getResidentClient, type CodedbRun } from "./residentCodedb.js";
 import { resolveCodedbCommand } from "./codedbAdapter.js";
+import { PrefixTrie } from "./prefixTrie.js";
+import { collectRepoPaths } from "./discoveryRouter.js";
+import type { LiteralMatch } from "./types.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -216,6 +219,112 @@ export async function tryDaemonPing(
   });
 }
 
+/** Invalidate in-memory path trie and caches on the running daemon. */
+export async function tryDaemonReload(
+  root: string,
+  timeoutMs = 1000,
+): Promise<{ ok: boolean; status?: string } | null> {
+  const address = getDaemonAddress(root);
+
+  return new Promise((resolve) => {
+    let settled = false;
+    const socket = net.connect(address);
+
+    const timer = setTimeout(() => {
+      if (!settled) {
+        settled = true;
+        socket.destroy();
+        resolve(null);
+      }
+    }, timeoutMs);
+    timer.unref();
+
+    socket.on("error", () => {
+      if (!settled) {
+        settled = true;
+        clearTimeout(timer);
+        socket.destroy();
+        resolve(null);
+      }
+    });
+
+    socket.on("connect", () => {
+      const rl = readline.createInterface({ input: socket });
+      rl.on("line", (line) => {
+        if (!settled) {
+          settled = true;
+          clearTimeout(timer);
+          try {
+            const parsed = JSON.parse(line);
+            resolve(parsed);
+          } catch {
+            resolve(null);
+          } finally {
+            socket.end();
+          }
+        }
+      });
+      socket.write(JSON.stringify({ action: "invalidate_paths" }) + "\n");
+    });
+  });
+}
+
+/** Query resident daemon to resolve literal path via its persistent in-memory PrefixTrie (LEDGER-09 / DOD-12). */
+export async function tryDaemonResolvePath(
+  root: string,
+  query: string,
+  isExplicitPath = false,
+  timeoutMs = 1000,
+): Promise<LiteralMatch[] | null> {
+  const address = getDaemonAddress(root);
+
+  return new Promise<LiteralMatch[] | null>((resolve) => {
+    let settled = false;
+    const socket = net.connect(address);
+
+    const timer = setTimeout(() => {
+      if (!settled) {
+        settled = true;
+        socket.destroy();
+        resolve(null);
+      }
+    }, timeoutMs);
+    timer.unref();
+
+    socket.on("error", () => {
+      if (!settled) {
+        settled = true;
+        clearTimeout(timer);
+        socket.destroy();
+        resolve(null);
+      }
+    });
+
+    socket.on("connect", () => {
+      const rl = readline.createInterface({ input: socket });
+      rl.on("line", (line) => {
+        if (!settled) {
+          settled = true;
+          clearTimeout(timer);
+          try {
+            const parsed = JSON.parse(line);
+            if (parsed.ok && Array.isArray(parsed.matches)) {
+              resolve(parsed.matches);
+            } else {
+              resolve(null);
+            }
+          } catch {
+            resolve(null);
+          } finally {
+            socket.end();
+          }
+        }
+      });
+      socket.write(JSON.stringify({ action: "resolve_path", query, isExplicitPath }) + "\n");
+    });
+  });
+}
+
 /** Send stop command to running daemon. Supports --force fallback. */
 export async function stopDaemon(root: string, options?: { force?: boolean; timeoutMs?: number }): Promise<boolean> {
   const timeoutMs = options?.timeoutMs ?? 3000;
@@ -351,6 +460,7 @@ export class WaymarkDaemon {
   readonly pidFile: string;
   private server: net.Server | null = null;
   private residentClient: ReturnType<typeof getResidentClient> | null = null;
+  private prefixTrie: PrefixTrie | null = null;
   private idleTimer: NodeJS.Timeout | null = null;
   private idleTimeoutMs: number;
   private isStopping = false;
@@ -360,6 +470,18 @@ export class WaymarkDaemon {
     this.address = getDaemonAddress(this.root);
     this.pidFile = getPidFilePath(this.root);
     this.idleTimeoutMs = idleTimeoutMs;
+  }
+
+  getPrefixTrie(): PrefixTrie {
+    if (!this.prefixTrie) {
+      const paths = collectRepoPaths(this.root);
+      this.prefixTrie = new PrefixTrie(paths, Date.now());
+    }
+    return this.prefixTrie;
+  }
+
+  invalidatePrefixTrie(): void {
+    this.prefixTrie = null;
   }
 
   private resetIdle(): void {
@@ -388,8 +510,13 @@ export class WaymarkDaemon {
     const command = resolveCodedbCommand();
     this.residentClient = getResidentClient(this.root, command);
 
-    // Warm up resident client
+    // Warm up resident client and prefix trie
     await this.residentClient.send(["tree", "--json"]).catch(() => null);
+    try {
+      this.getPrefixTrie();
+    } catch {
+      // non-fatal
+    }
 
     this.server = net.createServer((socket) => {
       this.resetIdle();
@@ -400,7 +527,7 @@ export class WaymarkDaemon {
         if (!trimmed) return;
 
         try {
-          const req = JSON.parse(trimmed) as { action: string; args?: string[] };
+          const req = JSON.parse(trimmed) as { action: string; args?: string[]; query?: string; isExplicitPath?: boolean };
           if (req.action === "ping") {
             socket.write(
               JSON.stringify({
@@ -421,6 +548,13 @@ export class WaymarkDaemon {
           } else if (req.action === "query" && Array.isArray(req.args)) {
             const res = await this.residentClient!.send(req.args);
             socket.write(JSON.stringify(res) + "\n");
+          } else if (req.action === "resolve_path" && typeof req.query === "string") {
+            const trie = this.getPrefixTrie();
+            const matches = trie.match(req.query, Boolean(req.isExplicitPath));
+            socket.write(JSON.stringify({ ok: true, matches }) + "\n");
+          } else if (req.action === "invalidate_paths") {
+            this.invalidatePrefixTrie();
+            socket.write(JSON.stringify({ ok: true }) + "\n");
           } else {
             socket.write(JSON.stringify({ ok: false, payload: null, error: `Unknown action: ${req.action}` }) + "\n");
           }

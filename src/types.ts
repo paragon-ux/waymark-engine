@@ -68,6 +68,13 @@ export class WaymarkError extends Error {
 
 export type TokenShape = "identifier-like" | "plain";
 
+export type LiteralMatchKind = "exact" | "basename" | "suffix" | "substring";
+
+export interface LiteralMatch {
+  file: string;
+  kind: LiteralMatchKind;
+}
+
 export type DiscoveryTier = "auto" | "ast" | "path" | "fuzzy" | "capn";
 
 export interface FuzzyCandidate {
@@ -104,7 +111,9 @@ export type WaymarkMissCode =
   | "SYMBOL_NOT_FOUND"
   | "NO_CHARTED_MEMORY"
   | "JUNCTION_EXHAUSTED"
-  | "TIER_FORCED_MISS";
+  | "TIER_FORCED_MISS"
+  | "STORE_UNINITIALIZED"
+  | "CAPN_NON_DETERMINISTIC_MODE";
 
 export interface JunctionContinuation {
   tool: "waymark_ask";
@@ -183,10 +192,37 @@ export type AskResult =
   | AskMissResult
   | AskErrorResult;
 
+export interface CallGraphHopNode {
+  name: string;
+  path: string;
+  line: number;
+  kind?: string;
+  callers?: CallGraphHopNode[];
+  callees?: CallGraphHopNode[];
+}
+
+export interface CallGraphData {
+  tool: "call_graph";
+  function: string;
+  path?: string;
+  line?: number;
+  kind?: string;
+  depth: number;
+  direction: "callers" | "callees" | "both";
+  totalNodes: number;
+  truncated: boolean;
+  callers?: CallGraphHopNode[];
+  callees?: CallGraphHopNode[];
+}
+
 export interface AskOptions {
   tier?: DiscoveryTier;
   forceTier?: "fuzzy-lexical" | "capn-cli";
   autoResolve?: boolean;
   timing?: boolean;
   daemon?: boolean;
+  depth?: number;
+  direction?: "callers" | "callees" | "both";
+  excludeTests?: boolean;
 }
+

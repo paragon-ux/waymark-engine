@@ -4,6 +4,66 @@ All notable changes to `waymark-engine` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.0] - 2026-09-25
+
+### MCP Surface Parity, Discovery Precision Hardening, and Maintenance Tools
+
+Version 2.2.0 establishes 100% feature flag and capability parity between the CLI and MCP server surfaces, introduces strict fail-closed precision routing to eliminate false-positive fuzzy fallthrough on structural queries, and exposes the full lifecycle maintenance tool suite.
+
+### Added
+
+- **Full MCP CLI Flag Parity**:
+  - `tier` parameter (`auto | ast | path | fuzzy | capn`) on `waymark_ask` / `capn_ask` to isolate query tiers or bypass junction fallthrough.
+  - `plain` parameter for token-minimal output (~14–38 tokens) designed specifically for LLM context delegation.
+  - `timing` parameter to surface sub-millisecond per-tier latency instrumentation in tool responses.
+  - `daemon` parameter to enable resident background AST acceleration directly from tool calls.
+  - `auto_resolve` flag to control automatic multi-stage resolution behavior.
+- **Shared Output Formatting (`src/renderPlainText.ts`)**:
+  - Extracted `renderPlainText` and `formatTimings` to deliver identical high-density output across both CLI and MCP.
+- **MCP Maintenance Tool Surface**:
+  - `waymark_unchart` (alias: `capn_unchart`): Invalidate and remove charted repository consensus memory entries by ID.
+  - `waymark_bust` (alias: `capn_bust`): Invalidate all consensus memories anchored to a specific file path.
+  - `waymark_prune` (alias: `capn_prune`): Cleanly remove all stale memories whose backing files no longer exist.
+  - `waymark_list` (alias: `capn_list`): Inspect all charted architectural consensus memories.
+  - `waymark_context` (alias: `capn_context`): Retrieve the ask-first charting contract and routing guidelines.
+  - `waymark_daemon_status`: Query resident in-memory background daemon health, PID, socket/pipe address, and uptime.
+- **Zero-Config Bundled Resolution**:
+  - Defaulted `capn_executable` in MCP tools to empty string, enabling transparent auto-resolution to the bundled `@paragon-ux/capn-hook` without requiring manual PATH configuration.
+
+### Fixed
+
+- **Structural AST Fail-Closed Invariant**:
+  - When explicit call-graph queries (`astIntent.tool === "trace_path"`, e.g., `"Who calls 'Run'?"`) miss in Tier 1 codedb and Tier 4 memory, the router now fails closed immediately with `SYMBOL_NOT_FOUND` rather than falling through to Stage 3 fuzzy matching on raw query tokens (`"calls"`, `"Run"`).
+  - Enforced callable type filtering (`function` or `method`) during candidate evaluation for call-graph queries.
+- **Structural Stop Words Expansion**:
+  - Added structural code navigation verbs to `STOP_WORDS` (`call`, `calls`, `caller`, `callers`, `callee`, `callees`, `trace`, `tracing`, `hierarchy`, `signature`, `declaration`, `definition`, `implementation`, `entrypoint`, `entrypoints`) to prevent query intent verbs from being treated as symbol search tokens.
+- **Test Suite Expansion**:
+  - Added comprehensive MCP parity and precision test suite (`test/mcpParityAndPrecision.test.ts`), bringing total verification suite to **47/47 tests passing green**.
+
+---
+
+## [2.1.2] - 2026-09-25
+
+### Dual-Era MCP Compliance, Registry Crawler Compatibility, and Guided Prompts
+
+### Added
+
+- **Dual-Era MCP Handshake (`src/mcp/server.ts`)**:
+  - Added support for both modern `2026-07-28` discovery handshake and classic `2024-11-05` initialization protocol.
+  - Implemented `server/discover` method exposing capabilities, tools, resources, and prompt catalog in a single payload.
+  - Added `instructions` string to `InitializeResult` in the standard `initialize` handshake (`2024-11-05`) for backward-compatible registry inspection.
+- **MCP Prompts Catalog**:
+  - `explore-subsystem`: Guided 4-tier exploration workflow for decomposing modules and concepts.
+  - `architectural-map`: Structured call-graph and consensus memory mapping workflow.
+- **MCP Resources**:
+  - `waymark://manifest`: Engine metadata, tier capabilities, and supported language specifications.
+  - `capn://status`: Memory store status, adapter configuration, and health.
+- **Registry Crawler Compatibility**:
+  - Added `waymark-engine` entry point to `bin` in `package.json`, permitting headless crawlers and clients (`npx -y waymark-engine`) to execute cleanly.
+  - Non-crashing graceful stdio handling for registry inspectors and schema scrapers (Glama, PulseMCP, Smithery) that probe tools without repository contexts.
+
+---
+
 ## [2.1.1] - 2026-09-25
 
 ### Fixed

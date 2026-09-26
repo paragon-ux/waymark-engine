@@ -1,6 +1,6 @@
 {
   "name": "waymark-engine",
-  "version": "2.1.2",
+  "version": "2.2.0",
   "description": "Agentic code discovery: ask your codebase a question, get exact file + symbol + line span in milliseconds. No re-reading, no guessing, no index to build.",
   "type": "module",
   "main": "./dist/src/index.js",

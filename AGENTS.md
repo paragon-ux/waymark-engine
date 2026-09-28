@@ -322,9 +322,9 @@ npm install -g waymark-engine
 
 # --- Verb 1: Read & Discovery (waymark ask) ---
 waymark ask "Who calls verifyHop?"               # Tier 1 AST answer, no external process
-waymark ask "refundOrdr"                         # Discovery Junction (fuzzy recommended, ~92% match)
-waymark ask "refundOrdr" -t fuzzy -b             # Isolate Tier 3 with high-resolution timings
-waymark ask "refundOrdr" --plain                 # Token-minimal plain text for agents (~16 tokens)
+waymark ask "verfyHop"                         # Discovery Junction (fuzzy recommended, ~87% match)
+waymark ask "verfyHop" -t fuzzy -b             # Isolate Tier 3 with high-resolution timings
+waymark ask "verfyHop" --plain                 # Token-minimal plain text for agents (~16 tokens)
 waymark ask --depth 2 --direction callers "hop"  # Bounded multi-hop BFS call graph
 waymark ask --symbols User,Service,ApiWorker     # Concurrent multi-symbol resolution
 waymark ask --path src/types.ts                  # Single-file structured Tree-Sitter AST outline

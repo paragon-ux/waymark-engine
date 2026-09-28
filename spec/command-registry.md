@@ -80,8 +80,8 @@ Options and flags modify discovery routing, execution format, performance instru
 ## 4. MCP Tool Registry
 
 The resident stdio MCP server (`waymark-mcp`) provides two modes of tool exposure:
-1. **Canonical Two-Verb Interface** (`waymark_ask` + `waymark_memory`): Minimal prompt overhead (<450 tokens in agent context, activated via `WAYMARK_MCP_COMPACT=1`) consolidating all discovery into `waymark_ask` and all stateful memory management / subcommands into `waymark_memory`.
-2. **Granular Interface** (default): Registers all 12 tools for backward compatibility with agents expecting single-purpose verbs.
+1. **Canonical Two-Verb Interface** (default): Minimal prompt overhead (<450 tokens in agent context) consolidating all discovery into `waymark_ask` and all stateful memory management / subcommands into `waymark_memory`.
+2. **Granular Interface** (opt-in via `WAYMARK_MCP_VERBOSE=1`): Registers all 12 tools for backward compatibility with agents expecting single-purpose verbs.
 
 ### 4.1 `waymark_ask`
 - **Identifier**: `waymark_ask`

@@ -26,7 +26,9 @@
     "waymark-list": "bin/waymark-list.mjs",
     "waymark-context": "bin/waymark-context.mjs",
     "waymark-daemon": "bin/waymark-daemon.mjs",
-    "waymark-repl": "bin/waymark-repl.mjs"
+    "waymark-repl": "bin/waymark-repl.mjs",
+    "waymark-bootstrap": "bin/waymark-bootstrap.mjs",
+    "waymark-map": "bin/waymark-map.mjs"
   },
   "files": [
     "dist/src",

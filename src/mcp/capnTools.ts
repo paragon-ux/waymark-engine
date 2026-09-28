@@ -873,6 +873,42 @@ export const waymarkInitTool: McpToolHandler = {
   },
 };
 
+export const waymarkMapStatusTool: McpToolHandler = {
+  definition: {
+    name: "waymark_map_status",
+    description: "Inspect the Semantic Repo Map health, completion ratio, and backing file drift.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        plain: {
+          type: "boolean",
+          description: "Optional. Emit token-minimal plain text (~25 tokens). Defaults to false.",
+        },
+        root: {
+          type: "string",
+          description: "Optional repository root path. Defaults to current working directory.",
+        },
+      },
+    },
+  },
+  handler: async (args) => {
+    try {
+      const root = resolveRoot(args);
+      const { getSemanticMapStatus, renderSemanticMapStatus } = await import("../semanticMap.js");
+      const status = getSemanticMapStatus(root);
+      if (args.plain) {
+        return {
+          content: [{ type: "text", text: renderSemanticMapStatus(status) }],
+          isError: false,
+        };
+      }
+      return jsonResult(status, false);
+    } catch (error) {
+      return errorResult(error);
+    }
+  },
+};
+
 export const CANONICAL_MCP_TOOLS: McpToolHandler[] = [
   waymarkAskTool,
   waymarkMemoryTool,
@@ -889,6 +925,7 @@ export const WAYMARK_TOOLS: McpToolHandler[] = [
   waymarkListTool,
   waymarkContextTool,
   waymarkDaemonStatusTool,
+  waymarkMapStatusTool,
   waymarkInitTool,
 ];
 

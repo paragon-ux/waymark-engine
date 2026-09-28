@@ -46,9 +46,9 @@ waymark ask "Who calls verifyHop?"            # Tier 1 exact structural call gra
 waymark ask "Who calls verifyHop?" --depth 2 --exclude-tests  # Bounded multi-hop BFS
 waymark ask --symbols User,Service,ApiWorker  # Concurrent multi-symbol batch discovery
 waymark ask --path src/types.ts               # Single-file structured Tree-Sitter AST outline
-waymark ask "refundOrdr"                      # Discovery Junction: fuzzy recommended (~92% match)
-waymark ask "refundOrdr" -t fuzzy -b          # Isolate Tier 3 with high-resolution timings
-waymark ask "refundOrdr" --plain              # Token-minimal plain text for agents (~16 tokens)
+waymark ask "verfyHop"                        # Discovery Junction: fuzzy recommended (verifyHop ~87% match)
+waymark ask "verfyHop" -t fuzzy -b            # Isolate Tier 3 with high-resolution timings
+waymark ask "verfyHop" --plain                # Token-minimal plain text for agents (~16 tokens)
 waymark ask --facet invariants "path rules"   # Scope query to architectural domain in Semantic Map
 waymark ask "How does authentication work in this project?"  # Tier 4 consensus memory query
 

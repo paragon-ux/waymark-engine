@@ -4,6 +4,53 @@ All notable changes to `waymark-engine` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.0] - 2026-09-28
+
+### Semantic Repo Map, Frontloaded Consensus Bootstrap, and Two-Verb Canonical Model
+
+Version 2.4.0 introduces the **Semantic Repo Map**, establishing frontloaded architectural consensus memory for repositories with zero passive prompt token overhead. Solves the cold-start defect of Tier 4 consensus memory, introduces the consolidated **Two-Verb Canonical Model** (`waymark_ask` for universal read discovery, `waymark_memory` for universal consensus writing), guarantees 100% preservation of all existing commands and tier isolation, and reduces MCP prompt token load by up to ~87% (<450 tokens).
+
+### Added
+
+- **Semantic Repo Map ("The Waymark 5") (`src/semanticMap.ts`)**:
+  - Categorizes repository architecture into 5 canonical facets:
+    1. `FACET_LIFECYCLE` (`lifecycle`): Executable entrypoints, daemon lifecycles, and bootstrapping sequences.
+    2. `FACET_DATA_STATE` (`data_state`): Data flow, persistence models, disk sync, and caches.
+    3. `FACET_BOUNDARIES` (`boundaries`): Inter-process boundary protocols (Named Pipes, Unix Sockets), RPC, and external bridges.
+    4. `FACET_INVARIANTS` (`invariants`): Chesterton's fences, path normalizers, and security/OS execution constraints.
+    5. `FACET_FAILURE` (`failure`): Fail-closed miss policy, error registries, and degraded mode recovery.
+  - **Single SQLite Consensus Ledger Parity**: Facets live directly inside the existing `.capn` FTS5 SQLite store with zero auxiliary JSON/markdown manifest files. Agents interact purely via API, CLI, or MCP tools without reading internal engine documents.
+  - **Two-Pass Bootstrapping (`bootstrapSemanticMap`, `waymark memory bootstrap`, `waymark bootstrap`)**: Harvests project layout and metadata, queries AST to verify symbols, formulates bounded answers ($\le 100$ tokens), and charts them directly into SQLite consensus memory.
+  - **Health & Drift Inspection (`getSemanticMapStatus`, `renderSemanticMapStatus`)**: Instant inspection of map completion (e.g. `5/5 Facets Active`), missing facets, and backing file drift in token-minimal plain text (~25 tokens) or full JSON.
+  - **Anti-Hallucination Guardrail #1**: Enforces that every active facet cites $\ge 1$ repository files verified to exist on disk via `fs.existsSync`. Pure descriptive essays without code citations are strictly rejected with typed `INVALID_BACKING_FILES` errors. Supports `status: not_applicable` protocol for irrelevant architectural domains.
+- **Two-Verb Canonical Model (`waymark_ask` & `waymark_memory`)**:
+  - **Read Surface (`waymark_ask` / `waymark ask`)**:
+    - Universal discovery query supporting `question` / `query`, `symbols` (batch), `path` (single-file AST outline discovery), and `facet` (`lifecycle` | `data_state` | `boundaries` | `invariants` | `failure` | `status`).
+    - Querying `--facet status` emits the Semantic Repo Map health report.
+    - Querying `--facet <name>` routes and prioritizes lexical BM25 retrieval to documents tagged with `[FACET:<NAME>]`.
+    - Querying `--path <file>` without a question extracts structured Tree-Sitter AST symbols (Mode A) in ~120 tokens.
+  - **Write Surface (`waymark_memory` / `waymark memory`)**:
+    - Universal consensus ledger manager consolidating actions: `chart`, `bootstrap`, `status`, `bust`, `prune`, `list`, `unchart`, `init`, `context`.
+    - Auto-tags architectural facets (`[FACET:<NAME>]`) and enforces the Anti-Hallucination Guard.
+- **MCP Prompt Token Optimization (<450 Tokens)**:
+  - Added `canonicalOnly: boolean` option to `McpServer` and `WAYMARK_MCP_COMPACT=1` environment flag.
+  - When enabled, `tools/list` advertises strictly the 2 canonical tools (`waymark_ask` and `waymark_memory`), eliminating ~3,000 tokens of tool schema bloat from system prompts.
+  - Full backwards compatibility: all 11 tools remain registered in the dispatch table, ensuring legacy MCP tool calls succeed seamlessly.
+- **CLI Commands & Extensions (`src/cli.ts`)**:
+  - Added `waymark memory <action>` with full subcommand options (`--question`, `--answer`, `--facet`, `--files`, `--file`, `--id`, `--if-exists`, `--dry-run`, `--subsystem`).
+  - Added `waymark bootstrap [--dry-run] [--subsystem <name>]`.
+  - Added `waymark map [status|show|heal|export] [--format md|json]`.
+  - Enhanced `waymark ask` with `--facet <name>` and `--path <file>`.
+- **Comprehensive Integration Test Suite (`test/semanticRepoMap.test.ts`)**:
+  - Full test coverage for anti-hallucination backing file verification, two-pass bootstrapping, MCP `waymark_memory` actions, MCP `waymark_ask` facet addressing and path outline extraction, and tier isolation invariance.
+
+### Invariants Maintained
+
+- **100% Command Functionality & Tier Isolation Preserved**: Every CLI command, subcommand, flag, and explicit wrapper remains functional. Forcing individual tiers (`-t ast`, `-t path`, `-t fuzzy`, `-t capn`) remains fully operational across CLI, MCP, and API.
+- **Zero Passive Token Overhead**: 0 tokens injected into agent prompt contexts until queried on demand.
+
+---
+
 ## [2.3.1] - 2026-09-28
 
 ### Testing-First Architecture, Dev Mode, Repository Standardization, and Glama Registry Discovery

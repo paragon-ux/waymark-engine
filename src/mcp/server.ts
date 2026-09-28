@@ -78,7 +78,7 @@ export class McpServer {
   constructor(optionsOrHandlers: McpServerOptions | McpToolHandler[] = CAPN_TOOLS) {
     if (Array.isArray(optionsOrHandlers)) {
       this.serverName = "waymark-engine";
-      this.serverVersion = "2.3.1";
+      this.serverVersion = "2.4.0";
       this.canonicalOnly = process.env.WAYMARK_MCP_COMPACT === "1";
       this.resources = CAPN_RESOURCES;
       this.prompts = CAPN_PROMPTS;
@@ -89,7 +89,7 @@ export class McpServer {
       }
     } else {
       this.serverName = optionsOrHandlers.name ?? "waymark-engine";
-      this.serverVersion = optionsOrHandlers.version ?? "2.3.1";
+      this.serverVersion = optionsOrHandlers.version ?? "2.4.0";
       this.canonicalOnly = Boolean(optionsOrHandlers.canonicalOnly || process.env.WAYMARK_MCP_COMPACT === "1");
       const tools = optionsOrHandlers.tools ?? CAPN_TOOLS;
       this.resources = optionsOrHandlers.resources ?? CAPN_RESOURCES;

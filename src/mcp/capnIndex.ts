@@ -4,7 +4,7 @@ import { CAPN_TOOLS } from "./capnTools.js";
 
 const server = new McpServer({
   name: "waymark-engine",
-  version: "2.3.0",
+  version: "2.4.0",
   tools: CAPN_TOOLS,
   resources: CAPN_RESOURCES,
   prompts: CAPN_PROMPTS,

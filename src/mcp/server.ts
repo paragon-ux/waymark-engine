@@ -94,7 +94,7 @@ export class McpServer {
     const verbose = process.env.WAYMARK_MCP_VERBOSE === "1" || process.env.WAYMARK_MCP_ALL_TOOLS === "1";
     if (Array.isArray(optionsOrHandlers)) {
       this.serverName = "waymark-engine";
-      this.serverVersion = "2.4.0";
+      this.serverVersion = "2.4.1";
       this.canonicalOnly = !verbose;
       this.resources = CAPN_RESOURCES;
       this.prompts = CAPN_PROMPTS;
@@ -105,7 +105,7 @@ export class McpServer {
       }
     } else {
       this.serverName = optionsOrHandlers.name ?? "waymark-engine";
-      this.serverVersion = optionsOrHandlers.version ?? "2.4.0";
+      this.serverVersion = optionsOrHandlers.version ?? "2.4.1";
       this.canonicalOnly = optionsOrHandlers.canonicalOnly !== undefined
         ? optionsOrHandlers.canonicalOnly
         : !verbose;

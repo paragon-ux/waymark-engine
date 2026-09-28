@@ -104,6 +104,7 @@ test("MCP discovery server with canonicalOnly false exposes all tools", async ()
     "waymark_discover_symbols",
     "waymark_init",
     "waymark_list",
+    "waymark_map_status",
     "waymark_memory",
     "waymark_prune",
     "waymark_unchart",

@@ -4,6 +4,28 @@ All notable changes to `waymark-engine` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.1] - 2026-09-28
+
+### Developer Experience Polish, MCP Tool Parity, and Standalone Wrapper Binaries
+
+Version 2.4.1 delivers Developer Experience (DX) hardening, standalone binary wrappers, granular MCP tool parity, and cross-platform path normalization.
+
+### Added
+- **Standalone Binary Wrappers (`waymark-bootstrap`, `waymark-map`)**:
+  - Added dedicated CLI wrapper stubs `bin/waymark-bootstrap.mjs` and `bin/waymark-map.mjs` mapped into `package.json["bin"]`, enabling direct invocation via terminal or `npx` alongside the unified `waymark` CLI.
+- **Granular MCP Tool `waymark_map_status` (`src/mcp/capnTools.ts`)**:
+  - Implemented and registered `waymarkMapStatusTool` in `WAYMARK_TOOLS` (12 tools total in granular mode), providing direct backward-compatible map health inspection.
+
+### Fixed
+- **Cross-Platform Path Normalization (`src/capnAdapter.ts`)**:
+  - Normalized all file citations and cache-busting lookups to forward slashes across POSIX and Windows, preventing backslash mismatches during `bust` and anchor verification.
+- **Two-Verb MCP Default Alignment**:
+  - Aligned MCP server default behavior and `spec/command-registry.md` documentation: Two-Verb Canonical Interface is active by default (<450 tokens prompt load), while flat Granular Interface is opt-in via `WAYMARK_MCP_VERBOSE=1`.
+- **Repo-Native Quickstart Examples**:
+  - Replaced fictional fuzzy matching targets with repository-native identifier `"verfyHop"` across `README.md` and `AGENTS.md`, providing live demonstration of the Discovery Junction matching `verifyHop in src/integrity.ts:66 (score: 87)`.
+
+---
+
 ## [2.4.0] - 2026-09-28
 
 ### Semantic Repo Map, Frontloaded Consensus Bootstrap, and Two-Verb Canonical Model

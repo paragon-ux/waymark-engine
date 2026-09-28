@@ -25,7 +25,8 @@
     "waymark-prune": "bin/waymark-prune.mjs",
     "waymark-list": "bin/waymark-list.mjs",
     "waymark-context": "bin/waymark-context.mjs",
-    "waymark-daemon": "bin/waymark-daemon.mjs"
+    "waymark-daemon": "bin/waymark-daemon.mjs",
+    "waymark-repl": "bin/waymark-repl.mjs"
   },
   "files": [
     "dist/src",
@@ -61,7 +62,7 @@
     "build": "tsc -p tsconfig.json",
     "test": "npm run build && node --test \"dist/test/**/*.test.js\"",
     "verify": "npm run build && node --test \"dist/test/**/*.test.js\"",
-    "test:prompts": "node docs/prompts/run_battery.mjs",
+    "test:prompts": "npm run build && node dist/src/cli.js repl --manifest docs/prompts/CATALOGUE_MANIFEST.jsonl",
     "test:benchmark": "node benchmarks/suites/benchmark_stateless_vs_resident.mjs",
     "prepublishOnly": "npm run verify"
   },

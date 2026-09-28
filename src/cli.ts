@@ -17,7 +17,7 @@ interface ParsedArgs {
 const VALUE_FLAGS = new Set([
   "profile", "path", "language", "capn-executable", "question", "answer", "files",
   "tier", "t", "format", "idle-timeout", "query", "symbol", "symbols", "q", "s",
-  "depth", "direction",
+  "depth", "direction", "manifest", "category", "id", "file",
 ]);
 
 const BOOLEAN_FLAGS = new Set([
@@ -167,10 +167,11 @@ async function runCommand(command: string, rawArgs: readonly string[]): Promise<
         "  unchart <id> [--if-exists] | bust <path> | prune | list | context",
         "  mcp (starts the stdio MCP discovery server)",
         "  daemon [start|stop|restart|status|list|ping] [--path <root>] [--idle-timeout <sec>] [--force]",
+        "  repl [--manifest <file>] [--category <c>] [--id <i>] [--file <script>] (interactive diagnostic shell)",
         "",
         "Explicit wrappers (same engine, one command per action):",
         "  waymark-init | waymark-ask | waymark-discover | waymark-symbols | waymark-chart | waymark-unchart",
-        "  waymark-bust | waymark-prune | waymark-list | waymark-context | waymark-mcp | waymark-daemon",
+        "  waymark-bust | waymark-prune | waymark-list | waymark-context | waymark-mcp | waymark-daemon | waymark-repl",
         "",
         "Options for ask:",
         "  -t, --tier <tier>    Force discovery tier: auto | ast | path | fuzzy | capn",
@@ -227,6 +228,39 @@ async function runCommand(command: string, rawArgs: readonly string[]): Promise<
     }
     const { queryMultiSymbols } = await import("./codedbAdapter.js");
     return { value: await queryMultiSymbols(root, symbolsList) };
+  }
+
+  if (command === "repl") {
+    const { startRepl, runReplScript } = await import("./repl.js");
+    const scriptFile = parsed.values.get("file");
+    const manifestFile = parsed.values.get("manifest");
+    const plain = parsed.values.has("plain");
+    const dev = parsed.values.has("dev");
+
+    if (scriptFile) {
+      await runReplScript(scriptFile, root);
+      return { value: { ok: true } };
+    }
+
+    if (manifestFile) {
+      const { runManifestEvaluation } = await import("./evaluator.js");
+      const category = parsed.values.get("category");
+      const id = parsed.values.get("id");
+      const scoreboard = await runManifestEvaluation({
+        manifestPath: path.resolve(root, manifestFile),
+        category,
+        id,
+        rootDir: root,
+        onProgress: (rep) => {
+          const mark = rep.passed ? "✓" : "✗";
+          process.stdout.write(`  ${mark} [${rep.id}] ${rep.name} (${rep.duration_ms}ms) -> ${rep.actual_status}\n`);
+        },
+      });
+      return { value: scoreboard, exitCode: scoreboard.failed > 0 ? 1 : 0 };
+    }
+
+    await startRepl({ rootDir: root, plain, dev });
+    return { value: null };
   }
 
   if (command === "ask") {

@@ -12,6 +12,9 @@ export { queryStructural, queryMultiHopCallGraph, queryFuzzyCandidates, queryMul
 export { discoverSymbolsInFile, discoverSymbolsInRepo, type SymbolDiscoveryResult, type StructuredSymbol, type RepoSymbolDiscoveryResult, type RepoSymbolHit } from "./astExtractor.js";
 export { verifyHop } from "./integrity.js";
 export { anchorForRange, normalizeRange, repoRoot, sha256, structuralSignature, normalizeSpan } from "./paths.js";
+export { startRepl, runReplScript, type ReplOptions } from "./repl.js";
+export { executePromptTest, runManifestEvaluation, loadManifest, type PromptTestRecord, type PromptStep, type TestDiagnosticReport, type ManifestEvaluationScoreboard, type LineDriftInfo } from "./evaluator.js";
+export { runBaselineSearch, computeBaselineComparison, type BaselineSearchResult, type BaselineComparison, type BaselineMatch } from "./baselineSearch.js";
 export {
   WaymarkError,
   type AdapterProfile,

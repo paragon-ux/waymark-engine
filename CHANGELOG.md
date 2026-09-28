@@ -16,11 +16,17 @@ Version 2.3.1 introduces an in-house Testing-First operational framework featuri
   - Added `--dev` CLI flag and `dev: boolean` parameter to MCP `waymark_ask` and `waymark_daemon_status`.
   - Surfaces deep diagnostic telemetry: per-tier execution timing breakdown, PrefixTrie hit type (`exact`, `basename`, `suffix`), and daemon IPC roundtrip vs in-process scanning.
   - Live runtime invariant assertions: asserts multi-hop visited node cap $\le 50$, path containment, and test noise suppression.
+- **Interactive REPL Shell & Live Diagnostic Driver (`src/repl.ts`, `bin/waymark-repl.mjs`)**:
+  - Implemented `waymark repl` (binary: `waymark-repl`) with live resident daemon connectivity, auto-launching background daemon if offline.
+  - Interactive Node readline interface supporting `ask`, `symbols`, `discover`, `anchor`, `verify-anchor`, `baseline`, `compare`, `manifest`, `daemon`, `dev`, `plain`, and scripted driver execution (`--file <script>`).
+  - Added comparative searcher (`src/baselineSearch.ts`) providing zero-dependency lexical regex search and `git grep` benchmarking, computing speedup factor, noise reduction ratio, and token compression metrics.
+- **Hardened Live Prompt Evaluation Battery (`docs/prompts/CATALOGUE_MANIFEST.jsonl`, `src/evaluator.ts`)**:
+  - Authored a comprehensive 15-category, 105-prompt evaluation suite with live validation across AST traversal, PrefixTrie, multi-symbol batching, fail-closed boundaries, line drift tracking ($\Delta$ offset), tamper evidence (`anchorForRange` SHA-256 span verification), token pressure, and Discovery Junction consensus.
+  - Added mechanized operator classification (`SUCCESS`, `ENGINE_FAIL_CLOSED_MISS`, `ENGINE_MISROUTING`, `SYNTAX_ERROR`, `TIMEOUT`).
 - **Internal Testing & Governance Infrastructure (`docs/`)**:
   - Added gitignored internal documentation framework inspired by PDLt governance.
   - Initialized mechanized failure ledger (`docs/governance/regressions-log.jsonl`) recording failure types, problem statements, and type solutions.
-  - Published ADR-0001 (Testing-First Live Run Requirements & Dev Mode) and ADR-0002 (System 1 Determinism vs System 2 Consensus Disciplines).
-  - Published standardized prompt battery (`docs/prompts/`, 36 queries across 6 batteries) with automated live test runner (`docs/prompts/run_battery.mjs`).
+  - Published ADR-0001 (Testing-First Live Run Requirements & Dev Mode), ADR-0002 (System 1 Determinism vs System 2 Consensus Disciplines), and ADR-0003 (Interactive REPL & Hardened Live Battery Execution).
 - **Benchmark Directory Standardization (`benchmarks/`)**:
   - Promoted benchmark suites from disposable `scratch/benchmarks/` into a first-class, Git-tracked top-level `benchmarks/` directory.
 - **Glama-AI Registry Discovery**:

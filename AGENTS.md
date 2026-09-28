@@ -121,6 +121,7 @@ waymark-chart --question "<q>" --answer "<a>" --files "<a,b>"
 waymark-unchart <id>   waymark-bust <path>   waymark-prune
 waymark-list           waymark-context      waymark-mcp
 waymark-daemon [start|stop|restart|status|list|ping]
+waymark-repl                                     # Interactive diagnostic shell with live daemon IPC
 ```
 
 ---

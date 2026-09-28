@@ -39,6 +39,7 @@ Waymark Engine provides both a unified binary (`waymark <command>`) and explicit
 | `waymark context`<br>`waymark-context` | **Stable** | [`src/capnAdapter.ts`](../src/capnAdapter.ts) | None | Summarizes repository memory state, entry counts, and configuration profile. |
 | `waymark mcp`<br>`waymark-mcp` | **Stable** | [`src/mcp/server.ts`](../src/mcp/server.ts) | None (runs over `stdio`) | Launches the standard Model Context Protocol (MCP) server for IDE and agent integration. |
 | `waymark daemon [start\|stop\|restart\|reload\|status\|list\|ping\|run]`<br>`waymark-daemon [start\|stop\|restart\|reload\|status\|list\|ping]` | **Stable** | [`src/daemon.ts`](../src/daemon.ts) | Subcommand (`start`, `stop`, `restart`, `reload`, `status`, `list`, `ping`, `run`), `[--path <root>]` | Manages background resident codedb server (`serve --stdio`) and IPC socket/pipe bridge for sub-10ms warm query execution. Supports cache reloading via `reload`. |
+| `waymark repl`<br>`waymark-repl` | **Stable** | [`src/repl.ts`](../src/repl.ts) | `[--manifest <file>]`<br>`[--category <cat>]`<br>`[--id <id>]`<br>`[--file <script>]`<br>`[--plain]`<br>`[--dev]` | Interactive diagnostic REPL shell and hardened test battery runner with live daemon IPC, line drift calculation, and baseline comparison. |
 | `waymark help` / `-h` / `--help` | **Stable** | [`src/cli.ts`](../src/cli.ts) | None | Outputs brief command options, flags, and environment variable configuration. |
 
 ---

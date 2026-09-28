@@ -51,6 +51,22 @@ export const CAPN_PROMPTS: McpPromptDefinition[] = [
       },
     ],
   },
+  {
+    name: "bootstrap-semantic-map",
+    description: "Two-pass agent prompt that inspects repository layout, harvests existing documentation, grounds concepts in Tree-Sitter AST symbols, and writes the 5-facet Semantic Repo Map.",
+    arguments: [
+      {
+        name: "subsystem",
+        description: "Optional subsystem or package name in monorepos.",
+        required: false,
+      },
+      {
+        name: "root",
+        description: "Optional repository root path.",
+        required: false,
+      },
+    ],
+  },
 ];
 
 export interface McpServerOptions {
@@ -74,12 +90,12 @@ export class McpServer {
   private readonly root: string;
   private readonly enableDaemon: boolean;
   private daemon: any = null;
-
   constructor(optionsOrHandlers: McpServerOptions | McpToolHandler[] = CAPN_TOOLS) {
+    const verbose = process.env.WAYMARK_MCP_VERBOSE === "1" || process.env.WAYMARK_MCP_ALL_TOOLS === "1";
     if (Array.isArray(optionsOrHandlers)) {
       this.serverName = "waymark-engine";
       this.serverVersion = "2.4.0";
-      this.canonicalOnly = process.env.WAYMARK_MCP_COMPACT === "1";
+      this.canonicalOnly = !verbose;
       this.resources = CAPN_RESOURCES;
       this.prompts = CAPN_PROMPTS;
       this.root = process.cwd();
@@ -90,7 +106,9 @@ export class McpServer {
     } else {
       this.serverName = optionsOrHandlers.name ?? "waymark-engine";
       this.serverVersion = optionsOrHandlers.version ?? "2.4.0";
-      this.canonicalOnly = Boolean(optionsOrHandlers.canonicalOnly || process.env.WAYMARK_MCP_COMPACT === "1");
+      this.canonicalOnly = optionsOrHandlers.canonicalOnly !== undefined
+        ? optionsOrHandlers.canonicalOnly
+        : !verbose;
       const tools = optionsOrHandlers.tools ?? CAPN_TOOLS;
       this.resources = optionsOrHandlers.resources ?? CAPN_RESOURCES;
       this.prompts = optionsOrHandlers.prompts ?? CAPN_PROMPTS;
@@ -355,7 +373,7 @@ export class McpServer {
                 role: "user",
                 content: {
                   type: "text",
-                  text: `Please explore the codebase using waymark-engine MCP tools for: "${query}". First use waymark_ask to check Tier 1 AST call graphs or Tier 3 Discovery Junction recommendations, inspect relevant files with waymark_discover_symbols, and chart findings with waymark_chart.`,
+                  text: `Please explore the codebase using waymark-engine MCP tools for: "${query}". First use waymark_ask to check Tier 1 AST call graphs or Tier 3 Discovery Junction recommendations, inspect relevant file AST outlines with waymark_ask (argument: path), and chart architectural findings into consensus memory via waymark_memory (action: "chart", or waymark_chart).`,
                 },
               },
             ],
@@ -374,7 +392,26 @@ export class McpServer {
                 role: "user",
                 content: {
                   type: "text",
-                  text: `Trace the architectural call chain and execution flow for: "${topic}". Use waymark_ask to resolve callers and callees, verify exact file paths, and summarize the policy in long-term memory via waymark_chart.`,
+                  text: `Trace the architectural call chain and execution flow for: "${topic}". Use waymark_ask to resolve callers and callees (arguments: depth, direction), verify exact file paths, and summarize the consensus policy in long-term memory via waymark_memory (action: "chart", or waymark_chart).`,
+                },
+              },
+            ],
+          },
+        };
+      }
+      if (name === "bootstrap-semantic-map") {
+        const subsystem = args.subsystem ? ` for subsystem "${args.subsystem}"` : "";
+        return {
+          jsonrpc: "2.0",
+          id,
+          result: {
+            description: "Two-pass agent prompt that inspects repository layout, harvests existing documentation, grounds concepts in Tree-Sitter AST symbols, and writes the 5-facet Semantic Repo Map.",
+            messages: [
+              {
+                role: "user",
+                content: {
+                  type: "text",
+                  text: `Initialize or verify the 5-facet Semantic Repo Map${subsystem}. First call waymark_memory with action="status" (or waymark_ask with facet="status") to check current map health. If facets are missing, call waymark_memory with action="bootstrap" (optional: dry_run=true first) to auto-generate the foundational architectural consensus into SQLite.`,
                 },
               },
             ],

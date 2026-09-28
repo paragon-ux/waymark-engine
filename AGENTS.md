@@ -84,15 +84,9 @@ When an agent or client editor launches `waymark-engine` via stdio, the server d
 
 ### Exposed MCP Surface: The Two-Verb Model & Subcommands
 
-Waymark Engine provides a high-efficiency **Two-Verb MCP Interface** that minimizes prompt token overhead (<450 tokens in compact mode vs 3,000+ tokens for flat tool sprawl) while maintaining 100% feature parity across CLI, MCP, and library APIs.
+Waymark Engine defaults to a high-efficiency **Two-Verb MCP Interface** that minimizes prompt token overhead (**<450 tokens default** vs 3,000+ tokens for flat tool sprawl) while maintaining 100% feature parity across CLI, MCP, and library APIs.
 
-To activate ultra-lean prompt mode (<450 tokens) where only the 2 canonical verbs are exposed:
-```json
-"env": {
-  "CODEDB_ALLOW_TEMP": "1",
-  "WAYMARK_MCP_COMPACT": "1"
-}
-```
+Zero configuration is required to benefit from the lean Two-Verb surface. *(Optional: to expose all 11 legacy granular tools in `tools/list`, set `"WAYMARK_MCP_VERBOSE": "1"`)*.
 
 ---
 
@@ -272,10 +266,31 @@ Consolidates all stateful operations, consensus memory management, and map maint
   }
   ```
 
+* **Subcommand `heal`** (Reconcile Semantic Repo Map anchors and update SQLite consensus ledger):
+  ```json
+  {
+    "name": "waymark_memory",
+    "arguments": {
+      "action": "heal"
+    }
+  }
+  ```
+
+* **Subcommand `export`** (Export charted architectural consensus map as Markdown or JSON):
+  ```json
+  {
+    "name": "waymark_memory",
+    "arguments": {
+      "action": "export",
+      "format": "md"
+    }
+  }
+  ```
+
 ---
 
 #### 3. Granular Backward-Compatible Tools
-When running without `WAYMARK_MCP_COMPACT=1`, all granular tools remain registered and fully functional for backward compatibility:
+When running with `WAYMARK_MCP_VERBOSE=1` (or via direct invocation in `tools/call`), all 11 granular tools remain registered and fully functional for backward compatibility:
 * `waymark_chart`: Alias for `waymark_memory(action="chart")`
 * `waymark_bust`: Alias for `waymark_memory(action="bust")`
 * `waymark_prune`: Alias for `waymark_memory(action="prune")`
@@ -300,25 +315,37 @@ When running without `WAYMARK_MCP_COMPACT=1`, all granular tools remain register
 
 ---
 
-## CLI Usage
+## Consolidated CLI Usage
 
 ```bash
 npm install -g waymark-engine
-waymark-init                                     # one-time lexical store init per repo (or: waymark init)
 
-waymark-ask "Who calls verifyHop?"               # Tier 1 AST answer, no external process
-waymark-ask "refundOrdr"                         # Discovery Junction (fuzzy recommended, ~92% match)
-waymark-ask "refundOrdr" -t fuzzy -b             # Isolate Tier 3 with high-resolution timings
-waymark-ask "refundOrdr" --plain                 # Token-minimal plain text for agents (~16 tokens)
-waymark-ask "How does authentication work?"      # Tier 4 charted-memory answer or miss
-waymark-symbols User Service ApiWorker           # Batch symbol resolution across the codebase
-waymark-discover --path src/index.ts             # Mode A: structured AST extraction for file
-waymark-discover --query Greeter                 # Mode B: repo-wide symbol discovery
-waymark-chart --question "<q>" --answer "<a>" --files "<a,b>"
-waymark-unchart <id>   waymark-bust <path>   waymark-prune
-waymark-list           waymark-context      waymark-mcp
-waymark-daemon [start|stop|restart|status|list|ping]
-waymark-repl                                     # Interactive diagnostic shell with live daemon IPC
+# --- Verb 1: Read & Discovery (waymark ask) ---
+waymark ask "Who calls verifyHop?"               # Tier 1 AST answer, no external process
+waymark ask "refundOrdr"                         # Discovery Junction (fuzzy recommended, ~92% match)
+waymark ask "refundOrdr" -t fuzzy -b             # Isolate Tier 3 with high-resolution timings
+waymark ask "refundOrdr" --plain                 # Token-minimal plain text for agents (~16 tokens)
+waymark ask --depth 2 --direction callers "hop"  # Bounded multi-hop BFS call graph
+waymark ask --symbols User,Service,ApiWorker     # Concurrent multi-symbol resolution
+waymark ask --path src/types.ts                  # Single-file structured Tree-Sitter AST outline
+waymark ask --facet invariants "path rules"      # Scope query to architectural domain in Semantic Map
+waymark ask --facet status                       # Inspect Semantic Repo Map completion & drift
+
+# --- Verb 2: Write & Maintenance (waymark memory) ---
+waymark memory bootstrap                         # Two-pass Semantic Repo Map discovery into SQLite
+waymark memory status                            # Inspect 5-facet map health and completion ratio
+waymark memory chart --question "<q>" --answer "<a>" --files "<a,b>"
+waymark memory heal                              # Reconcile code changes and refresh map anchors
+waymark memory export --format md                # Export consensus architecture map
+waymark memory bust <path>                       # Invalidate entries citing a changed file
+waymark memory prune                             # Cleanly remove stale entries whose files vanished
+waymark memory list                              # List all consensus memories
+waymark memory unchart <id> [--if-exists]        # Delete entry by hex ID
+
+# --- Daemons, REPL & MCP ---
+waymark daemon [start|stop|restart|status|ping]  # Persistent background server for <10ms queries
+waymark repl                                     # Interactive diagnostic shell with live daemon IPC
+waymark mcp                                      # Stdio Model Context Protocol server
 ```
 
 ---

@@ -348,3 +348,125 @@ test("Tier Isolation Invariant: all discovery tiers remain fully testable and is
   assert.equal(capnRes.status, "hit");
   assert.equal(capnRes.provider, "capn-cli");
 });
+
+test("MCP waymark_memory: heal, export (json & md), and backslash-normalized bust", async () => {
+  const repo = setupTestRepo();
+  const server = new McpServer({ root: repo });
+
+  // 1. Bootstrap via heal
+  const healRes = await server.handleMessage(
+    JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: {
+        name: "waymark_memory",
+        arguments: {
+          action: "heal",
+          root: repo,
+        },
+      },
+    })
+  );
+  const healParsed = JSON.parse(healRes ?? "{}");
+  assert.equal(healParsed.result?.isError, false);
+  const healBody = JSON.parse(healParsed.result?.content?.[0]?.text ?? "{}");
+  assert.equal(healBody.ok, true);
+  assert.equal(healBody.status?.completion, "5/5");
+
+  // 2. Export as markdown
+  const exportMdRes = await server.handleMessage(
+    JSON.stringify({
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tools/call",
+      params: {
+        name: "waymark_memory",
+        arguments: {
+          action: "export",
+          format: "md",
+          root: repo,
+        },
+      },
+    })
+  );
+  const exportMdParsed = JSON.parse(exportMdRes ?? "{}");
+  assert.equal(exportMdParsed.result?.isError, false);
+  const mdText = exportMdParsed.result?.content?.[0]?.text ?? "";
+  assert.match(mdText, /# Architecture Consensus Map/);
+  assert.match(mdText, /Facet:.*Lifecycle/i);
+
+  // 3. Export as JSON
+  const exportJsonRes = await server.handleMessage(
+    JSON.stringify({
+      jsonrpc: "2.0",
+      id: 3,
+      method: "tools/call",
+      params: {
+        name: "waymark_memory",
+        arguments: {
+          action: "export",
+          format: "json",
+          root: repo,
+        },
+      },
+    })
+  );
+  const exportJsonParsed = JSON.parse(exportJsonRes ?? "{}");
+  assert.equal(exportJsonParsed.result?.isError, false);
+  const jsonBody = JSON.parse(exportJsonParsed.result?.content?.[0]?.text ?? "{}");
+  assert.equal(jsonBody.status, "healthy");
+  assert.equal(jsonBody.completion, "5/5");
+
+  // 4. Windows backslash bust test: chart with forward slash, bust with backslash
+  await server.handleMessage(
+    JSON.stringify({
+      jsonrpc: "2.0",
+      id: 4,
+      method: "tools/call",
+      params: {
+        name: "waymark_memory",
+        arguments: {
+          action: "chart",
+          question: "Backslash Normalization Check",
+          answer: "Testing Windows backslash cache busting.",
+          files: ["src/paths.ts"],
+          root: repo,
+        },
+      },
+    })
+  );
+  const bustRes = await server.handleMessage(
+    JSON.stringify({
+      jsonrpc: "2.0",
+      id: 5,
+      method: "tools/call",
+      params: {
+        name: "waymark_memory",
+        arguments: {
+          action: "bust",
+          file: "src\\paths.ts",
+          root: repo,
+        },
+      },
+    })
+  );
+  const bustParsed = JSON.parse(bustRes ?? "{}");
+  assert.equal(bustParsed.result?.isError, false);
+  const bustBody = JSON.parse(bustParsed.result?.content?.[0]?.text ?? "{}");
+  assert.equal(bustBody.ok, true);
+
+  // 5. MCP Prompt: bootstrap-semantic-map
+  const promptRes = await server.handleMessage(
+    JSON.stringify({
+      jsonrpc: "2.0",
+      id: 6,
+      method: "prompts/get",
+      params: {
+        name: "bootstrap-semantic-map",
+      },
+    })
+  );
+  const promptParsed = JSON.parse(promptRes ?? "{}");
+  assert.match(promptParsed.result?.messages?.[0]?.content?.text ?? "", /Semantic Repo Map/);
+});

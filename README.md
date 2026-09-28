@@ -137,39 +137,60 @@ Run `waymark help` (or bare `waymark`) for the full command list, or
 `waymark-context` for the routing contract showing which phrasing patterns
 route to the symbolic vs semantic phase.
 
-## Commands
+## Commands & Subcommand Registry
 
-| Wrapper | Umbrella CLI | Action |
+Waymark Engine provides a consolidated **Two-Verb Architecture** ensuring 100% parity across CLI, MCP, and programmatic APIs.
+
+### 1. Canonical Verbs
+
+| Command | Category | Description |
 | :--- | :--- | :--- |
-| `waymark` | — | umbrella CLI (all subcommands) |
-| `waymark-init` | `waymark init` | initialize the deterministic lexical Capn store |
-| `waymark-ask` | `waymark ask "<q>"` | 4-tier discovery question router |
-| `waymark-symbols` | `waymark symbols <s1> <s2>...` | concurrent batch multi-symbol discovery |
-| `waymark-discover` | `waymark discover-symbols [--path <f>] [--query <q>]` | bimodal AST extraction (file) or repo search |
-| `waymark-daemon` | `waymark daemon [start\|stop\|reload\|status\|ping]` | resident background daemon & live cache reload |
-| `waymark-chart` | `waymark chart --question <q> --answer <a> --files <f>` | chart into Capn memory (prunes stale siblings first) |
-| `waymark-unchart` | `waymark unchart <id>` | delete one charted memory entry |
-| `waymark-bust` | `waymark bust <path>` | delete entries backed by one file |
-| `waymark-prune` | `waymark prune` | delete stale entries whose files vanished |
-| `waymark-list` | `waymark list` | list charted entries (prunes stale first) |
-| `waymark-context` | `waymark context` | print the ask-first routing contract |
-| `waymark-mcp` | `waymark mcp` | start the stdio MCP server |
+| `waymark ask "<q>"` | **Read & Discovery** | 4-tier discovery (AST structural call graph, literal path, deterministic fuzzy, BM25 memory, multi-symbol, file outlines). |
+| `waymark memory <action>` | **Write & Lifecycle** | Consensus memory manager: bootstrap, status, chart, heal, export, bust, prune, list, unchart, init, context. |
+| `waymark daemon [cmd]` | **Daemon Operations** | Background resident codedb server (`start`, `stop`, `restart`, `reload`, `status`, `list`, `ping`). |
+| `waymark repl` | **Diagnostic REPL** | Interactive diagnostic shell and hardened test battery runner with live daemon IPC. |
+| `waymark mcp` | **MCP Server** | Launches standard stdio MCP discovery server. |
+| `waymark init` | **Store Init** | One-time deterministic lexical store initialization (`.capn`). |
 
-### Query Flags & Options (`waymark ask` / `waymark-ask`)
+*(Legacy discrete wrappers `waymark-ask`, `waymark-chart`, `waymark-bootstrap`, `waymark-map`, `waymark-symbols`, `waymark-discover`, etc. remain available as aliases).*
+
+---
+
+### 2. Subcommand Registry (`waymark memory`)
+
+All stateful operations and repository consensus memory lifecycle actions are consolidated under `waymark memory` (CLI) and `waymark_memory` (MCP):
+
+| Action | CLI Command | MCP Tool Call (`waymark_memory`) | Purpose |
+| :--- | :--- | :--- | :--- |
+| **`bootstrap`** | `waymark memory bootstrap [--dry-run]` | `{"action": "bootstrap", "dry_run": false}` | Two-pass Semantic Repo Map discovery and SQLite storage. |
+| **`status`** | `waymark memory status [--plain]` | `{"action": "status", "plain": true}` | Inspect Semantic Repo Map health, completion ratio, and drift. |
+| **`chart`** | `waymark memory chart --question <q> --answer <a> --files <f>` | `{"action": "chart", "question": "...", "answer": "...", "files": [...]}` | Publish architectural knowledge into long-term consensus memory. |
+| **`heal`** | `waymark memory heal` | `{"action": "heal"}` | Reconcile code changes, verify anchors, and refresh SQLite ledger. |
+| **`export`** | `waymark memory export [--format md\|json]` | `{"action": "export", "format": "md"}` | Export consensus architecture map as Markdown or JSON. |
+| **`bust`** | `waymark memory bust <path>` | `{"action": "bust", "file": "src/daemon.ts"}` | Invalidate all consensus memories citing a changed file. |
+| **`prune`** | `waymark memory prune` | `{"action": "prune"}` | Cleanly remove stale entries whose backing files vanished. |
+| **`list`** | `waymark memory list` | `{"action": "list"}` | List all charted consensus memory entries. |
+| **`unchart`** | `waymark memory unchart <id> [--if-exists]` | `{"action": "unchart", "id": "<hex>", "if_exists": true}` | Delete a specific memory entry by hex ID. |
+| **`init`** | `waymark memory init` | `{"action": "init"}` | Initialize deterministic lexical store (`.capn`). |
+| **`context`** | `waymark memory context` | `{"action": "context"}` | Retrieve ask-first routing contract and syntax guidelines. |
+
+---
+
+### Query Flags & Options (`waymark ask`)
 - `--depth <1..5>`: Bounded BFS call graph traversal depth (default: 1).
 - `--direction <callers|callees|both>`: Traversal directionality (default: both).
 - `--exclude-tests`: Suppress test files (`tests/`, `*_test.*`, `*.spec.*`) from call graphs (up to 94% token savings).
-- `--plain` (`-p`): Emit token-minimal plain text formatted for LLM context preservation.
-- `--dev`: Enable Dev Mode with per-tier timing breakdown, trie hit inspection, and invariant assertions.
+- `--path <file>`: Extract structured tree-sitter AST outline for a single file.
+- `--symbols <a,b>`: Inspect batch symbol definitions concurrently across the codebase.
+- `--facet <f>`: Scope query to an architectural domain (`lifecycle`, `data_state`, `boundaries`, `invariants`, `failure`, or `status`).
+- `--plain` (`-p`): Emit token-minimal plain text formatted for LLM context preservation (~16-38 tokens).
 - `--tier <auto|ast|path|fuzzy|capn>` (`-t`): Force a specific discovery tier or bypass junction fallthrough.
 - `--timing` (`-b`): Surface high-resolution sub-millisecond per-tier execution timings.
 - `--daemon` (`-d`): Route queries through the resident in-memory background daemon IPC.
-
+- `--dev`: Enable Dev Mode with per-tier timing breakdown and runtime invariant assertions.
 
 Env: `WAYMARK_CAPN_PROFILE` (`capn-cli` | `none`, default `capn-cli`),
-`WAYMARK_CAPN_EXECUTABLE` (optional override; default: the bundled
-`@paragon-ux/capn-hook` CLI run in-process). Works with or without a Git repository —
-`repoRoot()` resolves `git rev-parse --show-toplevel` and falls back to the process cwd.
+`WAYMARK_CAPN_EXECUTABLE` (optional override; default: bundled lexical-only `@paragon-ux/capn-hook` CLI). Works with or without a Git repository — `repoRoot()` resolves `git rev-parse --show-toplevel` and falls back to process cwd.
 
 ## Library API
 
@@ -211,6 +232,8 @@ Waymark Engine provides first-class stdio integration for AI coding agents (Clau
 
 ### Configuration (`mcp_config.json` / `claude_desktop_config.json`)
 
+By default, Waymark exposes the ultra-lean **Two-Verb Surface** (`waymark_ask` + `waymark_memory`), consuming **<450 tokens** of tool overhead in agent context (compared to 3,000+ tokens for flat tool sprawl):
+
 ```json
 {
   "mcpServers": {
@@ -218,18 +241,15 @@ Waymark Engine provides first-class stdio integration for AI coding agents (Clau
       "command": "npx",
       "args": ["-y", "waymark-engine"],
       "env": {
-        "CODEDB_ALLOW_TEMP": "1",
-        "WAYMARK_MCP_COMPACT": "1"
+        "CODEDB_ALLOW_TEMP": "1"
       }
     }
   }
 }
 ```
-*(Tip: Set `"WAYMARK_MCP_COMPACT": "1"` to reduce tool definition overhead in agent prompts from ~3,000 tokens to <450 tokens).*
+*(Optional: set `"WAYMARK_MCP_VERBOSE": "1"` only if you wish to expose the 11 legacy granular tools in `tools/list`).*
 
-### Canonical Two-Verb MCP Surface
-
-Waymark exposes a token-minimal **Two-Verb Interface** that groups all code exploration and repository memory management into two high-performance tools:
+### Exposed MCP Surface
 
 1. **`waymark_ask` (Read & Discovery)**:
    * **General 4-Tier Discovery**: `{"question": "Who calls verifyHop?", "plain": true}`
@@ -244,6 +264,8 @@ Waymark exposes a token-minimal **Two-Verb Interface** that groups all code expl
    * **`bootstrap`**: Two-pass semantic map onboarding into SQLite (`{"action": "bootstrap", "dry_run": false}`)
    * **`status`**: Health and drift inspect (`{"action": "status", "plain": true}`)
    * **`chart`**: Publish architectural consensus (`{"action": "chart", "facet": "boundaries", "question": "...", "answer": "...", "files": ["..."]}`)
+   * **`heal`**: Reconcile Semantic Repo Map anchors (`{"action": "heal"}`)
+   * **`export`**: Export map as Markdown or JSON (`{"action": "export", "format": "md"}`)
    * **`bust`**: Invalidate memories for changed file (`{"action": "bust", "file": "src/daemon.ts"}`)
    * **`prune`**: Cleanly remove stale entries (`{"action": "prune"}`)
    * **`list`**: List all consensus memories (`{"action": "list"}`)
@@ -251,7 +273,7 @@ Waymark exposes a token-minimal **Two-Verb Interface** that groups all code expl
    * **`init`**: Initialize lexical store (`{"action": "init"}`)
    * **`context`**: Retrieve charting contract (`{"action": "context"}`)
 
-*(Granular tools `waymark_chart`, `waymark_bust`, `waymark_discover_symbols`, etc. remain registered by default when `WAYMARK_MCP_COMPACT` is omitted).*
+*(All legacy tool calls such as `waymark_chart` and `waymark_bust` remain fully supported at runtime if invoked directly).*
 
 * **Resources:**
   * `waymark://manifest`: Engine capabilities, tier metadata, and versioning.

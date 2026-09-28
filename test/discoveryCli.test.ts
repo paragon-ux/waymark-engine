@@ -79,8 +79,19 @@ test("CLI chart with profile none is a deterministic no-op", () => {
   assert.equal(result.value?.adapter, "none");
 });
 
-test("MCP discovery server exposes exactly the discovery tools", async () => {
+test("MCP discovery server defaults to the two-verb model", async () => {
   const server = new McpServer();
+  const response = await server.handleMessage(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }));
+  const parsed = JSON.parse(response ?? "{}") as { result?: { tools?: Array<{ name: string }> } };
+  const names = (parsed.result?.tools ?? []).map((tool) => tool.name);
+  assert.deepEqual(names.sort(), [
+    "waymark_ask",
+    "waymark_memory",
+  ]);
+});
+
+test("MCP discovery server with canonicalOnly false exposes all tools", async () => {
+  const server = new McpServer({ canonicalOnly: false });
   const response = await server.handleMessage(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }));
   const parsed = JSON.parse(response ?? "{}") as { result?: { tools?: Array<{ name: string }> } };
   const names = (parsed.result?.tools ?? []).map((tool) => tool.name);
@@ -96,17 +107,6 @@ test("MCP discovery server exposes exactly the discovery tools", async () => {
     "waymark_memory",
     "waymark_prune",
     "waymark_unchart",
-  ]);
-});
-
-test("MCP discovery server in canonicalOnly mode exposes exactly the two-verb model", async () => {
-  const server = new McpServer({ canonicalOnly: true });
-  const response = await server.handleMessage(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }));
-  const parsed = JSON.parse(response ?? "{}") as { result?: { tools?: Array<{ name: string }> } };
-  const names = (parsed.result?.tools ?? []).map((tool) => tool.name);
-  assert.deepEqual(names.sort(), [
-    "waymark_ask",
-    "waymark_memory",
   ]);
 });
 

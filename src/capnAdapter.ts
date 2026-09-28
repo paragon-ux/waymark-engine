@@ -24,8 +24,12 @@ function digestOutput(value: string, maximum = MAX_OUTPUT): string {
   return value.length <= maximum ? value : `${value.slice(0, maximum)}…`;
 }
 
+function normalizeFilePath(f: string): string {
+  return f.replaceAll("\\", "/").replace(/^\.\//u, "");
+}
+
 function uniqueFiles(files: readonly string[]): string[] {
-  const selected = [...new Set(files)].sort();
+  const selected = [...new Set(files.map(normalizeFilePath))].sort();
   if (selected.some((file) => file.includes(","))) throw new WaymarkError("CAPN_UNSAFE_PATH", "Capn's public CLI cannot encode a file path containing a comma");
   return selected;
 }
@@ -306,7 +310,8 @@ export async function unchart(root: string, executable: string, id: string, ifEx
 
 /** Delete every chart entry backed by one file. */
 export async function bust(root: string, executable: string, file: string): Promise<Record<string, unknown>> {
-  const result = await runCapnSimple(root, executable, ["bust", file]);
+  const normalized = normalizeFilePath(file);
+  const result = await runCapnSimple(root, executable, ["bust", normalized]);
   return { waymark: 1, kind: "bust", ok: result.ok, exitCode: result.exitCode, ...(result.ok ? { output: result.output } : { error: result.output }) };
 }
 

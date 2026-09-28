@@ -221,8 +221,8 @@ The resident stdio MCP server (`waymark-mcp`) provides two modes of tool exposur
     "properties": {
       "action": {
         "type": "string",
-        "enum": ["chart", "bootstrap", "bust", "prune", "list", "unchart", "init", "context", "status"],
-        "description": "Consensus memory action to execute: chart | bootstrap | bust | prune | list | unchart | init | context | status."
+        "enum": ["chart", "bootstrap", "bust", "prune", "list", "unchart", "init", "context", "status", "heal", "export"],
+        "description": "Consensus memory action to execute: chart | bootstrap | bust | prune | list | unchart | init | context | status | heal | export."
       },
       "question": { "type": "string", "description": "The question or topic charted (required for action='chart')." },
       "answer": { "type": "string", "description": "The conclusive charted answer adhering to <= 100 token budget (required for action='chart')." },
@@ -241,6 +241,7 @@ The resident stdio MCP server (`waymark-mcp`) provides two modes of tool exposur
       "if_exists": { "type": "boolean", "description": "Idempotently succeed if entry id is already deleted (for action='unchart')." },
       "dry_run": { "type": "boolean", "description": "Inspect without writing changes (for action='bootstrap')." },
       "subsystem": { "type": "string", "description": "Optional subsystem/package scope for bootstrap in monorepos." },
+      "format": { "type": "string", "enum": ["md", "json"], "description": "Export format for action='export': md | json. Defaults to md." },
       "plain": { "type": "boolean", "description": "Emit token-minimal plain text formatted result for LLM context efficiency." },
       "capn_executable": { "type": "string", "description": "Optional custom path to the Capn executable." },
       "profile": { "type": "string", "enum": ["capn-cli", "none"], "description": "Optional adapter profile; defaults to capn-cli." },
@@ -259,6 +260,8 @@ The resident stdio MCP server (`waymark-mcp`) provides two modes of tool exposur
   - `unchart`: Deletes entry by `id`. Output: `{ waymark: 1, kind: "unchart", ok: true, id: string }`.
   - `init`: Initializes `.capn` lexical store. Output: `{ waymark: 1, kind: "init", ok: true }`.
   - `context`: Retrieves charting syntax and contract. Output: `{ ok: true, output: string }`.
+  - `heal`: Reconciles Semantic Repo Map anchors and updates SQLite ledger. Output: `{ ok: true, status: SemanticMapStatus }`.
+  - `export`: Exports consensus map as markdown or JSON. Output: `{ ok: true, output: string }` or JSON object.
 
 ### 4.13 MCP Prompts Registry
 The server registers standard prompts to orchestrate complex agentic discovery workflows:

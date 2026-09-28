@@ -48,6 +48,19 @@ export const waymarkAskTool: McpToolHandler = {
           type: "string",
           description: "The question to look up.",
         },
+        query: {
+          type: "string",
+          description: "Symbol name, substring, or alias for question.",
+        },
+        path: {
+          type: "string",
+          description: "Repository-relative or absolute source file path. If provided alone or without question, performs file AST extraction.",
+        },
+        facet: {
+          type: "string",
+          enum: ["lifecycle", "data_state", "boundaries", "invariants", "failure", "status"],
+          description: "Optional facet filter to scope query to an architectural domain in the Semantic Repo Map, or 'status' to inspect map health.",
+        },
         tier: {
           type: "string",
           enum: ["auto", "ast", "path", "fuzzy", "capn"],
@@ -110,7 +123,9 @@ export const waymarkAskTool: McpToolHandler = {
   handler: async (args) => {
     try {
       const root = resolveRoot(args);
-      const question = typeof args.question === "string" ? args.question.trim() : "";
+      const rawQuestion = typeof args.question === "string" ? args.question.trim() : "";
+      const rawQuery = typeof args.query === "string" ? args.query.trim() : "";
+      const question = rawQuestion || rawQuery;
       const timing = args.timing === true;
       const plain = args.plain === true;
       const daemon = args.daemon === true;
@@ -120,7 +135,23 @@ export const waymarkAskTool: McpToolHandler = {
         ? args.direction
         : undefined;
       const excludeTests = args.exclude_tests === true || args.excludeTests === true;
+      const facet = typeof args.facet === "string" ? args.facet.trim() : undefined;
+      const rawPath = typeof args.path === "string" ? args.path.trim() : undefined;
 
+      // 1. Facet status check
+      if (facet === "status") {
+        const { getSemanticMapStatus } = await import("../semanticMap.js");
+        const status = getSemanticMapStatus(root);
+        if (plain) {
+          return {
+            content: [{ type: "text", text: renderPlainText(status) }],
+            isError: false,
+          };
+        }
+        return jsonResult(status);
+      }
+
+      // 2. Multi-symbol batch query
       const rawSymbols = Array.isArray(args.symbols) ? args.symbols.filter((s): s is string => typeof s === "string" && s.trim().length > 0) : [];
       if (rawSymbols.length > 0) {
         const { queryMultiSymbols } = await import("../codedbAdapter.js");
@@ -134,7 +165,19 @@ export const waymarkAskTool: McpToolHandler = {
         return jsonResult(res);
       }
 
-      if (!question) throw new WaymarkError("MISSING_ARGUMENT", "question or symbols is required");
+      // 3. File AST outline discovery (Mode A) when path provided without question
+      if (rawPath && !question && !facet) {
+        const res = await discoverSymbolsInFile(root, rawPath, undefined, rawQuery || undefined);
+        if (plain) {
+          return {
+            content: [{ type: "text", text: renderPlainText(res) }],
+            isError: false,
+          };
+        }
+        return jsonResult(res);
+      }
+
+      if (!question && !facet) throw new WaymarkError("MISSING_ARGUMENT", "question, query, path, symbols, or facet is required");
 
       const rawTier = typeof args.tier === "string" ? args.tier.trim() : undefined;
       const tier = rawTier as DiscoveryTier | undefined;
@@ -149,6 +192,8 @@ export const waymarkAskTool: McpToolHandler = {
         direction,
         excludeTests,
         dev,
+        facet,
+        path: rawPath,
       });
 
       if (plain) {
@@ -186,6 +231,198 @@ export const waymarkAskTool: McpToolHandler = {
         if (result.timings) payload.timings = result.timings;
       }
       return jsonResult(payload);
+    } catch (error) {
+      return errorResult(error);
+    }
+  },
+};
+
+export const waymarkMemoryTool: McpToolHandler = {
+  definition: {
+    name: "waymark_memory",
+    description: "Universal repository consensus memory manager: chart architectural knowledge, bootstrap the Semantic Repo Map, list entries, bust invalidated files, prune stale entries, and unchart by ID.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        action: {
+          type: "string",
+          enum: ["chart", "bootstrap", "bust", "prune", "list", "unchart", "init", "context", "status"],
+          description: "Consensus memory action to execute: chart | bootstrap | bust | prune | list | unchart | init | context | status.",
+        },
+        question: {
+          type: "string",
+          description: "The question or topic charted (required for action='chart').",
+        },
+        answer: {
+          type: "string",
+          description: "The conclusive charted answer adhering to <= 100 token budget (required for action='chart').",
+        },
+        facet: {
+          type: "string",
+          enum: ["lifecycle", "data_state", "boundaries", "invariants", "failure"],
+          description: "Optional architectural facet tag when charting an entry in the Semantic Repo Map.",
+        },
+        files: {
+          type: "array",
+          items: { type: "string" },
+          description: "Array of repository-relative backing file paths (required for active facets).",
+        },
+        file: {
+          type: "string",
+          description: "Repository-relative file path (required for action='bust').",
+        },
+        id: {
+          type: "string",
+          description: "Entry hex ID to delete (required for action='unchart').",
+        },
+        if_exists: {
+          type: "boolean",
+          description: "Idempotently succeed if entry id is already deleted (for action='unchart').",
+        },
+        dry_run: {
+          type: "boolean",
+          description: "Inspect without writing changes (for action='bootstrap').",
+        },
+        subsystem: {
+          type: "string",
+          description: "Optional subsystem/package scope for bootstrap in monorepos.",
+        },
+        plain: {
+          type: "boolean",
+          description: "Emit token-minimal plain text formatted result for LLM context efficiency.",
+        },
+        capn_executable: {
+          type: "string",
+          description: "Optional custom path to the Capn executable.",
+        },
+        profile: {
+          type: "string",
+          enum: ["capn-cli", "none"],
+          description: "Optional adapter profile; defaults to capn-cli.",
+        },
+        root: {
+          type: "string",
+          description: "Optional repository root path. Defaults to current working directory.",
+        },
+      },
+      required: ["action"],
+    },
+  },
+  handler: async (args) => {
+    try {
+      const root = resolveRoot(args);
+      const action = typeof args.action === "string" ? args.action.trim() : "";
+      const plain = args.plain === true;
+      const executable = resolveExecutable(args);
+      const profile = resolveProfile(args);
+
+      if (action === "chart") {
+        let question = typeof args.question === "string" ? args.question.trim() : "";
+        const answer = typeof args.answer === "string" ? args.answer.trim() : "";
+        const rawFacet = typeof args.facet === "string" ? args.facet.trim().toLowerCase() : undefined;
+        const files = Array.isArray(args.files)
+          ? args.files.filter((f): f is string => typeof f === "string" && f.trim().length > 0)
+          : [];
+
+        if (rawFacet) {
+          const facetTag = `[FACET:${rawFacet.toUpperCase()}]`;
+          if (!question.toUpperCase().includes(facetTag)) {
+            question = `${facetTag} ${question}`.trim();
+          }
+        }
+
+        if (!question) throw new WaymarkError("MISSING_ARGUMENT", "chart requires a question");
+        if (!answer) throw new WaymarkError("MISSING_ARGUMENT", "chart requires an answer");
+
+        // Anti-Hallucination Guard for facets
+        if (rawFacet || question.includes("[FACET:")) {
+          const { validateFacetBackingFiles } = await import("../semanticMap.js");
+          validateFacetBackingFiles(root, files, answer.toLowerCase().includes("not_applicable"));
+        }
+
+        const res = await publish(root, profile, executable, question, answer, files);
+        if (plain) {
+          return { content: [{ type: "text", text: renderPlainText(res) }], isError: !res.published };
+        }
+        return jsonResult(res, !res.published);
+      }
+
+      if (action === "bootstrap") {
+        const { bootstrapSemanticMap } = await import("../semanticMap.js");
+        const dryRun = args.dry_run === true || args.dryRun === true;
+        const subsystem = typeof args.subsystem === "string" ? args.subsystem : undefined;
+        const res = await bootstrapSemanticMap(root, { dryRun, subsystem, executable });
+        if (plain) {
+          return { content: [{ type: "text", text: renderPlainText(res) }], isError: !res.ok };
+        }
+        return jsonResult(res, !res.ok);
+      }
+
+      if (action === "status") {
+        const { getSemanticMapStatus } = await import("../semanticMap.js");
+        const status = getSemanticMapStatus(root);
+        if (plain) {
+          return { content: [{ type: "text", text: renderPlainText(status) }], isError: false };
+        }
+        return jsonResult(status);
+      }
+
+      if (action === "bust") {
+        const targetFile = typeof args.file === "string" && args.file.trim()
+          ? args.file.trim()
+          : (Array.isArray(args.files) && typeof args.files[0] === "string" ? args.files[0].trim() : "");
+        if (!targetFile) throw new WaymarkError("MISSING_ARGUMENT", "bust requires a file path");
+        const res = await bust(root, executable, targetFile);
+        if (plain) {
+          return { content: [{ type: "text", text: renderPlainText(res) }], isError: !res.ok };
+        }
+        return jsonResult(res, !res.ok);
+      }
+
+      if (action === "prune") {
+        const res = await prune(root, executable);
+        if (plain) {
+          return { content: [{ type: "text", text: renderPlainText(res) }], isError: !res.ok };
+        }
+        return jsonResult(res, !res.ok);
+      }
+
+      if (action === "list") {
+        const res = await listEntries(root, executable);
+        if (plain) {
+          return { content: [{ type: "text", text: renderPlainText(res) }], isError: !res.ok };
+        }
+        return jsonResult(res, !res.ok);
+      }
+
+      if (action === "unchart") {
+        const id = typeof args.id === "string" ? args.id.trim() : "";
+        if (!id) throw new WaymarkError("MISSING_ARGUMENT", "unchart requires an id");
+        const ifExists = args.if_exists === true || args.ifExists === true;
+        const res = await unchart(root, executable, id, ifExists);
+        if (plain) {
+          return { content: [{ type: "text", text: renderPlainText(res) }], isError: !res.ok };
+        }
+        return jsonResult(res, !res.ok);
+      }
+
+      if (action === "init") {
+        const res = await initCapn(root, executable);
+        if (plain) {
+          return { content: [{ type: "text", text: renderPlainText(res) }], isError: !res.ok };
+        }
+        return jsonResult(res, !res.ok);
+      }
+
+      if (action === "context") {
+        const res = await context(root, executable);
+        if (plain) {
+          return { content: [{ type: "text", text: renderPlainText(res) }], isError: !res.ok };
+        }
+        return jsonResult(res, !res.ok);
+      }
+
+      throw new WaymarkError("UNKNOWN_COMMAND", `Unknown memory action: ${action}. Allowed: chart, bootstrap, bust, prune, list, unchart, init, context, status.`);
     } catch (error) {
       return errorResult(error);
     }
@@ -596,8 +833,14 @@ export const waymarkInitTool: McpToolHandler = {
   },
 };
 
+export const CANONICAL_MCP_TOOLS: McpToolHandler[] = [
+  waymarkAskTool,
+  waymarkMemoryTool,
+];
+
 export const WAYMARK_TOOLS: McpToolHandler[] = [
   waymarkAskTool,
+  waymarkMemoryTool,
   waymarkChartTool,
   discoverSymbolsTool,
   waymarkUnchartTool,
@@ -610,3 +853,4 @@ export const WAYMARK_TOOLS: McpToolHandler[] = [
 ];
 
 export const CAPN_TOOLS = WAYMARK_TOOLS;
+

@@ -238,5 +238,9 @@ export interface AskOptions {
   direction?: "callers" | "callees" | "both";
   excludeTests?: boolean;
   dev?: boolean;
+  facet?: string;
+  path?: string;
+  subsystem?: string;
 }
+
 

@@ -57,6 +57,7 @@ export interface McpServerOptions {
   name?: string;
   version?: string;
   tools?: McpToolHandler[];
+  canonicalOnly?: boolean;
   resources?: McpResourceDefinition[];
   prompts?: McpPromptDefinition[];
   root?: string;
@@ -67,6 +68,7 @@ export class McpServer {
   private readonly toolMap: Map<string, McpToolHandler> = new Map();
   private readonly serverName: string;
   private readonly serverVersion: string;
+  private readonly canonicalOnly: boolean;
   private readonly resources: McpResourceDefinition[];
   private readonly prompts: McpPromptDefinition[];
   private readonly root: string;
@@ -76,7 +78,8 @@ export class McpServer {
   constructor(optionsOrHandlers: McpServerOptions | McpToolHandler[] = CAPN_TOOLS) {
     if (Array.isArray(optionsOrHandlers)) {
       this.serverName = "waymark-engine";
-      this.serverVersion = "2.3.0";
+      this.serverVersion = "2.3.1";
+      this.canonicalOnly = process.env.WAYMARK_MCP_COMPACT === "1";
       this.resources = CAPN_RESOURCES;
       this.prompts = CAPN_PROMPTS;
       this.root = process.cwd();
@@ -86,7 +89,8 @@ export class McpServer {
       }
     } else {
       this.serverName = optionsOrHandlers.name ?? "waymark-engine";
-      this.serverVersion = optionsOrHandlers.version ?? "2.3.0";
+      this.serverVersion = optionsOrHandlers.version ?? "2.3.1";
+      this.canonicalOnly = Boolean(optionsOrHandlers.canonicalOnly || process.env.WAYMARK_MCP_COMPACT === "1");
       const tools = optionsOrHandlers.tools ?? CAPN_TOOLS;
       this.resources = optionsOrHandlers.resources ?? CAPN_RESOURCES;
       this.prompts = optionsOrHandlers.prompts ?? CAPN_PROMPTS;
@@ -99,6 +103,12 @@ export class McpServer {
   }
 
   public getToolDefinitions() {
+    if (this.canonicalOnly) {
+      const canonicalNames = new Set(["waymark_ask", "waymark_memory"]);
+      return Array.from(this.toolMap.values())
+        .filter((h) => canonicalNames.has(h.definition.name))
+        .map((h) => h.definition);
+    }
     return Array.from(this.toolMap.values()).map((h) => h.definition);
   }
 

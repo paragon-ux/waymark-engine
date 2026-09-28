@@ -1,4 +1,5 @@
 import type { CallGraphData, CallGraphHopNode } from "./types.js";
+import { renderSemanticMapStatus } from "./semanticMap.js";
 
 export function formatTimings(timings: Record<string, number>): string {
   const parts: string[] = [];
@@ -51,6 +52,16 @@ export function renderCallGraph(graph: CallGraphData): string {
 export function renderPlainText(value: unknown): string {
   if (!value || typeof value !== "object") return String(value);
   const record = value as Record<string, unknown>;
+
+  if (record.kind === "semantic_map") {
+    return renderSemanticMapStatus(record as any);
+  }
+
+  if (record.kind === "bootstrap") {
+    const statusStr = record.status ? renderSemanticMapStatus(record.status as any) : "";
+    const prefix = `[bootstrap] Status: ${record.ok ? "OK" : "Failed"}${record.dryRun ? " (dry-run)" : ""}`;
+    return `${prefix}\n${statusStr}`.trimEnd();
+  }
 
   if (record.tool === "call_graph") {
     return renderCallGraph(record as unknown as CallGraphData);
@@ -111,6 +122,8 @@ export function renderPlainText(value: unknown): string {
     } else if (provider === "fuzzy-lexical") {
       const res = record.result as Record<string, unknown>;
       detail = `${res.name} -> ${res.path}:${res.line}${res.score !== undefined ? ` (score: ${res.score})` : ""}`;
+    } else if (record.result && typeof record.result === "object" && (record.result as any).kind === "semantic_map") {
+      detail = renderSemanticMapStatus(record.result as any);
     } else {
       detail = typeof record.result === "string" ? record.result : JSON.stringify(record.result);
     }

@@ -3,6 +3,37 @@
 
 export { ask, initCapn, publish, capnChartArgs, resolveWindowsExecutable, resolveCapnCommand, assertLexicalStore, readCapnConfig, unchart, bust, prune, listEntries, context } from "./capnAdapter.js";
 export { renderPlainText, renderCallGraph, formatTimings } from "./renderPlainText.js";
+export {
+  SEMANTIC_FACETS,
+  ALL_FACET_IDS,
+  getSemanticMapStatus,
+  renderSemanticMapStatus,
+  bootstrapSemanticMap,
+  validateFacetBackingFiles,
+  readChartedEntries,
+  type SemanticFacetId,
+  type FacetDefinition,
+  type FacetStatus,
+  type SemanticMapStatus,
+  type BootstrapResult,
+  type ParsedCapnEntry,
+} from "./semanticMap.js";
+export {
+  CANONICAL_MCP_TOOLS,
+  WAYMARK_TOOLS,
+  CAPN_TOOLS,
+  waymarkAskTool,
+  waymarkMemoryTool,
+  waymarkChartTool,
+  discoverSymbolsTool,
+  waymarkUnchartTool,
+  waymarkBustTool,
+  waymarkPruneTool,
+  waymarkListTool,
+  waymarkContextTool,
+  waymarkDaemonStatusTool,
+  waymarkInitTool,
+} from "./mcp/capnTools.js";
 
 export { detectAstIntent, detectLiteralIntent, collectRepoPaths, getRepoPrefixTrie, invalidatePathsCache, matchLiteralPath, extractCandidateTokens, routeDiscovery, type AstIntent, type DiscoveryRouteContext } from "./discoveryRouter.js";
 export { PrefixTrie, PrefixTrieNode } from "./prefixTrie.js";

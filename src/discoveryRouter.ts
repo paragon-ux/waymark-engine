@@ -436,6 +436,31 @@ async function routeDiscoveryCore(ctx: DiscoveryRouteContext): Promise<AskResult
     throw new WaymarkError("INVALID_TIER_OVERRIDE", `Invalid tier: ${String(tier)}. Allowed: auto, ast, path, fuzzy, capn`);
   }
 
+  // Facet routing & Semantic Repo Map status
+  let effectiveQuestion = question;
+  if (options?.facet) {
+    const rawFacet = options.facet.toLowerCase().trim();
+    if (rawFacet === "status") {
+      const { getSemanticMapStatus } = await import("./semanticMap.js");
+      const mapStatus = getSemanticMapStatus(root);
+      if (recordTiming) timings.total_ms = Math.round((performance.now() - startTime) * 100) / 100;
+      return {
+        waymark: 1,
+        kind: "ask",
+        status: "hit",
+        provider: "capn-cli",
+        confidence: "curated",
+        result: mapStatus,
+        ...(recordTiming ? { timings } : {}),
+      };
+    }
+    const facetTag = `[FACET:${rawFacet.toUpperCase()}]`;
+    effectiveQuestion = question.trim() ? `${facetTag} ${question.trim()}` : facetTag;
+    if (tier === "auto") {
+      tier = "capn";
+    }
+  }
+
   // Tier 1: Structural AST check (codedb)
   const astIntent = detectAstIntent(question);
   const hasStructuralIntent = astIntent.requiresParser;
@@ -632,7 +657,7 @@ async function routeDiscoveryCore(ctx: DiscoveryRouteContext): Promise<AskResult
   // Branch 2: Forced Tier capn
   if (tier === "capn") {
     const tCapn0 = performance.now();
-    const capnRes = await queryCapnMemory(root, capnExecutable, question);
+    const capnRes = await queryCapnMemory(root, capnExecutable, effectiveQuestion);
     if (recordTiming) timings.capn_ms = Math.round((performance.now() - tCapn0) * 100) / 100;
     if (recordTiming) timings.total_ms = Math.round((performance.now() - startTime) * 100) / 100;
 

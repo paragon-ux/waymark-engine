@@ -1,0 +1,64 @@
+{
+  "timestamp": "2026-09-25T11:02:34Z",
+  "repository": "openai/codex",
+  "engineVersion": "2.1.1",
+  "modality": "mcp-only",
+  "toolsUsed": [
+    "waymark-engine/capn_ask",
+    "waymark-engine/waymark_discover_symbols",
+    "waymark-engine/capn_chart"
+  ],
+  "milestones": {
+    "m1": {
+      "name": "Entry Discovery & Junction Continuity",
+      "initialQuery": "Who calls execute_command?",
+      "status": "junction",
+      "tier": "fuzzy-lexical",
+      "recommended": "execute_user_shell_command",
+      "score": 81,
+      "followUp": "Who calls execute_user_shell_command?",
+      "callers": ["run", "run_user_shell_command"],
+      "calleesTotal": 16
+    },
+    "m2": {
+      "name": "Call-Chain Policy Traversal",
+      "query": "Who calls matches_for_command_with_options?",
+      "provider": "codedb",
+      "status": "hit",
+      "callers": [
+        "validate_match_examples",
+        "validate_not_match_examples",
+        "run",
+        "check",
+        "check_with_options",
+        "check_multiple_with_options",
+        "create_exec_approval_requirement_for_command_platform"
+      ]
+    },
+    "m3": {
+      "name": "Literal Path & Fail-Closed Integrity",
+      "exactPath": "codex-rs/execpolicy/src/execpolicycheck.rs",
+      "exactResult": "hit",
+      "bogusPath": "codex-rs/execpolicy/src/non_existent_policy_validator.rs",
+      "bogusResult": "miss",
+      "missCode": "SYMBOL_NOT_FOUND"
+    },
+    "m4": {
+      "name": "Multi-Language Client Symbol Extraction",
+      "pythonFile": "sdk/python/src/openai_codex/_approval_mode.py",
+      "pythonClass": "ApprovalMode",
+      "typescriptFile": "sdk/typescript/src/thread.ts",
+      "typescriptClass": "Thread"
+    },
+    "m5": {
+      "name": "Consensus Memory Charting & Verification",
+      "chartedId": "02d70c48",
+      "question": "How does the command approval architecture work?",
+      "recallStatus": "junction",
+      "recallTier": "capn-cli",
+      "confidence": "curated",
+      "backingFilesCount": 4
+    }
+  },
+  "overallScore": "100/100"
+}

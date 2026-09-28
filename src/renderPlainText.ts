@@ -10,6 +10,13 @@ export function formatTimings(timings: Record<string, number>): string {
   return parts.join(" | ");
 }
 
+export function formatDevDiagnostics(dev: Record<string, unknown>): string {
+  const tiers = Array.isArray(dev.tiersEvaluated) ? (dev.tiersEvaluated as string[]).join(" -> ") : "";
+  const ipc = dev.daemonIpcUsed !== undefined ? ` | ipc: ${dev.daemonIpcUsed ? "daemon" : "in-process"}` : "";
+  const inv = dev.invariantsPassed ? " | invariants: OK" : " | invariants: FAILED";
+  return `[dev] tiers: [${tiers}]${ipc}${inv}`;
+}
+
 /** Formats structured CallGraphData as an indented plain text tree (LEDGER-08 / DOD-11). */
 export function renderCallGraph(graph: CallGraphData): string {
   const depthStr = `[call-graph: depth ${graph.depth}]${graph.truncated ? " (truncated at 50 nodes)" : ""}`;
@@ -108,7 +115,8 @@ export function renderPlainText(value: unknown): string {
       detail = typeof record.result === "string" ? record.result : JSON.stringify(record.result);
     }
     const timingStr = record.timings ? `\n[timing] ${formatTimings(record.timings as Record<string, number>)}` : "";
-    return `[hit: ${provider}]${confidence}\n${detail}${timingStr}`;
+    const devStr = record.dev ? `\n${formatDevDiagnostics(record.dev as Record<string, unknown>)}` : "";
+    return `[hit: ${provider}]${confidence}\n${detail}${timingStr}${devStr}`;
   }
 
   if (record.status === "junction") {
@@ -133,14 +141,16 @@ export function renderPlainText(value: unknown): string {
     const tip = record.tip ?? (record.alternativeOption as any)?.continuation?.cliCommand;
     const tipStr = tip ? `Tip: ${tip}\n` : "";
     const timingStr = record.timings ? `[timing] ${formatTimings(record.timings as Record<string, number>)}\n` : "";
+    const devStr = record.dev ? `${formatDevDiagnostics(record.dev as Record<string, unknown>)}\n` : "";
 
-    return `[junction] Recommended: ${rec}\n${shapeStr}${resStr}${tipStr}${timingStr}`.trimEnd();
+    return `[junction] Recommended: ${rec}\n${shapeStr}${resStr}${tipStr}${timingStr}${devStr}`.trimEnd();
   }
 
   if (record.status === "miss") {
     const reason = record.reason ?? record.missCode ?? "No match";
     const timingStr = record.timings ? `\n[timing] ${formatTimings(record.timings as Record<string, number>)}` : "";
-    return `[miss] ${reason}${timingStr}`;
+    const devStr = record.dev ? `\n${formatDevDiagnostics(record.dev as Record<string, unknown>)}` : "";
+    return `[miss] ${reason}${timingStr}${devStr}`;
   }
 
   if (record.kind === "daemon") {

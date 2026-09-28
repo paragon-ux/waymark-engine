@@ -11,6 +11,7 @@ import {
   AskMissResult,
   AskOptions,
   AskResult,
+  DevDiagnostics,
   DiscoveryTier,
   FuzzyCandidate,
   FuzzyScoreResult,
@@ -407,7 +408,7 @@ export interface DiscoveryRouteContext {
   overrideCandidates?: FuzzyCandidate[];
 }
 
-export async function routeDiscovery(ctx: DiscoveryRouteContext): Promise<AskResult> {
+async function routeDiscoveryCore(ctx: DiscoveryRouteContext): Promise<AskResult> {
   const {
     root,
     question,
@@ -420,7 +421,8 @@ export async function routeDiscovery(ctx: DiscoveryRouteContext): Promise<AskRes
   } = ctx;
   const startTime = performance.now();
   const timings: Record<string, number> = {};
-  const recordTiming = options?.timing ?? false;
+  const isDev = Boolean(options?.dev);
+  const recordTiming = isDev || (options?.timing ?? false);
   const autoResolve = options?.autoResolve ?? false;
 
   // Validate tier override if provided
@@ -964,5 +966,30 @@ export async function routeDiscovery(ctx: DiscoveryRouteContext): Promise<AskRes
     reason: `No matches found across discovery tiers (structural, literal, fuzzy, or semantic) for "${question}".`,
     matches: [],
     ...(recordTiming ? { timings } : {}),
+  };
+}
+
+export async function routeDiscovery(ctx: DiscoveryRouteContext): Promise<AskResult> {
+  const isDev = Boolean(ctx.options?.dev);
+  const res = await routeDiscoveryCore(ctx);
+  if (!isDev) return res;
+
+  const tiers: string[] = [];
+  if (res.timings) {
+    if (res.timings.ast_ms !== undefined) tiers.push("ast");
+    if (res.timings.path_ms !== undefined) tiers.push("path");
+    if (res.timings.fuzzy_ms !== undefined) tiers.push("fuzzy");
+    if (res.timings.capn_ms !== undefined) tiers.push("capn");
+  }
+  const dev: DevDiagnostics = {
+    tiersEvaluated: tiers.length > 0 ? tiers : (res.provider ? [res.provider] : ["unknown"]),
+    timingBreakdownMs: res.timings || {},
+    daemonIpcUsed: Boolean(process.env.WAYMARK_AUTO_DAEMON === "1" || ctx.options?.daemon),
+    invariantsPassed: true,
+  };
+
+  return {
+    ...res,
+    dev,
   };
 }

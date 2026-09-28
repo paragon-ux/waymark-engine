@@ -1,0 +1,252 @@
+[
+  {
+    "query": "Where is DataSourc declared?",
+    "jsonEnvelope": {
+      "waymark": 1,
+      "kind": "ask",
+      "status": "junction",
+      "query": "Where is DataSourc declared?",
+      "signal": {
+        "shape": "identifier-like",
+        "candidateTokens": [
+          "DataSourc"
+        ]
+      },
+      "options": [
+        {
+          "tier": "fuzzy-lexical",
+          "recommended": true,
+          "executed": true,
+          "confidence": "approximate",
+          "result": {
+            "name": "dataSource",
+            "path": "e2e-playwright/alerting-suite/fixtures.ts",
+            "line": 7,
+            "kind": "constant",
+            "score": 87,
+            "matchRanges": [
+              [
+                0,
+                9
+              ]
+            ]
+          },
+          "note": "Best match for identifier-shaped token 'DataSourc'."
+        },
+        {
+          "tier": "capn-cli",
+          "recommended": false,
+          "executed": false,
+          "result": null,
+          "note": "Not queried automatically — available on request via forceTier.",
+          "continuation": {
+            "tool": "waymark_ask",
+            "args": {
+              "question": "Where is DataSourc declared?",
+              "tier": "capn"
+            },
+            "cliCommand": "waymark-ask \"Where is DataSourc declared?\" --tier capn"
+          }
+        }
+      ],
+      "executedOption": {
+        "tier": "fuzzy-lexical",
+        "recommended": true,
+        "executed": true,
+        "confidence": "approximate",
+        "result": {
+          "name": "dataSource",
+          "path": "e2e-playwright/alerting-suite/fixtures.ts",
+          "line": 7,
+          "kind": "constant",
+          "score": 87,
+          "matchRanges": [
+            [
+              0,
+              9
+            ]
+          ]
+        },
+        "note": "Best match for identifier-shaped token 'DataSourc'."
+      },
+      "alternativeOption": {
+        "tier": "capn-cli",
+        "recommended": false,
+        "executed": false,
+        "result": null,
+        "note": "Not queried automatically — available on request via forceTier.",
+        "continuation": {
+          "tool": "waymark_ask",
+          "args": {
+            "question": "Where is DataSourc declared?",
+            "tier": "capn"
+          },
+          "cliCommand": "waymark-ask \"Where is DataSourc declared?\" --tier capn"
+        }
+      },
+      "chartHint": "This answer can be charted with waymark-chart regardless of which option resolved it.",
+      "recommendation": "Recommended tier: fuzzy-lexical. Found match 'dataSource' in e2e-playwright/alerting-suite/fixtures.ts:7.",
+      "tip": "To query charted semantic memory instead: waymark-ask \"Where is DataSourc declared?\" --tier capn"
+    },
+    "plain": "[junction] Recommended: fuzzy-lexical\nSignal: identifier-like (DataSourc)\nResult: dataSource in e2e-playwright/alerting-suite/fixtures.ts:7 (score: 87)\nTip: To query charted semantic memory instead: waymark-ask \"Where is DataSourc declared?\" --tier capn",
+    "autoResolve": "[hit: fuzzy-lexical] (confidence: approximate)\ndataSource -> e2e-playwright/alerting-suite/fixtures.ts:7 (score: 87)"
+  },
+  {
+    "query": "How does datasource request handling work?",
+    "jsonEnvelope": {
+      "waymark": 1,
+      "kind": "ask",
+      "status": "junction",
+      "query": "How does datasource request handling work?",
+      "signal": {
+        "shape": "narrative",
+        "candidateTokens": []
+      },
+      "options": [
+        {
+          "tier": "capn-cli",
+          "recommended": true,
+          "executed": true,
+          "confidence": "curated",
+          "result": {
+            "id": "8195ca36",
+            "question": "How does a datasource request move from frontend to backend in Grafana?",
+            "files": [
+              "embed.go",
+              "pkg/api/dtos/datasource.go"
+            ],
+            "score": 50,
+            "details": "Frontend QueryRunner constructs the request and dispatches via DataSourceApi; backend Go proxy in pkg/api/pluginproxy routes it to the tsdb implementation."
+          },
+          "note": "No identifier-shaped tokens found; queried charted memory directly."
+        },
+        {
+          "tier": "fuzzy-lexical",
+          "recommended": false,
+          "executed": false,
+          "result": null,
+          "note": "No identifier-shaped tokens to score.",
+          "continuation": {
+            "tool": "waymark_ask",
+            "args": {
+              "question": "How does datasource request handling work?",
+              "tier": "fuzzy"
+            },
+            "cliCommand": "waymark-ask \"How does datasource request handling work?\" --tier fuzzy"
+          }
+        }
+      ],
+      "executedOption": {
+        "tier": "capn-cli",
+        "recommended": true,
+        "executed": true,
+        "confidence": "curated",
+        "result": {
+          "id": "8195ca36",
+          "question": "How does a datasource request move from frontend to backend in Grafana?",
+          "files": [
+            "embed.go",
+            "pkg/api/dtos/datasource.go"
+          ],
+          "score": 50,
+          "details": "Frontend QueryRunner constructs the request and dispatches via DataSourceApi; backend Go proxy in pkg/api/pluginproxy routes it to the tsdb implementation."
+        },
+        "note": "No identifier-shaped tokens found; queried charted memory directly."
+      },
+      "alternativeOption": {
+        "tier": "fuzzy-lexical",
+        "recommended": false,
+        "executed": false,
+        "result": null,
+        "note": "No identifier-shaped tokens to score.",
+        "continuation": {
+          "tool": "waymark_ask",
+          "args": {
+            "question": "How does datasource request handling work?",
+            "tier": "fuzzy"
+          },
+          "cliCommand": "waymark-ask \"How does datasource request handling work?\" --tier fuzzy"
+        }
+      },
+      "chartHint": "This answer can be charted with waymark-chart regardless of which option resolved it.",
+      "recommendation": "Recommended tier: capn-cli. Queried charted memory.",
+      "tip": "To search code symbols fuzzily instead: waymark-ask \"How does datasource request handling work?\" --tier fuzzy"
+    },
+    "plain": "[junction] Recommended: capn-cli\nSignal: narrative\nResult: {\"id\":\"8195ca36\",\"question\":\"How does a datasource request move from frontend to backend in Grafana?\",\"files\":[\"embed.go\",\"pkg/api/dtos/datasource.go\"],\"score\":50,\"details\":\"Frontend QueryRunner constructs the request and dispatches via DataSourceApi; backend Go proxy in pkg/api/pluginproxy routes it to the tsdb implementation.\"}\nTip: To search code symbols fuzzily instead: waymark-ask \"How does datasource request handling work?\" --tier fuzzy",
+    "autoResolve": "[hit: capn-cli] (confidence: curated)\n{\"id\":\"8195ca36\",\"question\":\"How does a datasource request move from frontend to backend in Grafana?\",\"files\":[\"embed.go\",\"pkg/api/dtos/datasource.go\"],\"score\":50,\"details\":\"Frontend QueryRunner constructs the request and dispatches via DataSourceApi; backend Go proxy in pkg/api/pluginproxy routes it to the tsdb implementation.\"}"
+  },
+  {
+    "query": "datasourc",
+    "jsonEnvelope": {
+      "waymark": 1,
+      "kind": "ask",
+      "status": "junction",
+      "query": "datasourc",
+      "signal": {
+        "shape": "narrative",
+        "candidateTokens": []
+      },
+      "options": [
+        {
+          "tier": "fuzzy-lexical",
+          "recommended": true,
+          "executed": true,
+          "confidence": "approximate",
+          "result": {
+            "name": "datasource",
+            "path": "apps/dashboard/pkg/migration/conversion/v2beta1_to_v2alpha1.go",
+            "line": 169,
+            "kind": "variable",
+            "score": 83,
+            "matchRanges": [
+              [
+                0,
+                9
+              ]
+            ]
+          },
+          "note": "Matched via exhaustive fuzzy pass on token 'datasourc'. Tokens tried: datasourc."
+        },
+        {
+          "tier": "capn-cli",
+          "recommended": false,
+          "executed": true,
+          "result": null,
+          "note": "No charted answer found in semantic memory."
+        }
+      ],
+      "executedOption": {
+        "tier": "fuzzy-lexical",
+        "recommended": true,
+        "executed": true,
+        "confidence": "approximate",
+        "result": {
+          "name": "datasource",
+          "path": "apps/dashboard/pkg/migration/conversion/v2beta1_to_v2alpha1.go",
+          "line": 169,
+          "kind": "variable",
+          "score": 83,
+          "matchRanges": [
+            [
+              0,
+              9
+            ]
+          ]
+        },
+        "note": "Matched via exhaustive fuzzy pass on token 'datasourc'. Tokens tried: datasourc."
+      },
+      "alternativeOption": {
+        "tier": "capn-cli",
+        "recommended": false,
+        "executed": true,
+        "result": null,
+        "note": "No charted answer found in semantic memory."
+      },
+      "chartHint": "This answer can be charted with waymark-chart regardless of which option resolved it.",
+      "recommendation": "Recommended tier: fuzzy-lexical. Matched 'datasource' via exhaustive fuzzy pass on 'datasourc'.",
+      "tip": "To chart this answer for fast retrieval next time: waymark-chart --question \"datasourc\" --answer \"<details>\" --files \"apps/dashboard/pkg/migration/conversion/v2beta1_to_v2alpha1.go\""
+    },
+    "plain": "[junction] Recommended: fuzzy-lexical\nSignal: narrative\nResult: datasource in apps/dashboard/pkg/migration/conversion/v2beta1_to_v2alpha1.go:169 (score: 83)\nTip: To chart this answer for fast retrieval next time: waymark-chart --question \"datasourc\" --answer \"<details>\" --files \"apps/dashboard/pkg/migration/conversion/v2beta1_to_v2alpha1.go\"",
+    "autoResolve": "[hit: fuzzy-lexical] (confidence: approximate)\ndatasource -> apps/dashboard/pkg/migration/conversion/v2beta1_to_v2alpha1.go:169 (score: 83)"
+  }
+]

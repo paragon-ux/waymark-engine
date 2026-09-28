@@ -4,6 +4,39 @@ All notable changes to `waymark-engine` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.1] - 2026-09-28
+
+### Testing-First Architecture, Dev Mode, Repository Standardization, and Glama Registry Discovery
+
+Version 2.3.1 introduces an in-house Testing-First operational framework featuring a dedicated Dev Mode (`--dev`), internal mechanized regression tracking (`docs/governance/regressions-log.jsonl`), standardized operational prompt batteries, repository benchmark directory standardization, and complete Glama-AI MCP discovery alignment.
+
+### Added
+
+- **Waymark Dev Mode (`--dev`)**:
+  - Added `--dev` CLI flag and `dev: boolean` parameter to MCP `waymark_ask` and `waymark_daemon_status`.
+  - Surfaces deep diagnostic telemetry: per-tier execution timing breakdown, PrefixTrie hit type (`exact`, `basename`, `suffix`), and daemon IPC roundtrip vs in-process scanning.
+  - Live runtime invariant assertions: asserts multi-hop visited node cap $\le 50$, path containment, and test noise suppression.
+- **Internal Testing & Governance Infrastructure (`docs/`)**:
+  - Added gitignored internal documentation framework inspired by PDLt governance.
+  - Initialized mechanized failure ledger (`docs/governance/regressions-log.jsonl`) recording failure types, problem statements, and type solutions.
+  - Published ADR-0001 (Testing-First Live Run Requirements & Dev Mode) and ADR-0002 (System 1 Determinism vs System 2 Consensus Disciplines).
+  - Published standardized prompt battery (`docs/prompts/`, 36 queries across 6 batteries) with automated live test runner (`docs/prompts/run_battery.mjs`).
+- **Benchmark Directory Standardization (`benchmarks/`)**:
+  - Promoted benchmark suites from disposable `scratch/benchmarks/` into a first-class, Git-tracked top-level `benchmarks/` directory.
+- **Glama-AI Registry Discovery**:
+  - Added `"modelcontextprotocol"` to `package.json` keywords.
+  - Overhauled `README.md` MCP snippet with standard `npx -y waymark-engine` container configuration and `CODEDB_ALLOW_TEMP=1`.
+  - Documented all 10 canonical MCP tools (`waymark_*`), 2 resources, and 2 prompts.
+
+### Changed
+
+- Updated `README.md` tagline to emphasize optional resident daemon for sub-millisecond warm lookups.
+- Updated `README.md` test badge to `60/60 passing`.
+- Clarified routing contract: removed false claim that queries silently fall through to semantic memory on codedb misses; documented fail-closed Discovery Junction behavior.
+- Added Polyglot Parser Fallback matrix and demarcated tamper-evidence integrity primitives (`verifyHop`, `anchorForRange`).
+
+---
+
 ## [2.3.0] - 2026-09-26
 
 ### Bounded Multi-Hop Call Graph DAGs, Persistent In-Memory PrefixTrie, Multi-Symbol Batch Discovery, and Polyglot Fallbacks
@@ -35,8 +68,8 @@ Version 2.3.0 adds bounded multi-hop call graph expansion with cycle detection, 
   - Added MCP tool `waymark_init` (`capn_init`) and standalone CLI binary `waymark-init` (`waymark init`) for one-shot lexical store initialization.
 - **Polyglot Parser Fallback (`discoverSymbolsInFile`)**:
   - Tree-sitter file outline extraction now transparently falls back to `codedb outline` for non-TypeScript/non-Python files (C++, Rust, Go, Java, C#, etc.).
-- **Reusable External Stress Benchmark (`scratch/benchmarks/suites/benchmark_arrow_and_pydantic.mjs`)**:
-  - End-to-end automated stress benchmark testing Apache Arrow (5,335 polyglot files) and Pydantic (851 Python/Rust files), exporting structured metrics to `scratch/benchmark_results/arrow_and_pydantic_results.json`.
+- **Reusable External Stress Benchmark (`benchmarks/suites/benchmark_arrow_and_pydantic.mjs`)**:
+  - End-to-end automated stress benchmark testing Apache Arrow (5,335 polyglot files) and Pydantic (851 Python/Rust files), exporting structured metrics to `benchmarks/benchmark_results/arrow_and_pydantic_results.json`.
 
 ---
 

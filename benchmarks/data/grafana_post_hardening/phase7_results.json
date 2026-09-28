@@ -1,0 +1,87 @@
+{
+  "perfArch": {
+    "operation": "Full Structural Scan (Architecture)",
+    "tier": "Tier 1",
+    "coldDurationMs": 4562.7624,
+    "warmMinMs": 317.61119999999937,
+    "warmMedianMs": 340.65269999999873,
+    "warmP95Ms": 358.3214999999982,
+    "warmMaxMs": 358.3214999999982,
+    "stdoutBytes": 1969126,
+    "samples": [
+      317.61119999999937,
+      340.38240000000224,
+      340.65269999999873,
+      343.8614000000016,
+      358.3214999999982
+    ]
+  },
+  "perfSym": {
+    "operation": "Exact Symbol Query (SaveDashboardDiff)",
+    "tier": "Tier 1",
+    "coldDurationMs": 5333.309499999996,
+    "warmMinMs": 206.1715999999942,
+    "warmMedianMs": 208.84580000000278,
+    "warmP95Ms": 251.2465000000011,
+    "warmMaxMs": 251.2465000000011,
+    "stdoutBytes": 191,
+    "samples": [
+      206.1715999999942,
+      206.33430000000226,
+      208.84580000000278,
+      210.54599999999482,
+      251.2465000000011
+    ]
+  },
+  "perfPath": {
+    "operation": "Literal Path Lookup (embed.go)",
+    "tier": "Tier 2",
+    "coldDurationMs": 947.3980999999985,
+    "warmMinMs": 222.86380000000645,
+    "warmMedianMs": 258.49060000000463,
+    "warmP95Ms": 324.10139999999956,
+    "warmMaxMs": 324.10139999999956,
+    "stdoutBytes": 60,
+    "samples": [
+      222.86380000000645,
+      227.10239999999612,
+      258.49060000000463,
+      296.5443000000014,
+      324.10139999999956
+    ]
+  },
+  "perfFuzzy": {
+    "operation": "Deterministic Fuzzy (DataSourc)",
+    "tier": "Tier 3",
+    "coldDurationMs": 5306.199099999998,
+    "warmMinMs": 507.93880000000354,
+    "warmMedianMs": 523.3810999999987,
+    "warmP95Ms": 564.0296999999991,
+    "warmMaxMs": 564.0296999999991,
+    "stdoutBytes": 236,
+    "samples": [
+      507.93880000000354,
+      516.0186000000103,
+      523.3810999999987,
+      529.6611000000121,
+      564.0296999999991
+    ]
+  },
+  "perfTier4": {
+    "operation": "Tier 4 Charted Recall",
+    "tier": "Tier 4",
+    "coldDurationMs": 811.6457999999984,
+    "warmMinMs": 614.8292999999976,
+    "warmMedianMs": 627.0339999999997,
+    "warmP95Ms": 951.8850999999995,
+    "warmMaxMs": 951.8850999999995,
+    "stdoutBytes": 167,
+    "samples": [
+      614.8292999999976,
+      619.556700000001,
+      627.0339999999997,
+      632.3551999999909,
+      951.8850999999995
+    ]
+  }
+}

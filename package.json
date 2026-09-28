@@ -1,6 +1,6 @@
 {
   "name": "waymark-engine",
-  "version": "2.3.0",
+  "version": "2.3.1",
   "description": "Agentic code discovery: ask your codebase a question, get exact file + symbol + line span in milliseconds. No re-reading, no guessing, no index to build.",
   "type": "module",
   "main": "./dist/src/index.js",
@@ -51,6 +51,7 @@
     "bm25",
     "fts5",
     "mcp",
+    "modelcontextprotocol",
     "semantic-search",
     "llm-tools",
     "developer-tools"
@@ -60,6 +61,8 @@
     "build": "tsc -p tsconfig.json",
     "test": "npm run build && node --test \"dist/test/**/*.test.js\"",
     "verify": "npm run build && node --test \"dist/test/**/*.test.js\"",
+    "test:prompts": "node docs/prompts/run_battery.mjs",
+    "test:benchmark": "node benchmarks/suites/benchmark_stateless_vs_resident.mjs",
     "prepublishOnly": "npm run verify"
   },
   "devDependencies": {

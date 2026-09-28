@@ -1,0 +1,289 @@
+{
+  "benchmark": "stateless_vs_resident_comparison",
+  "timestamp": "2026-09-25T12:55:30.483Z",
+  "repository": "C:\\Users\\USER\\Desktop\\Frameworks\\deepseek-playground-2\\test-codedb\\grafana",
+  "filesCount": 21144,
+  "comparison": [
+    {
+      "operation": "Tier 1: Full Structural Scan",
+      "stateless": {
+        "coldCliMs": 4570.5770999999995,
+        "warmMedianCliMs": 5152.0794000000005,
+        "warmInternalMs": 4920.5
+      },
+      "resident": {
+        "coldCliMs": 355.6886999999988,
+        "warmMedianCliMs": 351.1895999999979,
+        "warmInternalMs": 137.44
+      },
+      "cliSpeedupMultiplier": 14.67,
+      "warmRatioPercent": 7.68
+    },
+    {
+      "operation": "Tier 1: Exact Symbol Query",
+      "stateless": {
+        "coldCliMs": 4511.2644,
+        "warmMedianCliMs": 4483.381000000001,
+        "warmInternalMs": 4269.19
+      },
+      "resident": {
+        "coldCliMs": 210.59539999999106,
+        "warmMedianCliMs": 213.26909999999043,
+        "warmInternalMs": 18.5
+      },
+      "cliSpeedupMultiplier": 21.02,
+      "warmRatioPercent": 4.73
+    },
+    {
+      "operation": "Tier 2: Literal Path Lookup",
+      "stateless": {
+        "coldCliMs": 937.1944000000003,
+        "warmMedianCliMs": 233.9910000000018,
+        "warmInternalMs": 34.92
+      },
+      "resident": {
+        "coldCliMs": 233.93039999999746,
+        "warmMedianCliMs": 232.81890000001295,
+        "warmInternalMs": 36.62
+      },
+      "cliSpeedupMultiplier": 1.01,
+      "warmRatioPercent": 24.84
+    },
+    {
+      "operation": "Tier 3: Deterministic Fuzzy",
+      "stateless": {
+        "coldCliMs": 4791.419500000004,
+        "warmMedianCliMs": 4809.633900000001,
+        "warmInternalMs": 4593.76
+      },
+      "resident": {
+        "coldCliMs": 536.4265000000014,
+        "warmMedianCliMs": 535.6818000000058,
+        "warmInternalMs": 335.78
+      },
+      "cliSpeedupMultiplier": 8.98,
+      "warmRatioPercent": 11.18
+    },
+    {
+      "operation": "Tier 4: Charted Memory Recall",
+      "stateless": {
+        "coldCliMs": 760.9207000000024,
+        "warmMedianCliMs": 643.3300000000017,
+        "warmInternalMs": 437.13
+      },
+      "resident": {
+        "coldCliMs": 655.6201000000001,
+        "warmMedianCliMs": 629.9961999999941,
+        "warmInternalMs": 427.86
+      },
+      "cliSpeedupMultiplier": 1.02,
+      "warmRatioPercent": 82.79
+    }
+  ],
+  "details": {
+    "stateless": [
+      {
+        "label": "Tier 1: Full Structural Scan",
+        "coldCliMs": 4570.5770999999995,
+        "coldInternalTimings": {
+          "ast": 4348.17,
+          "total": 4348.2
+        },
+        "warmSamplesCliMs": [
+          4575.8148,
+          5152.0794000000005,
+          5297.183000000001
+        ],
+        "warmMedianCliMs": 5152.0794000000005,
+        "warmMinCliMs": 4575.8148,
+        "warmMaxCliMs": 5297.183000000001,
+        "warmMedianInternalTimings": {
+          "ast": 4920.5,
+          "total": 4920.55
+        }
+      },
+      {
+        "label": "Tier 1: Exact Symbol Query",
+        "coldCliMs": 4511.2644,
+        "coldInternalTimings": {
+          "ast": 4271.17,
+          "total": 4271.19
+        },
+        "warmSamplesCliMs": [
+          4434.461300000003,
+          4483.381000000001,
+          4514.132699999995
+        ],
+        "warmMedianCliMs": 4483.381000000001,
+        "warmMinCliMs": 4434.461300000003,
+        "warmMaxCliMs": 4514.132699999995,
+        "warmMedianInternalTimings": {
+          "ast": 4269.19,
+          "total": 4269.2
+        }
+      },
+      {
+        "label": "Tier 2: Literal Path Lookup",
+        "coldCliMs": 937.1944000000003,
+        "coldInternalTimings": {
+          "path": 711.9,
+          "total": 713.39
+        },
+        "warmSamplesCliMs": [
+          227.63010000000213,
+          233.9910000000018,
+          245.72039999999834
+        ],
+        "warmMedianCliMs": 233.9910000000018,
+        "warmMinCliMs": 227.63010000000213,
+        "warmMaxCliMs": 245.72039999999834,
+        "warmMedianInternalTimings": {
+          "path": 34.92,
+          "total": 36.93
+        }
+      },
+      {
+        "label": "Tier 3: Deterministic Fuzzy",
+        "coldCliMs": 4791.419500000004,
+        "coldInternalTimings": {
+          "fuzzy": 4587.59,
+          "total": 4588.04
+        },
+        "warmSamplesCliMs": [
+          4756.136600000005,
+          4809.633900000001,
+          4828.846400000002
+        ],
+        "warmMedianCliMs": 4809.633900000001,
+        "warmMinCliMs": 4756.136600000005,
+        "warmMaxCliMs": 4828.846400000002,
+        "warmMedianInternalTimings": {
+          "fuzzy": 4593.76,
+          "total": 4594.17
+        }
+      },
+      {
+        "label": "Tier 4: Charted Memory Recall",
+        "coldCliMs": 760.9207000000024,
+        "coldInternalTimings": {
+          "capn": 415.43,
+          "total": 417.17
+        },
+        "warmSamplesCliMs": [
+          621.8669999999984,
+          643.3300000000017,
+          650.8637999999992
+        ],
+        "warmMedianCliMs": 643.3300000000017,
+        "warmMinCliMs": 621.8669999999984,
+        "warmMaxCliMs": 650.8637999999992,
+        "warmMedianInternalTimings": {
+          "capn": 437.13,
+          "total": 439.01
+        }
+      }
+    ],
+    "resident": [
+      {
+        "label": "Tier 1: Full Structural Scan",
+        "coldCliMs": 355.6886999999988,
+        "coldInternalTimings": {
+          "ast": 142.76,
+          "total": 142.8
+        },
+        "warmSamplesCliMs": [
+          328.6901999999973,
+          351.1895999999979,
+          351.2722000000067
+        ],
+        "warmMedianCliMs": 351.1895999999979,
+        "warmMinCliMs": 328.6901999999973,
+        "warmMaxCliMs": 351.2722000000067,
+        "warmMedianInternalTimings": {
+          "ast": 137.44,
+          "total": 137.48
+        }
+      },
+      {
+        "label": "Tier 1: Exact Symbol Query",
+        "coldCliMs": 210.59539999999106,
+        "coldInternalTimings": {
+          "ast": 19.55,
+          "total": 19.58
+        },
+        "warmSamplesCliMs": [
+          202.93360000000393,
+          213.26909999999043,
+          216.26949999999488
+        ],
+        "warmMedianCliMs": 213.26909999999043,
+        "warmMinCliMs": 202.93360000000393,
+        "warmMaxCliMs": 216.26949999999488,
+        "warmMedianInternalTimings": {
+          "ast": 18.5,
+          "total": 18.53
+        }
+      },
+      {
+        "label": "Tier 2: Literal Path Lookup",
+        "coldCliMs": 233.93039999999746,
+        "coldInternalTimings": {
+          "path": 35.56,
+          "total": 36.78
+        },
+        "warmSamplesCliMs": [
+          232.31359999999404,
+          232.81890000001295,
+          238.0100000000093
+        ],
+        "warmMedianCliMs": 232.81890000001295,
+        "warmMinCliMs": 232.31359999999404,
+        "warmMaxCliMs": 238.0100000000093,
+        "warmMedianInternalTimings": {
+          "path": 36.62,
+          "total": 39.23
+        }
+      },
+      {
+        "label": "Tier 3: Deterministic Fuzzy",
+        "coldCliMs": 536.4265000000014,
+        "coldInternalTimings": {
+          "fuzzy": 337.56,
+          "total": 337.94
+        },
+        "warmSamplesCliMs": [
+          522.2172999999893,
+          535.6818000000058,
+          555.232600000003
+        ],
+        "warmMedianCliMs": 535.6818000000058,
+        "warmMinCliMs": 522.2172999999893,
+        "warmMaxCliMs": 555.232600000003,
+        "warmMedianInternalTimings": {
+          "fuzzy": 335.78,
+          "total": 336.18
+        }
+      },
+      {
+        "label": "Tier 4: Charted Memory Recall",
+        "coldCliMs": 655.6201000000001,
+        "coldInternalTimings": {
+          "capn": 453.94,
+          "total": 456.17
+        },
+        "warmSamplesCliMs": [
+          614.0960999999952,
+          629.9961999999941,
+          665.316599999991
+        ],
+        "warmMedianCliMs": 629.9961999999941,
+        "warmMinCliMs": 614.0960999999952,
+        "warmMaxCliMs": 665.316599999991,
+        "warmMedianInternalTimings": {
+          "capn": 427.86,
+          "total": 431.11
+        }
+      }
+    ]
+  }
+}

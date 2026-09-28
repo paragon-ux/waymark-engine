@@ -21,7 +21,7 @@ const VALUE_FLAGS = new Set([
 ]);
 
 const BOOLEAN_FLAGS = new Set([
-  "timing", "b", "json", "j", "plain", "p", "auto-resolve", "if-exists", "force", "daemon", "d", "exclude-tests",
+  "timing", "b", "json", "j", "plain", "p", "auto-resolve", "if-exists", "force", "daemon", "d", "exclude-tests", "dev",
 ]);
 
 function parseArgs(args: readonly string[]): ParsedArgs {
@@ -242,6 +242,7 @@ async function runCommand(command: string, rawArgs: readonly string[]): Promise<
     const autoResolve = parsed.values.has("auto-resolve");
     const daemon = parsed.values.has("daemon");
     const excludeTests = parsed.values.has("exclude-tests");
+    const dev = parsed.values.has("dev");
     const rawDepth = parsed.values.get("depth");
     const depth = rawDepth ? parseInt(rawDepth, 10) : undefined;
     const rawDirection = parsed.values.get("direction");
@@ -255,7 +256,7 @@ async function runCommand(command: string, rawArgs: readonly string[]): Promise<
         resolveProfile(parsed),
         resolveCapnExecutable(parsed),
         question,
-        { tier, timing, autoResolve, daemon, depth, direction, excludeTests },
+        { tier, timing: timing || dev, autoResolve, daemon, depth, direction, excludeTests, dev },
       ),
     };
   }

@@ -1,0 +1,68 @@
+[
+  {
+    "type": "Tier 1 Exact",
+    "query": "Where is SaveDashboardDiff declared?",
+    "plainBytes": 191,
+    "jsonBytes": 253,
+    "plainTokens": 87,
+    "jsonTokens": 127,
+    "byteRatio": "0.755",
+    "tokenReductionPct": "31.5%",
+    "plainSample": "[hit: codedb] (confidence: exact)\ntotal: 1\nresults: 1 (cols: qn label file lines)\n  SaveDashboardDiff constant public/app/features/dashboard/component"
+  },
+  {
+    "type": "Tier 1 Ambiguous",
+    "query": "Where is New declared?",
+    "plainBytes": 3157,
+    "jsonBytes": 3268,
+    "plainTokens": 1369,
+    "jsonTokens": 1507,
+    "byteRatio": "0.966",
+    "tokenReductionPct": "9.2%",
+    "plainSample": "[hit: codedb] (confidence: exact)\ntotal: 50\nresults: 50 (cols: qn label file lines)\n  New function apps/advisor/pkg/app/app.go 38\n  New function apps/"
+  },
+  {
+    "type": "Tier 2 Path",
+    "query": "embed.go",
+    "plainBytes": 57,
+    "jsonBytes": 118,
+    "plainTokens": 30,
+    "jsonTokens": 68,
+    "byteRatio": "0.483",
+    "tokenReductionPct": "55.9%",
+    "plainSample": "[hit: literal-path] (confidence: exact)\nembed.go\t[exact]"
+  },
+  {
+    "type": "Tier 3 Fuzzy",
+    "query": "DataSourc -t fuzzy",
+    "plainBytes": 236,
+    "jsonBytes": 1633,
+    "plainTokens": 111,
+    "jsonTokens": 834,
+    "byteRatio": "0.145",
+    "tokenReductionPct": "86.7%",
+    "plainSample": "[junction] Recommended: fuzzy-lexical\nSignal: identifier-like (DataSourc)\nResult: dataSource in e2e-playwright/alerting-suite/fixtures.ts:7 (score: 87"
+  },
+  {
+    "type": "Discovery Junction",
+    "query": "datasourc",
+    "plainBytes": 344,
+    "jsonBytes": 1509,
+    "plainTokens": 156,
+    "jsonTokens": 750,
+    "byteRatio": "0.228",
+    "tokenReductionPct": "79.2%",
+    "plainSample": "[junction] Recommended: fuzzy-lexical\nSignal: narrative\nResult: datasource in apps/dashboard/pkg/migration/conversion/v2beta1_to_v2alpha1.go:169 (scor"
+  },
+  {
+    "type": "Tier 4 Charted Memory",
+    "query": "How does a datasource request move from frontend to backend in Grafana? --auto-resolve",
+    "plainBytes": 341,
+    "jsonBytes": 399,
+    "plainTokens": 165,
+    "jsonTokens": 200,
+    "byteRatio": "0.855",
+    "tokenReductionPct": "17.5%",
+    "plainSample": "[hit: capn-cli] (confidence: curated)\n{\"id\":\"8195ca36\",\"question\":\"How does a datasource request move from frontend to backend in Grafana?\",\"files\":[\""
+  }
+]

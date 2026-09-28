@@ -134,6 +134,15 @@ export interface JunctionOption {
   continuation?: JunctionContinuation;
 }
 
+export interface DevDiagnostics {
+  tiersEvaluated: string[];
+  timingBreakdownMs: Record<string, number>;
+  trieHitType?: "exact" | "basename" | "suffix" | "none";
+  daemonIpcUsed?: boolean;
+  nodesVisited?: number;
+  invariantsPassed: boolean;
+}
+
 export interface AskHitResult {
   waymark: 1;
   kind: "ask";
@@ -142,6 +151,7 @@ export interface AskHitResult {
   confidence: "exact" | "approximate" | "curated";
   result: unknown;
   timings?: Record<string, number>;
+  dev?: DevDiagnostics;
 }
 
 export interface AskJunctionResult {
@@ -161,6 +171,7 @@ export interface AskJunctionResult {
   recommendation?: string;
   tip?: string;
   timings?: Record<string, number>;
+  dev?: DevDiagnostics;
 }
 
 export interface AskMissResult {
@@ -172,6 +183,7 @@ export interface AskMissResult {
   reason: string;
   matches: never[];
   timings?: Record<string, number>;
+  dev?: DevDiagnostics;
 }
 
 export interface AskErrorResult {
@@ -184,6 +196,7 @@ export interface AskErrorResult {
   error?: string;
   retryable: boolean;
   timings?: Record<string, number>;
+  dev?: DevDiagnostics;
 }
 
 export type AskResult =
@@ -224,5 +237,6 @@ export interface AskOptions {
   depth?: number;
   direction?: "callers" | "callees" | "both";
   excludeTests?: boolean;
+  dev?: boolean;
 }
 

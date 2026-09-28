@@ -1,0 +1,128 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "name": "waymark-engine-benchmarks",
+  "version": "2.1.1",
+  "updatedAt": "2026-09-25T11:10:00Z",
+  "description": "Canonical benchmark catalog and empirical metrics ledger for waymark-engine",
+  "benchmarks": [
+    {
+      "id": "adversarial-parity-grafana",
+      "name": "Grafana Adversarial Parity & Hardening Benchmark",
+      "purpose": "Measures AST traversal scalability, high-collision verb mitigation, literal path bypassing, and fail-closed path routing on a massive real-world codebase.",
+      "target": {
+        "repository": "grafana/grafana",
+        "path": "c:/Users/USER/Desktop/Frameworks/deepseek-playground-2/test-codedb/grafana"
+      },
+      "cardinality": {
+        "totalFiles": 23517,
+        "indexedSourceFiles": 21144,
+        "astSymbolCount": 347845,
+        "languages": ["Go", "TypeScript", "JavaScript"],
+        "commitHistoryDepth": "70,000+ commits"
+      },
+      "environment": {
+        "cpu": "Intel Core i5-5300U CPU @ 2.30GHz (2 Cores, 4 Logical Processors)",
+        "ram": "16 GB",
+        "os": "Windows 10 / PowerShell",
+        "threadAllocation": "CODEDB_MAX_THREADS = 3 (preserves 1 interactive core)"
+      },
+      "harnesses": [
+        "scratch/benchmarks/suites/run_parity_benchmark.mjs",
+        "scratch/benchmarks/suites/benchmark_runner.mjs",
+        "scratch/benchmarks/suites/benchmark_stateless_vs_resident.mjs"
+      ],
+      "dataDirectories": {
+        "baselinePreHardening": "scratch/benchmarks/data/grafana_pre_hardening",
+        "hardenedPostHardening": "scratch/benchmarks/data/grafana_post_hardening"
+      },
+      "keyResults": {
+        "highCollisionASTVerb": {
+          "query": "Who calls New?",
+          "preRemediationMs": 30318.7,
+          "postRemediationMs": 4454.4,
+          "speedupFactor": 6.8,
+          "reductionPercent": 85.3
+        },
+        "literalPathLookup": {
+          "query": "embed.go",
+          "preRemediationMs": 4594.8,
+          "postRemediationWarmMs": 229.9,
+          "postRemediationColdDiskMs": 41.21,
+          "speedupFactor": 20.0,
+          "reductionPercent": 95.0
+        },
+        "nonExistentPathFailClosed": {
+          "query": "some/path/that/does/not/exist/at/all.ts",
+          "preRemediationMs": 9390.7,
+          "preRemediationStatus": "junction (hijacked by word 'path')",
+          "postRemediationMs": 257.9,
+          "postRemediationStatus": "miss (fail-closed in literal-path tier)",
+          "speedupFactor": 36.4,
+          "reductionPercent": 97.3
+        },
+        "residentDaemonSpeedup": {
+          "statelessColdMedianMs": 95.0,
+          "residentDaemonMedianMs": 3.8,
+          "speedupFactor": 25.0
+        }
+      }
+    },
+    {
+      "id": "wilderness-e2e-codex-mcp",
+      "name": "OpenAI Codex Wilderness End-to-End Evaluation (MCP Only)",
+      "purpose": "Autonomous in-the-wild evaluation across all 4 discovery tiers on a previously un-benchmarked multi-language codebase strictly via MCP tools.",
+      "target": {
+        "repository": "openai/codex",
+        "path": "c:/Users/USER/Desktop/Frameworks/deepseek-playground-2/test-codedb/codex"
+      },
+      "cardinality": {
+        "linesOfCode": "50,000+",
+        "cratesAndPackages": "60+ crates in codex-rs, Python SDK, TypeScript SDK",
+        "languages": ["Rust", "TypeScript", "Python"],
+        "discoveryTiersTested": ["Tier 1 AST", "Tier 2 Literal Path", "Tier 3 Fuzzy Junction", "Tier 4 Charted Consensus Memory", "Tree-sitter Single File"]
+      },
+      "environment": {
+        "modality": "Pure MCP (ServerName: waymark-engine, stdio JSON-RPC)",
+        "protocolVersion": "2026-07-28 / 2024-11-05 Dual-Era Handshake",
+        "shellCommandsExecuted": 0,
+        "externalGrepLookups": 0
+      },
+      "dataDirectories": {
+        "results": "scratch/benchmarks/data/codex_e2e"
+      },
+      "keyResults": {
+        "milestone1_fuzzyToAst": {
+          "status": "pass",
+          "query": "Who calls execute_command?",
+          "tier3Score": 81,
+          "targetSymbol": "execute_user_shell_command",
+          "astCallers": 2,
+          "astCallees": 16
+        },
+        "milestone2_policyCallChain": {
+          "status": "pass",
+          "query": "Who calls matches_for_command_with_options?",
+          "callersCount": 7,
+          "calleesCount": 15,
+          "primaryCaller": "create_exec_approval_requirement_for_command_platform"
+        },
+        "milestone3_literalPath": {
+          "status": "pass",
+          "exactPathMatched": "codex-rs/execpolicy/src/execpolicycheck.rs",
+          "bogusPathFailClosed": "codex-rs/execpolicy/src/non_existent_policy_validator.rs -> SYMBOL_NOT_FOUND"
+        },
+        "milestone4_multiLanguageAst": {
+          "status": "pass",
+          "pythonSymbolsExtracted": ["ApprovalMode", "_approval_mode_settings", "_assert_never_approval_mode", "_approval_mode_override_settings"],
+          "typescriptSymbolsExtracted": ["Thread", "runStreamed", "runStreamedInternal", "run", "Turn", "UserInput"]
+        },
+        "milestone5_consensusMemory": {
+          "status": "pass",
+          "chartedEntryId": "02d70c48",
+          "backingFilesCount": 4,
+          "consensusRecallConfidence": "curated"
+        }
+      }
+    }
+  ]
+}

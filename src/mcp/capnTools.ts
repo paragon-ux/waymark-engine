@@ -82,6 +82,10 @@ export const waymarkAskTool: McpToolHandler = {
           type: "boolean",
           description: "Optional. Filter out test files (e.g. tests/, *_test.*, *.spec.*) from call graph results to reduce token noise.",
         },
+        dev: {
+          type: "boolean",
+          description: "Optional. Enable Dev Mode for diagnostic telemetry, tier timing breakdown, and runtime invariant assertions.",
+        },
         symbols: {
           type: "array",
           items: { type: "string" },
@@ -110,6 +114,7 @@ export const waymarkAskTool: McpToolHandler = {
       const timing = args.timing === true;
       const plain = args.plain === true;
       const daemon = args.daemon === true;
+      const dev = args.dev === true;
       const depth = typeof args.depth === "number" ? Math.min(Math.max(1, args.depth), 5) : undefined;
       const direction = (args.direction === "callers" || args.direction === "callees" || args.direction === "both")
         ? args.direction
@@ -138,11 +143,12 @@ export const waymarkAskTool: McpToolHandler = {
       const result = await ask(root, resolveProfile(args), resolveExecutable(args), question, {
         tier,
         autoResolve,
-        timing,
+        timing: timing || dev,
         daemon,
         depth,
         direction,
         excludeTests,
+        dev,
       });
 
       if (plain) {

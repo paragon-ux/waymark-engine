@@ -2,7 +2,7 @@
 
 [![npm version](https://img.shields.io/npm/v/waymark-engine)](https://www.npmjs.com/package/waymark-engine)
 [![CI](https://github.com/paragon-ux/waymark-engine/actions/workflows/verify.yml/badge.svg)](https://github.com/paragon-ux/waymark-engine/actions/workflows/verify.yml)
-[![tests](https://img.shields.io/badge/tests-39%2F39-brightgreen)](https://github.com/paragon-ux/waymark-engine)
+[![tests](https://img.shields.io/badge/tests-60%2F60-brightgreen)](https://github.com/paragon-ux/waymark-engine)
 [![node](https://img.shields.io/badge/node-%3E%3D22-339933?logo=node.js)](https://nodejs.org)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![recall](https://img.shields.io/badge/recall-lexical%20BM25%20(no%20embeddings)-informational)](https://github.com/paragon-ux/capn-hook)
@@ -10,12 +10,13 @@
 Ask your codebase a question in plain English. Get an exact answer — file,
 symbol, and line span — in milliseconds, without re-reading thousands of tokens.
 
-Built for AI coding agents: one-shot discovery, no plugin choice, no index to
-build, no embeddings, no daemon.
+Built for AI coding agents: one-shot discovery, zero required background
+processes (no daemon required; optional resident daemon for warm
+sub-millisecond lookups), no vector index, no embeddings.
 
 | You ask | You get |
 | :--- | :--- |
-| *"Who calls `verifyToken`?"* | Every caller, exact line numbers, 100% precision |
+| *"Who calls `verifyToken`?"* | Every caller, exact line numbers, zero false positives (fail-closed on ambiguity) |
 | *"Where is `PaymentService` declared?"* | File path, line span, structural signature |
 | *"How does authentication work?"* | The files that answer it — charted, staleness-checked |
 | *"Entrypoints"* | The architecture's front doors |
@@ -57,6 +58,13 @@ BM25 store as a runtime dependency and refuses any store configured for
 embedding mode (`CAPN_STORE_UNINITIALIZED` / `CAPN_NON_DETERMINISTIC_MODE`,
 fail-closed).
 
+## Performance & Latency Model
+
+Waymark Engine is architected around transparent latency boundaries:
+- **Cold CLI Queries (Stateless):** ~1.5s–4s on 20,000+ file codebases (e.g. Grafana). Pays initial filesystem discovery and node process initialization.
+- **Warm Resident Daemon Queries:** `<10ms` for literal paths via `PrefixTrie`, `~150–250ms` for structural AST queries (delivering a **21x–100x speedup** on large repositories).
+- **In-Process Library API:** Direct execution in `<10ms` without process overhead.
+
 ## Install
 
 Requires Node.js 22+.
@@ -92,15 +100,18 @@ waymark-discover --path src/index.ts [--language typescript|python]
 #     "Line numbers of <name>" / "Method signature of <name>" / "Locate symbol <name>"
 #     "Entrypoints" / "Architecture" / "Overview of the repo" / "Hotspots"
 #
-  #   Literal (filename/path, exact match):
-  #     "sample.ts" / "src/api/webhooks.ts" / ".gitignore"
-  #
-  #   Semantic (BM25, charted memory):
-  #     Any conceptual question, e.g. "How does authentication work?"
+#   Literal (filename/path, exact match):
+#     "sample.ts" / "src/api/webhooks.ts" / ".gitignore"
 #
-#   <name> must be an exact identifier (case-sensitive). If no codedb hit, the
-#   query falls through to semantic. Run `waymark-context` to see this contract.
-waymark-ask "Who calls verifyHop?"
+#   Semantic (BM25, charted memory):
+#     Any conceptual question, e.g. "How does authentication work?"
+#
+#   <name> must be an exact identifier (case-sensitive). If codedb misses, the
+#   engine fails closed or enters the Discovery Junction — it never silently guesses.
+waymark-ask "Who calls verifyHop?"            # Tier 1 exact structural call graph
+waymark-ask "Who calls verifyHop?" --depth 2 --exclude-tests  # Bounded multi-hop BFS
+waymark-ask "verifyHop" --dev                 # Dev Mode: timing breakdown + invariant telemetry
+waymark-symbols verifyHop ask PrefixTrie      # Concurrent multi-symbol batch discovery
 waymark-ask "refundOrdr"                      # Discovery Junction: fuzzy-lexical recommended (~92% match)
 waymark-ask "refundOrdr" -t fuzzy -b          # isolate fuzzy tier with high-resolution timings
 waymark-ask "refundOrdr" --plain              # token-minimal plain text for agents (~16 tokens)
@@ -131,16 +142,29 @@ route to the symbolic vs semantic phase.
 | Wrapper | Umbrella CLI | Action |
 | :--- | :--- | :--- |
 | `waymark` | — | umbrella CLI (all subcommands) |
-| `waymark-init` | `waymark init` | initialize the lexical Capn store |
-| `waymark-ask` | `waymark ask "<q>"` | two-phase question router |
-| `waymark-discover` | `waymark discover-symbols --path <f>` | AST symbol discovery |
+| `waymark-init` | `waymark init` | initialize the deterministic lexical Capn store |
+| `waymark-ask` | `waymark ask "<q>"` | 4-tier discovery question router |
+| `waymark-symbols` | `waymark symbols <s1> <s2>...` | concurrent batch multi-symbol discovery |
+| `waymark-discover` | `waymark discover-symbols [--path <f>] [--query <q>]` | bimodal AST extraction (file) or repo search |
+| `waymark-daemon` | `waymark daemon [start\|stop\|reload\|status\|ping]` | resident background daemon & live cache reload |
 | `waymark-chart` | `waymark chart --question <q> --answer <a> --files <f>` | chart into Capn memory (prunes stale siblings first) |
-| `waymark-unchart` | `waymark unchart <id>` | delete one entry |
+| `waymark-unchart` | `waymark unchart <id>` | delete one charted memory entry |
 | `waymark-bust` | `waymark bust <path>` | delete entries backed by one file |
-| `waymark-prune` | `waymark prune` | delete stale entries |
+| `waymark-prune` | `waymark prune` | delete stale entries whose files vanished |
 | `waymark-list` | `waymark list` | list charted entries (prunes stale first) |
-| `waymark-context` | `waymark context` | print the ask-first contract |
+| `waymark-context` | `waymark context` | print the ask-first routing contract |
 | `waymark-mcp` | `waymark mcp` | start the stdio MCP server |
+
+### Query Flags & Options (`waymark ask` / `waymark-ask`)
+- `--depth <1..5>`: Bounded BFS call graph traversal depth (default: 1).
+- `--direction <callers|callees|both>`: Traversal directionality (default: both).
+- `--exclude-tests`: Suppress test files (`tests/`, `*_test.*`, `*.spec.*`) from call graphs (up to 94% token savings).
+- `--plain` (`-p`): Emit token-minimal plain text formatted for LLM context preservation.
+- `--dev`: Enable Dev Mode with per-tier timing breakdown, trie hit inspection, and invariant assertions.
+- `--tier <auto|ast|path|fuzzy|capn>` (`-t`): Force a specific discovery tier or bypass junction fallthrough.
+- `--timing` (`-b`): Surface high-resolution sub-millisecond per-tier execution timings.
+- `--daemon` (`-d`): Route queries through the resident in-memory background daemon IPC.
+
 
 Env: `WAYMARK_CAPN_PROFILE` (`capn-cli` | `none`, default `capn-cli`),
 `WAYMARK_CAPN_EXECUTABLE` (optional override; default: the bundled
@@ -165,27 +189,62 @@ const hit = await ask(repoRoot(), "capn-cli", "", "Who calls verifyHop?");
 // { provider: "codedb", status: "hit", result: "function: verifyHop\ncallers: ..." }
 ```
 
-## Integrity primitives
+## Tamper-Evidence & Integrity Primitives
 
-Retained standalone from the continuity layer, because they are the cheapest
-tamper-evidence primitives for later integration:
+Retained standalone from the continuity layer for tamper-evidence verification:
+- `verifyHop(root, hop, maxWindows)` — hash-pinned span verification (FRESH / MOVED / STALE) with bounded relocation windows.
+- `anchorForRange(root, path, range)` — full-file SHA-256 + normalized span hash + structural signature to pin "this span said X" against code modifications.
 
-- `verifyHop(root, hop, maxWindows)` — hash-pinned span verification
-  (FRESH / MOVED / STALE) with bounded relocation windows.
-- `anchorForRange(root, path, range)` — full-file hash + normalized span hash +
-  structural signature. Pin "this span said X" to a later integrity check.
+## Language Support & Polyglot Fallback Matrix
 
-## MCP (stdio)
+| Language | Primary Engine | Extracted Symbols |
+| :--- | :--- | :--- |
+| **TypeScript / JavaScript** | Native Tree-Sitter (`web-tree-sitter`) | Classes, methods, functions, interfaces, type aliases |
+| **Python** | Native Tree-Sitter (`web-tree-sitter`) | Classes, methods, functions, decorated definitions |
+| **Rust, Go, C++, Java, C#** | Polyglot Codedb Outline Fallback | Functions, methods, structs, traits, interfaces |
+
+Non-TypeScript and non-Python files automatically fall back to `codedb outline` rather than throwing errors.
+
+## Model Context Protocol (MCP) Integration
+
+Waymark Engine provides first-class stdio integration for AI coding agents (Claude Desktop, Google Antigravity, Cursor, Zed, Continue, and Glama).
+
+### Configuration (`mcp_config.json` / `claude_desktop_config.json`)
 
 ```json
 {
   "mcpServers": {
-    "waymark": { "command": "waymark-mcp" }
+    "waymark-engine": {
+      "command": "npx",
+      "args": ["-y", "waymark-engine"],
+      "env": {
+        "CODEDB_ALLOW_TEMP": "1"
+      }
+    }
   }
 }
 ```
 
-Tools: `capn_ask`, `capn_chart`, `waymark_discover_symbols`. Resource: `capn://status`.
+### Canonical MCP Surface
+
+* **10 Canonical Tools (`waymark_*`):**
+  * `waymark_ask`: 4-tier discovery question query (`depth: 1..5`, `direction`, `exclude_tests`, `symbols: [...]`, `dev`, `plain`, `tier`, `timing`, `daemon`, `auto_resolve`).
+  * `waymark_chart`: Publish architectural consensus memory with validated backing files.
+  * `waymark_discover_symbols`: Bimodal symbol extraction: single-file tree-sitter AST or repo-wide symbol search (`query`).
+  * `waymark_unchart`: Delete charted consensus memory entry by ID.
+  * `waymark_bust`: Invalidate every charted memory entry backed by a specific repository file.
+  * `waymark_prune`: Cleanly remove all stale charted memory entries whose backing files vanished.
+  * `waymark_list`: List all charted repository consensus memories.
+  * `waymark_context`: Retrieve the ask-first charting contract and routing guidelines.
+  * `waymark_daemon_status`: Inspect resident in-memory daemon health, PID, address, and trigger live cache reload (`reload: true`).
+  * `waymark_init`: Initialize deterministic lexical store (`.capn`) with embedding mode disabled.
+  *(Legacy aliases with `capn_*` prefix are retained for backward compatibility).*
+* **Resources:**
+  * `waymark://manifest`: Engine capabilities, tier metadata, and versioning.
+  * `capn://status`: Memory store configuration and adapter status.
+* **Prompts:**
+  * `explore-subsystem`: Guided 4-tier exploration workflow for a concept or module.
+  * `architectural-map`: Structured call-graph and consensus memory mapping workflow.
 
 ## Routing
 

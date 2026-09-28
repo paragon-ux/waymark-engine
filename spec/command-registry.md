@@ -40,7 +40,7 @@ Waymark Engine provides both a unified binary (`waymark <command>`) and explicit
 | `waymark mcp`<br>`waymark-mcp` | **Stable** | [`src/mcp/server.ts`](../src/mcp/server.ts) | None (runs over `stdio`) | Launches the standard Model Context Protocol (MCP) server for IDE and agent integration. |
 | `waymark daemon [start\|stop\|restart\|reload\|status\|list\|ping\|run]`<br>`waymark-daemon [start\|stop\|restart\|reload\|status\|list\|ping]` | **Stable** | [`src/daemon.ts`](../src/daemon.ts) | Subcommand (`start`, `stop`, `restart`, `reload`, `status`, `list`, `ping`, `run`), `[--path <root>]` | Manages background resident codedb server (`serve --stdio`) and IPC socket/pipe bridge for sub-10ms warm query execution. Supports cache reloading via `reload`. |
 | `waymark repl`<br>`waymark-repl` | **Stable** | [`src/repl.ts`](../src/repl.ts) | `[--manifest <file>]`<br>`[--category <cat>]`<br>`[--id <id>]`<br>`[--file <script>]`<br>`[--plain]`<br>`[--dev]` | Interactive diagnostic REPL shell and hardened test battery runner with live daemon IPC, line drift calculation, and baseline comparison. |
-| `waymark bootstrap`<br>`waymark-bootstrap` | **Stable** | [`spec/semantic-repo-map.md`](./semantic-repo-map.md) | `[--subsystem <name>]`<br>`[--dry-run]` | Two-pass bootstrapping of the 5-facet Semantic Repo Map into `.waymark/semantic-map.json` and hydration into `.capn`. |
+| `waymark bootstrap`<br>`waymark-bootstrap` | **Stable** | [`spec/semantic-repo-map.md`](./semantic-repo-map.md) | `[--subsystem <name>]`<br>`[--dry-run]` | Two-pass bootstrapping of the 5-facet Semantic Repo Map directly into the `.capn` SQLite consensus ledger. |
 | `waymark map [status\|show\|heal\|export]` | **Stable** | [`spec/semantic-repo-map.md`](./semantic-repo-map.md) | Subcommand (`status`, `show`, `heal`, `export`), `[facet]`, `[--plain]` | Inspects, displays, heals, or exports the repository Semantic Repo Map. |
 | `waymark help` / `-h` / `--help` | **Stable** | [`src/cli.ts`](../src/cli.ts) | None | Outputs brief command options, flags, and environment variable configuration. |
 
@@ -79,7 +79,9 @@ Options and flags modify discovery routing, execution format, performance instru
 
 ## 4. MCP Tool Registry
 
-The resident stdio MCP server (`waymark-mcp`) exposes high-leverage tools for agentic discovery and consensus memory maintenance with full precision parity matching the CLI:
+The resident stdio MCP server (`waymark-mcp`) provides two modes of tool exposure:
+1. **Canonical Two-Verb Interface** (`waymark_ask` + `waymark_memory`): Minimal prompt overhead (<450 tokens in agent context, activated via `WAYMARK_MCP_COMPACT=1`) consolidating all discovery into `waymark_ask` and all stateful memory management / subcommands into `waymark_memory`.
+2. **Granular Interface** (default): Registers all 12 tools for backward compatibility with agents expecting single-purpose verbs.
 
 ### 4.1 `waymark_ask`
 - **Identifier**: `waymark_ask`
@@ -205,16 +207,66 @@ The resident stdio MCP server (`waymark-mcp`) exposes high-leverage tools for ag
 ### 4.11 `waymark_map_status`
 - **Identifier**: `waymark_map_status`
 - **Stability**: **Stable**
-- **Description**: Inspect completion health, active facets ratio, and anchor drift status of the Semantic Repo Map (`.waymark/semantic-map.json`).
-- **Input Schema**: `{ "root"?: string, "subsystem"?: string }`
+- **Description**: Inspect completion health, active facets ratio, and anchor drift status of the Semantic Repo Map. (Alias for `waymark_memory(action="status")`).
+- **Input Schema**: `{ "root"?: string, "subsystem"?: string, "plain"?: boolean }`
 
-### 4.12 MCP Prompts Registry
+### 4.12 `waymark_memory`
+- **Identifier**: `waymark_memory`
+- **Stability**: **Stable**
+- **Description**: Universal repository consensus memory manager. Dispatches stateful consensus memory operations, semantic map bootstrap, cache invalidation, and pruning via the `action` argument.
+- **Input Schema**:
+  ```json
+  {
+    "type": "object",
+    "properties": {
+      "action": {
+        "type": "string",
+        "enum": ["chart", "bootstrap", "bust", "prune", "list", "unchart", "init", "context", "status"],
+        "description": "Consensus memory action to execute: chart | bootstrap | bust | prune | list | unchart | init | context | status."
+      },
+      "question": { "type": "string", "description": "The question or topic charted (required for action='chart')." },
+      "answer": { "type": "string", "description": "The conclusive charted answer adhering to <= 100 token budget (required for action='chart')." },
+      "facet": {
+        "type": "string",
+        "enum": ["lifecycle", "data_state", "boundaries", "invariants", "failure"],
+        "description": "Optional architectural facet tag when charting an entry in the Semantic Repo Map."
+      },
+      "files": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "Array of repository-relative backing file paths (required for active facets)."
+      },
+      "file": { "type": "string", "description": "Repository-relative file path (required for action='bust')." },
+      "id": { "type": "string", "description": "Entry hex ID to delete (required for action='unchart')." },
+      "if_exists": { "type": "boolean", "description": "Idempotently succeed if entry id is already deleted (for action='unchart')." },
+      "dry_run": { "type": "boolean", "description": "Inspect without writing changes (for action='bootstrap')." },
+      "subsystem": { "type": "string", "description": "Optional subsystem/package scope for bootstrap in monorepos." },
+      "plain": { "type": "boolean", "description": "Emit token-minimal plain text formatted result for LLM context efficiency." },
+      "capn_executable": { "type": "string", "description": "Optional custom path to the Capn executable." },
+      "profile": { "type": "string", "enum": ["capn-cli", "none"], "description": "Optional adapter profile; defaults to capn-cli." },
+      "root": { "type": "string", "description": "Optional repository root path. Defaults to current working directory." }
+    },
+    "required": ["action"]
+  }
+  ```
+- **Subcommand Behaviors & Output Shapes**:
+  - `bootstrap`: Executes two-pass Semantic Repo Map discovery and writes facets to `.capn` SQLite ledger. Output: `{ ok: true, status: SemanticMapStatus, charted: [...] }`.
+  - `status`: Inspects active facets, health, and anchor drift. Output: `{ ok: true, status: "healthy" | "drifted" | "empty", completion: "N/5", facets: [...], drifted: [...] }` (or compact text when `plain: true`).
+  - `chart`: Inserts or updates architectural memory entry. Output: `{ waymark: 1, kind: "chart", published: true, adapter: string, output: string }`.
+  - `bust`: Invalidates all memories citing `file`. Output: `{ waymark: 1, kind: "bust", ok: true, file: string }`.
+  - `prune`: Removes entries whose backing files vanished. Output: `{ waymark: 1, kind: "prune", ok: true }`.
+  - `list`: Lists charted consensus memories. Output: `{ ok: true, output: string }`.
+  - `unchart`: Deletes entry by `id`. Output: `{ waymark: 1, kind: "unchart", ok: true, id: string }`.
+  - `init`: Initializes `.capn` lexical store. Output: `{ waymark: 1, kind: "init", ok: true }`.
+  - `context`: Retrieves charting syntax and contract. Output: `{ ok: true, output: string }`.
+
+### 4.13 MCP Prompts Registry
 The server registers standard prompts to orchestrate complex agentic discovery workflows:
 - **`explore-subsystem`**: Guides a structured 4-tier exploration of a subsystem or symbol in the codebase (`arguments: [{ name: "query", required: true }, { name: "root", required: false }]`).
 - **`architectural-map`**: Generates an architectural call-graph map and consensus memory summary for a feature (`arguments: [{ name: "topic", required: true }]`).
 - **`bootstrap-semantic-map`**: Two-pass agent prompt that inspects repository layout, harvests existing documentation, grounds concepts in Tree-Sitter AST symbols, and writes the 5-facet Semantic Repo Map (`arguments: [{ name: "subsystem", required: false }, { name: "root", required: false }]`).
 
-### 4.13 MCP Resources Registry
+### 4.14 MCP Resources Registry
 The server exposes resident resources for configuration inspection and capability negotiation:
 - **`capn://status`**: Returns current Capn adapter profile, executable path, and memory store initialization status (`application/json`).
 - **`waymark://manifest`**: Returns engine capabilities, tier configuration, and versioning manifest (`application/json`).

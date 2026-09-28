@@ -218,33 +218,48 @@ Waymark Engine provides first-class stdio integration for AI coding agents (Clau
       "command": "npx",
       "args": ["-y", "waymark-engine"],
       "env": {
-        "CODEDB_ALLOW_TEMP": "1"
+        "CODEDB_ALLOW_TEMP": "1",
+        "WAYMARK_MCP_COMPACT": "1"
       }
     }
   }
 }
 ```
+*(Tip: Set `"WAYMARK_MCP_COMPACT": "1"` to reduce tool definition overhead in agent prompts from ~3,000 tokens to <450 tokens).*
 
-### Canonical MCP Surface
+### Canonical Two-Verb MCP Surface
 
-* **10 Canonical Tools (`waymark_*`):**
-  * `waymark_ask`: 4-tier discovery question query (`depth: 1..5`, `direction`, `exclude_tests`, `symbols: [...]`, `dev`, `plain`, `tier`, `timing`, `daemon`, `auto_resolve`).
-  * `waymark_chart`: Publish architectural consensus memory with validated backing files.
-  * `waymark_discover_symbols`: Bimodal symbol extraction: single-file tree-sitter AST or repo-wide symbol search (`query`).
-  * `waymark_unchart`: Delete charted consensus memory entry by ID.
-  * `waymark_bust`: Invalidate every charted memory entry backed by a specific repository file.
-  * `waymark_prune`: Cleanly remove all stale charted memory entries whose backing files vanished.
-  * `waymark_list`: List all charted repository consensus memories.
-  * `waymark_context`: Retrieve the ask-first charting contract and routing guidelines.
-  * `waymark_daemon_status`: Inspect resident in-memory daemon health, PID, address, and trigger live cache reload (`reload: true`).
-  * `waymark_init`: Initialize deterministic lexical store (`.capn`) with embedding mode disabled.
-  *(Legacy aliases with `capn_*` prefix are retained for backward compatibility).*
+Waymark exposes a token-minimal **Two-Verb Interface** that groups all code exploration and repository memory management into two high-performance tools:
+
+1. **`waymark_ask` (Read & Discovery)**:
+   * **General 4-Tier Discovery**: `{"question": "Who calls verifyHop?", "plain": true}`
+   * **Multi-Hop Call Graph**: `{"question": "verifyHop", "depth": 2, "direction": "callers", "plain": true}`
+   * **Single-File Structured AST**: `{"path": "src/types.ts", "plain": true}`
+   * **Batch Symbol Resolution**: `{"symbols": ["McpServer", "DiscoveryRouter"], "plain": true}`
+   * **Semantic Repo Map Domain Query**: `{"facet": "invariants", "question": "path rules", "plain": true}`
+   * **Inspect Semantic Repo Map Health**: `{"facet": "status", "plain": true}`
+
+2. **`waymark_memory` (Consensus Memory & Subcommands)**:
+   Dispatches maintenance and lifecycle subcommands via the **`action`** argument:
+   * **`bootstrap`**: Two-pass semantic map onboarding into SQLite (`{"action": "bootstrap", "dry_run": false}`)
+   * **`status`**: Health and drift inspect (`{"action": "status", "plain": true}`)
+   * **`chart`**: Publish architectural consensus (`{"action": "chart", "facet": "boundaries", "question": "...", "answer": "...", "files": ["..."]}`)
+   * **`bust`**: Invalidate memories for changed file (`{"action": "bust", "file": "src/daemon.ts"}`)
+   * **`prune`**: Cleanly remove stale entries (`{"action": "prune"}`)
+   * **`list`**: List all consensus memories (`{"action": "list"}`)
+   * **`unchart`**: Delete entry by ID (`{"action": "unchart", "id": "3a8f1b2c", "if_exists": true}`)
+   * **`init`**: Initialize lexical store (`{"action": "init"}`)
+   * **`context`**: Retrieve charting contract (`{"action": "context"}`)
+
+*(Granular tools `waymark_chart`, `waymark_bust`, `waymark_discover_symbols`, etc. remain registered by default when `WAYMARK_MCP_COMPACT` is omitted).*
+
 * **Resources:**
   * `waymark://manifest`: Engine capabilities, tier metadata, and versioning.
   * `capn://status`: Memory store configuration and adapter status.
 * **Prompts:**
   * `explore-subsystem`: Guided 4-tier exploration workflow for a concept or module.
   * `architectural-map`: Structured call-graph and consensus memory mapping workflow.
+  * `bootstrap-semantic-map`: Two-pass bootstrap agent prompt for repository onboarding.
 
 ## Routing
 

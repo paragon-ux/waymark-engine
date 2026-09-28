@@ -181,20 +181,26 @@ When `--facet <name>` is provided, the query router prioritizes documents tagged
 
 ### 5.1 Tools
 
-#### `waymark_map_status`
-* **Description**: Inspect the health, completion percentage, and anchor drift status of the Semantic Repo Map.
+#### `waymark_memory` (Subcommands: `bootstrap` & `status`)
+* **Description**: Consolidates semantic map initialization, two-pass bootstrapping, and health inspection.
 * **Arguments**:
+  - `action`: `"bootstrap"` | `"status"`
+  - `dry_run` (boolean, optional): Inspect bootstrap without writing changes (for `action="bootstrap"`).
+  - `subsystem` (string, optional): Target subsystem name in monorepos.
+  - `plain` (boolean, optional): Emit token-minimal plain text formatted result.
   - `root` (string, optional): Target repository root.
-  - `subsystem` (string, optional): Target subsystem name.
-* **Returns**: JSON object detailing completion ratio (`active_facets / total_facets`), list of missing facets, and drift warnings.
+* **Returns**: JSON object detailing completion ratio (`active_facets / total_facets`), list of missing facets, and drift warnings (or token-minimal formatted text when `plain: true`).
+
+#### `waymark_map_status` (Granular Alias)
+* **Description**: Backward-compatible dedicated tool alias for `waymark_memory(action="status")`.
 
 #### Extension to `waymark_ask`
-* Added parameter `facet?: "lifecycle" | "data_state" | "boundaries" | "invariants" | "failure"` to scope natural-language discovery to a specific architectural domain.
+* Added parameter `facet?: "lifecycle" | "data_state" | "boundaries" | "invariants" | "failure" | "status"` to scope natural-language discovery to a specific architectural domain or query map status.
 
 ### 5.2 Prompts
 
 #### `bootstrap-semantic-map`
-* **Description**: Guided multi-turn agent prompt that inspects repository layout, harvests existing documentation, resolves top entrypoints via Tree-Sitter AST, and populates the 5 foundational facets into `.waymark/semantic-map.json`.
+* **Description**: Guided multi-turn agent prompt that inspects repository layout, harvests existing documentation, resolves top entrypoints via Tree-Sitter AST, and populates the 5 foundational facets directly into the `.capn` SQLite consensus ledger.
 
 ---
 

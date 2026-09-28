@@ -22,7 +22,7 @@ Conventional agent tooling attempts repository awareness through passive structu
 Waymark’s Semantic Repo Map establishes:
 * **Zero Passive Context Cost**: 0 tokens injected into the prompt. Knowledge is retrieved on-demand via `waymark ask` in ultra-compact plain text (~25–40 tokens).
 * **Architectural & Intent Grounding**: Answers fundamental questions about entrypoints, data persistence, boundary protocols, invariants, and failure handling.
-* **Dual-Layer Persistence**: Version-controlled in Git (`.waymark/semantic-map.json`), and automatically hydrated into SQLite FTS5 for sub-15ms BM25 lexical discovery.
+* **Unified SQLite Ledger Parity**: Bootstrap charts live directly in the existing SQLite consensus store (`.capn`) with zero file-editing overhead. The agent never reads or manages internal engine documents.
 
 ---
 
@@ -88,105 +88,67 @@ The Semantic Repo Map categorizes all repository architecture into five canonica
 
 ---
 
-## 3. Dual-Layer Storage Contract
+## 3. Storage Architecture: Direct SQLite Consensus Ledger Parity
+
+The Semantic Repo Map does not introduce auxiliary JSON or markdown manifest files, eliminating the cognitive aversion and syntax corruption risks of forcing agents to read or edit internal directories. 
+
+Instead, the Semantic Repo Map achieves **100% mechanism and schema parity with the existing SQLite consensus store (`.capn`)**:
 
 ```mermaid
-flowchart LR
-    Git[".waymark/semantic-map.json<br>(Tracked in Git, PR-Reviewable)"]
-    Daemon["WaymarkDaemon / Init Hook"]
-    FTS["Local SQLite .capn<br>(BM25 Lexical Index, Sub-15ms)"]
-    Agent["Agent / waymark ask"]
-
-    Git -->|Hydrate on Startup| Daemon
-    Daemon -->|Index Documents| FTS
-    Agent -->|Query| FTS
-    Agent -->|waymark bootstrap / heal| Git
+flowchart TD
+    Agent["LLM Agent / Developer"] --> Interface["Pure API / CLI / MCP Interface<br>(Zero internal document or directory reading)"]
+    
+    subgraph Operational Interface
+        Interface --> ToolAsk["waymark_ask / waymark ask --facet <f>"]
+        Interface --> ToolChart["waymark_chart / waymark chart"]
+        Interface --> ToolBootstrap["waymark_bootstrap / waymark bootstrap"]
+        Interface --> ToolStatus["waymark_map_status / waymark map status"]
+    end
+    
+    subgraph Single SQLite Storage Engine
+        ToolChart --> SQLite[".capn SQLite Consensus Ledger (FTS5)"]
+        ToolBootstrap --> SQLite
+        SQLite --> ToolAsk
+        SQLite --> ToolStatus
+    end
 ```
 
-### 3.1 Git Manifest Schema (`.waymark/semantic-map.json`)
+### 3.1 Facet Representation in SQLite
+Every foundational facet is charted directly into the SQLite consensus ledger via standard `publish()` / `capn chart` primitives:
+* **`question`**: Deterministic tagged identifier: `"[FACET:LIFECYCLE] What are the primary executable entrypoints and lifecycles?"`
+* **`details` (Answer)**: Bounded answer adhering to the $\le 100$ token budget:
+  ```text
+  what: Waymark runs as CLI wrappers, stdio MCP server, or resident background daemon.
+  where: src/cli.ts (dispatch), src/mcp/server.ts (MCP stdio), src/daemon.ts (resident daemon).
+  invariants: Resident daemon auto-launches if offline during REPL sessions.
+  ```
+* **`files`**: Backing repository files (`["src/cli.ts", "src/daemon.ts"]`).
 
-The canonical source of truth lives in `.waymark/semantic-map.json` formatted as:
-
-```json
-{
-  "$schema": "https://waymark.dev/schemas/semantic-map-v1.json",
-  "version": 1,
-  "repository": "paragon-ux/waymark-engine",
-  "updated_at": "2026-09-28T07:15:00Z",
-  "subsystem": "default",
-  "facets": {
-    "FACET_LIFECYCLE": {
-      "status": "active",
-      "summary": "Waymark runs as CLI wrappers, stdio MCP server, or resident background daemon.",
-      "bullets": [
-        "CLI dispatches through src/cli.ts with dedicated wrappers in bin/waymark-*.mjs.",
-        "MCP server runs over stdio via src/mcp/server.ts using modern dual-era protocol.",
-        "Resident daemon communicates via Windows Named Pipes or POSIX domain sockets."
-      ],
-      "backing_files": [
-        { "file": "src/cli.ts", "range": [1, 50] },
-        { "src/daemon.ts": "src/daemon.ts", "range": [1, 40] }
-      ],
-      "invariants": "Resident daemon auto-starts if offline during REPL sessions.",
-      "anchor_hash": "a1b2c3d4e5f6..."
-    },
-    "FACET_DATA_STATE": {
-      "status": "active",
-      "summary": "Lexical BM25 memory stored in local SQLite .capn, with deterministic embeddings disabled.",
-      "bullets": [
-        "Store managed by @paragon-ux/capn-hook in .capn directory.",
-        "Refuses uninitialized or non-deterministic embedding modes fail-closed."
-      ],
-      "backing_files": [{ "file": "src/capnAdapter.ts", "range": [40, 80] }],
-      "invariants": "CAPN_STORE_UNINITIALIZED guard must never be bypassed.",
-      "anchor_hash": "f6e5d4c3b2a1..."
-    },
-    "FACET_BOUNDARIES": {
-      "status": "active",
-      "summary": "IPC bridge between client processes and resident codedb daemon.",
-      "bullets": [
-        "IPC protocol uses JSON Lines with 1000ms ping timeout.",
-        "PrefixTrie cached in memory for sub-10ms literal path lookups."
-      ],
-      "backing_files": [{ "file": "src/daemon.ts", "range": [25, 60] }],
-      "invariants": "Socket paths hashed from fs.realpathSync.native canonical paths.",
-      "anchor_hash": "c3d4e5f6a1b2..."
-    },
-    "FACET_INVARIANTS": {
-      "status": "active",
-      "summary": "Zero-hallucination fail-closed routing and cross-platform path handling.",
-      "bullets": [
-        "Backslashes normalized before containment check to avoid POSIX escape bugs.",
-        "AST call graph searches bounded to 50 nodes with cycle prevention."
-      ],
-      "backing_files": [{ "file": "src/paths.ts", "range": [10, 45] }],
-      "invariants": "Never weaken path containment guards.",
-      "anchor_hash": "d4e5f6a1b2c3..."
-    },
-    "FACET_FAILURE": {
-      "status": "active",
-      "summary": "Fail-closed discovery junction with machine-readable continuation instructions.",
-      "bullets": [
-        "Tier 1/2 misses transition to Discovery Junction; clean misses return status: miss.",
-        "Keywords (const, return) without callable intent fail closed immediately."
-      ],
-      "backing_files": [{ "file": "src/discoveryRouter.ts", "range": [15, 60] }],
-      "invariants": "Never fabricate symbols or fall through silently to semantic search.",
-      "anchor_hash": "e5f6a1b2c3d4..."
-    }
+### 3.2 Atomic Facet Updates (Aider Parity)
+In Aider, updating the repository map is a fast programmatic tree-sitter parse of code—never a document editing task. 
+In Waymark, updating an architectural facet is a fast, atomic tool invocation:
+* **CLI**:
+  ```bash
+  waymark chart --question "[FACET:LIFECYCLE] Runtime Lifecycles" \
+                --answer "what: ...\nwhere: ...\ninvariants: ..." \
+                --files "src/cli.ts,src/daemon.ts"
+  ```
+* **MCP**:
+  ```json
+  {
+    "question": "[FACET:LIFECYCLE] Runtime Lifecycles",
+    "answer": "what: ...\nwhere: ...\ninvariants: ...",
+    "files": ["src/cli.ts", "src/daemon.ts"]
   }
-}
-```
+  ```
+The agent modifies one atomic entry in SQLite in milliseconds without parsing, editing, or corrupting a complex JSON document.
 
-### 3.2 The `NOT_APPLICABLE` Protocol
-When a facet does not apply to a specific repository or subsystem, it is marked:
-```json
-{
-  "status": "not_applicable",
-  "summary": "Stateless library without persistent disk storage or database.",
-  "rationale": "All operations are purely in-memory AST transformations.",
-  "backing_files": []
-}
+### 3.3 The `NOT_APPLICABLE` Protocol
+When a facet does not apply to a specific repository or stateless library, the agent charts:
+```text
+question: "[FACET:DATA_STATE] How is data persisted?"
+answer: "status: not_applicable\nrationale: Stateless library performing pure in-memory AST transformations without disk caches or databases."
+files: ["package.json"]
 ```
 A verified `not_applicable` entry satisfies the completion requirements for 100% map health.
 
@@ -198,11 +160,11 @@ A verified `not_applicable` entry satisfies the completion requirements for 100%
 
 | Command | Status | Input / Arguments | Behavioral Contract |
 | :--- | :--- | :--- | :--- |
-| `waymark bootstrap`<br>`waymark-bootstrap` | **Stable** | `[--subsystem <name>]`<br>`[--dry-run]` | Two-pass bootstrapping: Harvests terms from existing documentation, queries AST to verify symbols, formulates 5 facets, and writes `.waymark/semantic-map.json`. |
-| `waymark map status` | **Stable** | `[--plain]` | Reports health of Semantic Repo Map (e.g. `5/5 Facets Active`, drift status, stale anchors). |
-| `waymark map show [facet]` | **Stable** | `[facet_name]`<br>`[--plain]` | Prints compact summary and backing files for one or all facets. |
-| `waymark map heal` | **Stable** | None | Re-evaluates all backing file anchors via `anchorForRange`. Updates line numbers or prompts agent to refresh drifted facets. |
-| `waymark map export` | **Stable** | `[--format md\|json]` | Exports `.waymark/semantic-map.json` into human-readable markdown (`docs/ARCHITECTURE_MAP.md`). |
+| `waymark bootstrap`<br>`waymark-bootstrap` | **Stable** | `[--subsystem <name>]`<br>`[--dry-run]` | Two-pass bootstrapping: Harvests terms from existing documentation, queries AST to verify symbols, formulates 5 facets, and charts them directly into SQLite `.capn`. |
+| `waymark map status` | **Stable** | `[--plain]` | Reports health of Semantic Repo Map (e.g. `5/5 Facets Active`, drift status, stale anchors in SQLite). |
+| `waymark map show [facet]` | **Stable** | `[facet_name]`<br>`[--plain]` | Prints compact summary and backing files for one or all charted facets. |
+| `waymark map heal` | **Stable** | None | Re-evaluates all backing file anchors via `anchorForRange`. Updates line numbers or prompts agent to refresh drifted facets in SQLite. |
+| `waymark map export` | **Stable** | `[--format md\|json]` | Exports charted facets from SQLite into human-readable markdown (`docs/ARCHITECTURE_MAP.md`). |
 
 ### 4.2 Query Routing Parity (`waymark ask`)
 
@@ -246,6 +208,6 @@ The specification formally mandates adherence to the 9 Anti-Pattern Guardrails:
 4. **Coarse-Grained Anchoring**: Anchors bind to top-level module files and entry spans, preventing alert fatigue from volatile internal line shifts.
 5. **Strict Token Budget**: Answers are hard-capped at $\le 100$ tokens (3–5 bullets) formatted as *What / Where / Invariants*.
 6. **Task Isolation**: `waymark bootstrap` is strictly an on-demand operation; regular `ask` queries on unmapped repos return a non-blocking advisory and never hijack the user's active task.
-7. **Dual-Layer Git Persistence**: Map is committed to Git (`.waymark/semantic-map.json`) and hydrated into SQLite FTS5 on boot.
+7. **Direct SQLite Consensus Ledger Parity**: The Semantic Repo Map lives directly in the existing `.capn` SQLite ledger via `publish()` / `capn chart` primitives, eliminating auxiliary file management and syntax corruption risks. The agent interacts exclusively through API / CLI / MCP tools.
 8. **Two-Pass Grounding**: Bootstrap harvests existing human docs before verifying code against AST.
 9. **BM25 Lexical Scoping**: Facet entries carry unique header tags (`[FACET:*]`) and support explicit `--facet` query isolation.

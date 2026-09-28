@@ -40,6 +40,8 @@ Waymark Engine provides both a unified binary (`waymark <command>`) and explicit
 | `waymark mcp`<br>`waymark-mcp` | **Stable** | [`src/mcp/server.ts`](../src/mcp/server.ts) | None (runs over `stdio`) | Launches the standard Model Context Protocol (MCP) server for IDE and agent integration. |
 | `waymark daemon [start\|stop\|restart\|reload\|status\|list\|ping\|run]`<br>`waymark-daemon [start\|stop\|restart\|reload\|status\|list\|ping]` | **Stable** | [`src/daemon.ts`](../src/daemon.ts) | Subcommand (`start`, `stop`, `restart`, `reload`, `status`, `list`, `ping`, `run`), `[--path <root>]` | Manages background resident codedb server (`serve --stdio`) and IPC socket/pipe bridge for sub-10ms warm query execution. Supports cache reloading via `reload`. |
 | `waymark repl`<br>`waymark-repl` | **Stable** | [`src/repl.ts`](../src/repl.ts) | `[--manifest <file>]`<br>`[--category <cat>]`<br>`[--id <id>]`<br>`[--file <script>]`<br>`[--plain]`<br>`[--dev]` | Interactive diagnostic REPL shell and hardened test battery runner with live daemon IPC, line drift calculation, and baseline comparison. |
+| `waymark bootstrap`<br>`waymark-bootstrap` | **Stable** | [`spec/semantic-repo-map.md`](./semantic-repo-map.md) | `[--subsystem <name>]`<br>`[--dry-run]` | Two-pass bootstrapping of the 5-facet Semantic Repo Map into `.waymark/semantic-map.json` and hydration into `.capn`. |
+| `waymark map [status\|show\|heal\|export]` | **Stable** | [`spec/semantic-repo-map.md`](./semantic-repo-map.md) | Subcommand (`status`, `show`, `heal`, `export`), `[facet]`, `[--plain]` | Inspects, displays, heals, or exports the repository Semantic Repo Map. |
 | `waymark help` / `-h` / `--help` | **Stable** | [`src/cli.ts`](../src/cli.ts) | None | Outputs brief command options, flags, and environment variable configuration. |
 
 ---
@@ -70,6 +72,8 @@ Options and flags modify discovery routing, execution format, performance instru
 | `--exclude-tests` | — | Flag | Boolean | `false` | `ask` | **Stable** | Filter out test files (`*_test.*`, `test/*`, `__tests__/*`, `*.spec.*`) from call graph results to reduce token noise. |
 | `--idle-timeout` | — | Value | Integer seconds | `600` | `daemon` | **Stable** | Configures inactivity duration before the resident daemon automatically terminates to free system memory. |
 | `--force` | — | Flag | Boolean | `false` | `daemon` | **Stable** | Forces immediate termination of resident daemon via PID kill if graceful IPC shutdown is unresponsive. |
+| `--facet` | — | Value | `lifecycle`, `data_state`, `boundaries`, `invariants`, `failure` | None | `ask`, `map` | **Stable** | Restricts or prioritizes query discovery to a specific architectural facet within the Semantic Repo Map. |
+| `--subsystem` | — | Value | Subsystem directory/name | `default` | `bootstrap`, `map` | **Stable** | Scopes the Semantic Repo Map to a specific package or subsystem in monorepos. |
 
 ---
 
@@ -98,6 +102,7 @@ The resident stdio MCP server (`waymark-mcp`) exposes high-leverage tools for ag
       "daemon": { "type": "boolean", "description": "Accelerate query via persistent in-memory background daemon IPC." },
       "capn_executable": { "type": "string", "description": "Optional custom path to the Capn executable." },
       "profile": { "type": "string", "enum": ["capn-cli", "none"], "description": "Optional adapter profile; defaults to capn-cli." },
+      "facet": { "type": "string", "enum": ["lifecycle", "data_state", "boundaries", "invariants", "failure"], "description": "Optional facet filter to scope query to a specific domain in the Semantic Repo Map." },
       "root": { "type": "string", "description": "Optional repository root path. Defaults to current working directory." }
     }
   }
@@ -197,12 +202,19 @@ The resident stdio MCP server (`waymark-mcp`) exposes high-leverage tools for ag
 - **Description**: Initialize the repository's deterministic lexical store (`.capn`) with embedding mode disabled.
 - **Input Schema**: `{ "capn_executable"?: string, "root"?: string }`
 
-### 4.11 MCP Prompts Registry
+### 4.11 `waymark_map_status`
+- **Identifier**: `waymark_map_status`
+- **Stability**: **Stable**
+- **Description**: Inspect completion health, active facets ratio, and anchor drift status of the Semantic Repo Map (`.waymark/semantic-map.json`).
+- **Input Schema**: `{ "root"?: string, "subsystem"?: string }`
+
+### 4.12 MCP Prompts Registry
 The server registers standard prompts to orchestrate complex agentic discovery workflows:
 - **`explore-subsystem`**: Guides a structured 4-tier exploration of a subsystem or symbol in the codebase (`arguments: [{ name: "query", required: true }, { name: "root", required: false }]`).
 - **`architectural-map`**: Generates an architectural call-graph map and consensus memory summary for a feature (`arguments: [{ name: "topic", required: true }]`).
+- **`bootstrap-semantic-map`**: Two-pass agent prompt that inspects repository layout, harvests existing documentation, grounds concepts in Tree-Sitter AST symbols, and writes the 5-facet Semantic Repo Map (`arguments: [{ name: "subsystem", required: false }, { name: "root", required: false }]`).
 
-### 4.12 MCP Resources Registry
+### 4.13 MCP Resources Registry
 The server exposes resident resources for configuration inspection and capability negotiation:
 - **`capn://status`**: Returns current Capn adapter profile, executable path, and memory store initialization status (`application/json`).
 - **`waymark://manifest`**: Returns engine capabilities, tier configuration, and versioning manifest (`application/json`).

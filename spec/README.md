@@ -47,6 +47,7 @@ Query Input
 | [**`tier-3-fuzzy.md`**](./tier-3-fuzzy.md) | Tier 3: Deterministic Fuzzy Matcher | Embedded Junegunn Choi `fzf` (`algo.go`) Smith-Waterman two-pass scoring and path proximity ranking. | **Stable** |
 | [**`tier-4-semantic.md`**](./tier-4-semantic.md) | Tier 4: Charted Memory | Lexical BM25 long-term repository consensus memory via `@paragon-ux/capn-hook`. | **Stable** |
 | [**`discovery-junction.md`**](./discovery-junction.md) | Discovery Junction | Recommendation state machine coordinating fuzzy lexical and semantic memory paths. | **Stable** |
+| [**`semantic-repo-map.md`**](./semantic-repo-map.md) | Semantic Repo Map | Frontloaded 5-facet architectural consensus blueprint, dual-layer storage, and bootstrap protocol. | **Stable** |
 | [**`command-registry.md`**](./command-registry.md) | Command & Interface Registry | Canonical registry of CLI commands, flags, Discovery tiers, and MCP tools. | **Authoritative** |
 | [**`error-codes.md`**](./error-codes.md) | Error & Status Registry | Machine-readable status values, error codes, miss codes, and exit code semantics. | **Authoritative** |
 | [**`metrics.md`**](./metrics.md) | Measurable Tier Metrics | Standardized metrics schema (tokens, latency, limits, resources) and benchmarks across all tiers. | **Authoritative** |

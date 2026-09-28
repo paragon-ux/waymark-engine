@@ -1,11 +1,11 @@
 # Waymark Engine — Agent & Integration Guide
 
-Waymark Engine is a four-tier symbolic and semantic discovery engine for one-shot code questions:
-1. **Tier 1: AST Structural** — deterministic codedb call graph (`@paragon-ux/codedb-core` v1.1.0, resolved and fail-closed).
-2. **Tier 2: Literal Path Router** — exact and substring path resolution with zero-hallucination fail-closed defense.
-3. **Tier 3: Deterministic Fuzzy Matcher** — embedded Junegunn Choi `fzf` (`algo.go`) two-pass scoring.
-4. **Tier 4: Charted Memory** — lexical BM25 repository consensus memory via `@paragon-ux/capn-hook`.
-5. **Single-File Structured AST** — precise tree-sitter class, method, function, and type extraction for TypeScript and Python.
+Waymark Engine separates code intelligence into two distinct layers for AI agents:
+1. **Core Automatic Discovery Engine (Tiers 1–3)**: Instant, zero-config discovery on raw source files.
+   - **Tier 1: AST Structural** — deterministic codedb call graph (`@paragon-ux/codedb-core` v1.1.0, resolved and fail-closed), bounded multi-hop graphs, and single-file tree-sitter AST extraction.
+   - **Tier 2: Literal Path Router** — exact and substring path resolution with zero-hallucination fail-closed defense.
+   - **Tier 3: Deterministic Fuzzy Matcher** — embedded Junegunn Choi `fzf` (`algo.go`) two-pass scoring.
+2. **Semantic Repo Map & Consensus Ledger (Tier 4)**: Frontloaded 5-facet architectural consensus memory stored in SQLite (`.capn`) and queried via lexical BM25 (`@paragon-ux/capn-hook`). Solves agent context amnesia across sessions.
 
 When structural and literal tiers miss, the **Discovery Junction** evaluates syntactic candidate signals and emits an inspectable recommendation (`status: "junction"`) with machine-readable continuation instructions. A clean miss is a miss — never a guess.
 
@@ -15,7 +15,7 @@ When structural and literal tiers miss, the **Discovery Junction** evaluates syn
 
 ```bash
 npm ci          # install dependencies (bundled capn fork included)
-npm run verify  # build + full node test suite (43/43 passing green)
+npm run verify  # build + full node test suite (67/67 passing green)
 ```
 
 Invariants:

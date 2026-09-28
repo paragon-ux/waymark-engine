@@ -2,7 +2,7 @@
 
 [![npm version](https://img.shields.io/npm/v/waymark-engine)](https://www.npmjs.com/package/waymark-engine)
 [![CI](https://github.com/paragon-ux/waymark-engine/actions/workflows/verify.yml/badge.svg)](https://github.com/paragon-ux/waymark-engine/actions/workflows/verify.yml)
-[![tests](https://img.shields.io/badge/tests-60%2F60-brightgreen)](https://github.com/paragon-ux/waymark-engine)
+[![tests](https://img.shields.io/badge/tests-67%2F67-brightgreen)](https://github.com/paragon-ux/waymark-engine)
 [![node](https://img.shields.io/badge/node-%3E%3D22-339933?logo=node.js)](https://nodejs.org)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![recall](https://img.shields.io/badge/recall-lexical%20BM25%20(no%20embeddings)-informational)](https://github.com/paragon-ux/capn-hook)
@@ -21,56 +21,12 @@ sub-millisecond lookups), no vector index, no embeddings.
 | *"How does authentication work?"* | The files that answer it — charted, staleness-checked |
 | *"Entrypoints"* | The architecture's front doors |
 
-Questions route through deterministic tiers: structural questions hit the
-deterministic codedb structural index + resolved call graph (fail-closed, exact
-match); literal filename/path queries (`sample.ts`, `src/api/webhooks.ts`,
-`.gitignore`) short-circuit a zero-dependency in-memory matcher; and when both
-miss, the engine enters the **Discovery Junction** (Tier 3 Junegunn Choi `fzf`
-Smith-Waterman fuzzy lexical match ⇄ Capn BM25 charted semantic memory). Misses
-fall through cleanly — the engine says "I don't know" rather than hallucinating.
-
-## Why the symbolic tier uses a forked structural engine
-
-The structural phase previously used an in-process Tree-sitter WASM walker. A
-code review exposed three defects that produced silent misses and
-confidently-wrong answers:
-
-- **`src/`-only scanning** — code in `lib/`, `crates/*/src/`, or the repo root was missed.
-- **Bare-name call-graph collisions** — `Builder.build()` from unrelated classes merged into one bucket.
-- **Node-type string-matching gaps** — Rust `function_item` and Go `method_declaration` were never extracted.
-
-The fix is a fork of codedb (`@paragon-ux/codedb-core`), stripped to its
-deterministic structural core (the same play as the capn-hook fork). It scans the
-repo root, resolves the call graph fail-closed, and surfaces file-scoped
-candidates on a name collision instead of merging or guessing.
-`discoverSymbolsInFile` keeps `web-tree-sitter` for precise single-file symbol
-discovery (classes / methods / interfaces / types).
-
-## Why this exists
-
-The engine is the extracted discovery half of the original Waymark project (the in-flight
-continuity ledger was removed). Its design goal: an agent should never pay 10,000–50,000
-tokens of blind re-reading when a sub-second deterministic scan answers the question with
-exact file, symbol, and line spans — and it should say "miss" rather than guess.
-
-The semantic phase is **deterministic by construction**: it invokes the bundled
-BM25 store as a runtime dependency and refuses any store configured for
-embedding mode (`CAPN_STORE_UNINITIALIZED` / `CAPN_NON_DETERMINISTIC_MODE`,
-fail-closed).
-
-## Performance & Latency Model
-
-Waymark Engine is architected around transparent latency boundaries:
-- **Cold CLI Queries (Stateless):** ~1.5s–4s on 20,000+ file codebases (e.g. Grafana). Pays initial filesystem discovery and node process initialization.
-- **Warm Resident Daemon Queries:** `<10ms` for literal paths via `PrefixTrie`, `~150–250ms` for structural AST queries (delivering a **21x–100x speedup** on large repositories).
-- **In-Process Library API:** Direct execution in `<10ms` without process overhead.
-
 ## Install
 
 Requires Node.js 22+.
 
 ```bash
-# Global CLI + explicit wrapper commands
+# Global CLI + explicit wrappers
 npm install -g waymark-engine
 
 # Per-project (library + npx access)
@@ -82,60 +38,68 @@ The engine ships prebuilt (`dist/`) — no build step for consumers.
 ## Quick start
 
 ```bash
-# Initialize the lexical Capn store once per repository (bundled fork)
-waymark-init                          # or: waymark init
+# 1. Initialize the deterministic lexical store (.capn)
+waymark memory init
 
-# One-shot symbol discovery (repository-relative file)
-waymark-discover --path src/index.ts [--language typescript|python]
+# 2. Query the codebase using Verb 1 (waymark ask)
+waymark ask "Who calls verifyHop?"            # Tier 1 exact structural call graph
+waymark ask "Who calls verifyHop?" --depth 2 --exclude-tests  # Bounded multi-hop BFS
+waymark ask --symbols User,Service,ApiWorker  # Concurrent multi-symbol batch discovery
+waymark ask --path src/types.ts               # Single-file structured Tree-Sitter AST outline
+waymark ask "refundOrdr"                      # Discovery Junction: fuzzy recommended (~92% match)
+waymark ask "refundOrdr" -t fuzzy -b          # Isolate Tier 3 with high-resolution timings
+waymark ask "refundOrdr" --plain              # Token-minimal plain text for agents (~16 tokens)
+waymark ask --facet invariants "path rules"   # Scope query to architectural domain in Semantic Map
+waymark ask "How does authentication work in this project?"  # Tier 4 consensus memory query
 
-# Three-tier question router (codedb, literal filename/path, then BM25 memory)
-# Use exact phrasing for the symbolic (codedb) phase:
-#
-#   Symbolic (exact codedb match, resolved call graph):
-#     "Who calls <name>?" / "Callers of <name>" / "Callees of <name>" / "Trace <name>"
-#     "What calls <name>?" / "Which functions call <name>?" / "Call hierarchy for <name>"
-#     "Where is <name> declared?" / "Where is <name> defined?" / "Where is <name> implemented?"
-#     "Definition of <name>" / "Declaration of <name>" / "Implementation of <name>"
-#     "Find method <name>" / "Find function <name>" / "Find symbol <name>"
-#     "Line numbers of <name>" / "Method signature of <name>" / "Locate symbol <name>"
-#     "Entrypoints" / "Architecture" / "Overview of the repo" / "Hotspots"
-#
-#   Literal (filename/path, exact match):
-#     "sample.ts" / "src/api/webhooks.ts" / ".gitignore"
-#
-#   Semantic (BM25, charted memory):
-#     Any conceptual question, e.g. "How does authentication work?"
-#
-#   <name> must be an exact identifier (case-sensitive). If codedb misses, the
-#   engine fails closed or enters the Discovery Junction — it never silently guesses.
-waymark-ask "Who calls verifyHop?"            # Tier 1 exact structural call graph
-waymark-ask "Who calls verifyHop?" --depth 2 --exclude-tests  # Bounded multi-hop BFS
-waymark-ask "verifyHop" --dev                 # Dev Mode: timing breakdown + invariant telemetry
-waymark-symbols verifyHop ask PrefixTrie      # Concurrent multi-symbol batch discovery
-waymark-ask "refundOrdr"                      # Discovery Junction: fuzzy-lexical recommended (~92% match)
-waymark-ask "refundOrdr" -t fuzzy -b          # isolate fuzzy tier with high-resolution timings
-waymark-ask "refundOrdr" --plain              # token-minimal plain text for agents (~16 tokens)
-waymark-ask "How does authentication work in this project?"
-
-# Chart an answer so the next session skips the search
-waymark-chart --question "Where are payment webhooks handled?" \
+# 3. Maintain consensus memory using Verb 2 (waymark memory)
+waymark memory bootstrap                      # Two-pass Semantic Repo Map discovery into SQLite
+waymark memory status                         # Inspect 5-facet map health and completion ratio
+waymark memory chart --question "Where are payment webhooks handled?" \
   --answer "src/api/webhooks.ts; Stripe handler owns signature checks." \
   --files "src/api/webhooks.ts,src/billing/handlers/stripe.ts"
-
-waymark-list                          # charted entries
-waymark-unchart <id>                  # delete one entry
-waymark-bust src/api/webhooks.ts      # delete entries backed by a file
-waymark-prune                         # explicit prune (also runs automatically on list/chart/ask)
-waymark-context                       # print the ask-first contract
+waymark memory heal                           # Reconcile code changes, verify anchors, and refresh ledger
+waymark memory export --format md             # Export consensus architecture map as Markdown
+waymark memory list                           # List all charted consensus memories
+waymark memory unchart <id>                   # Delete one memory entry by hex ID
+waymark memory bust src/api/webhooks.ts       # Invalidate memories citing a modified file
+waymark memory prune                          # Cleanly remove stale entries whose files vanished
+waymark memory context                        # Print the ask-first contract and routing guidelines
 ```
 
-Without a global install, prefix any wrapper with `npx --package waymark-engine`
-(e.g. `npx --package waymark-engine waymark-ask "..."`), or use the umbrella CLI:
-`waymark <command>`.
+Without a global install, run commands with `npx waymark <command>`. Legacy discrete wrapper binaries (`waymark-ask`, `waymark-chart`, `waymark-bootstrap`, etc.) remain fully functional as aliases for backward compatibility.
 
-Run `waymark help` (or bare `waymark`) for the full command list, or
-`waymark-context` for the routing contract showing which phrasing patterns
-route to the symbolic vs semantic phase.
+## Architecture & Routing
+
+Waymark Engine separates code intelligence into two distinct layers: **Tiers 1–3 form the Core Automatic Discovery Engine**, while **Tier 4 provides the Semantic Repo Map (Consensus Memory Ledger)**.
+
+### Core Automatic Discovery Engine (Tiers 1–3)
+
+Zero configuration, zero maintenance, and instant execution. The core engine queries raw source code directly on demand without background indexing jobs or vector embeddings:
+
+1. **Tier 1: AST Structural (`codedb`)** — exact identifier, definition, and call-graph queries hit the deterministic codedb structural index + resolved, fail-closed call graph ([`@paragon-ux/codedb-core`](https://github.com/paragon-ux/codedb-core) v1.1.0). Ambiguity surfaces file-scoped candidates rather than guessing. Also powers bounded multi-hop call graphs (`--depth 1..5`, `--direction`) and single-file tree-sitter outlines (`--path`).
+2. **Tier 2: Literal Path Router** — bare filenames and relative paths (`sample.ts`, `src/api/webhooks.ts`, `.gitignore`, `Dockerfile`) resolve against an in-memory `PrefixTrie` path index, fail-closed on ambiguity.
+3. **Tier 3: Deterministic Fuzzy Matcher** — embedded Junegunn Choi `fzf` (`algo.go`) two-pass Smith-Waterman scoring with boundary bonuses, camelCase detection, and path-proximity boosts. Zero external dependencies.
+
+### Semantic Repo Map & Consensus Memory (Tier 4)
+
+Unlike passive syntax dumpers (e.g. Aider) or lossy vector embeddings, Tier 4 is a human-auditable, persistent architectural ledger stored in SQLite (`.capn`) and queried via lexical BM25 ([`@paragon-ux/capn-hook`](https://github.com/paragon-ux/capn-hook)):
+- **5 Foundational Architectural Facets**: Organizes system understanding across `lifecycle`, `data_state`, `boundaries`, `invariants`, and `failure`.
+- **Session Continuity**: Solves AI agent context amnesia by frontloading architectural rationale (`waymark memory bootstrap`), preventing agents from re-reading 50,000+ tokens on every session.
+- **Tamper-Evident & Self-Healing**: Memories are hash-pinned to exact source spans (`anchorForRange`, `verifyHop`). When code changes, anchors are reconciled with `waymark memory heal` or invalidated with `waymark memory bust <path>`.
+
+### The Discovery Junction
+
+The **Discovery Junction** coordinates between the automatic syntactic tiers (1–3) and architectural consensus memory (Tier 4). When structural and literal tiers miss, the Junction evaluates candidate signals and emits an inspectable recommendation (`status: "junction"`) with machine-readable continuation instructions (`tool: "waymark_ask"` and `cliCommand`), allowing agents to pivot without guessing.
+
+A clean miss is a miss — the engine never hallucinates.
+
+## Performance & Latency Model
+
+Waymark Engine is architected around transparent latency boundaries:
+- **Cold CLI Queries (Stateless):** ~1.5s–4s on 20,000+ file codebases (e.g. Grafana). Pays initial filesystem discovery and node process initialization.
+- **Warm Resident Daemon Queries:** `<10ms` for literal paths via `PrefixTrie`, `~150–250ms` for structural AST queries (delivering a **21x–100x speedup** on large repositories).
+- **In-Process Library API:** Direct execution in `<10ms` without process overhead.
 
 ## Commands & Subcommand Registry
 
@@ -191,40 +155,6 @@ All stateful operations and repository consensus memory lifecycle actions are co
 
 Env: `WAYMARK_CAPN_PROFILE` (`capn-cli` | `none`, default `capn-cli`),
 `WAYMARK_CAPN_EXECUTABLE` (optional override; default: bundled lexical-only `@paragon-ux/capn-hook` CLI). Works with or without a Git repository — `repoRoot()` resolves `git rev-parse --show-toplevel` and falls back to process cwd.
-
-## Library API
-
-```ts
-import {
-  ask,                  // two-phase router (codedb -> lexical charted memory)
-  discoverSymbolsInFile,// one-file AST symbol discovery
-  detectAstIntent,      // structural vs semantic intent
-  publish, unchart, bust, prune, listEntries, context, // wrapped capn surface
-  verifyHop,            // hash-pinned span verification (FRESH/MOVED/STALE)
-  anchorForRange,       // tamper-evidence primitive for a file range
-  assertLexicalStore,   // fail-closed determinism guard
-  WaymarkError,
-} from "waymark-engine";
-
-const hit = await ask(repoRoot(), "capn-cli", "", "Who calls verifyHop?");
-// { provider: "codedb", status: "hit", result: "function: verifyHop\ncallers: ..." }
-```
-
-## Tamper-Evidence & Integrity Primitives
-
-Retained standalone from the continuity layer for tamper-evidence verification:
-- `verifyHop(root, hop, maxWindows)` — hash-pinned span verification (FRESH / MOVED / STALE) with bounded relocation windows.
-- `anchorForRange(root, path, range)` — full-file SHA-256 + normalized span hash + structural signature to pin "this span said X" against code modifications.
-
-## Language Support & Polyglot Fallback Matrix
-
-| Language | Primary Engine | Extracted Symbols |
-| :--- | :--- | :--- |
-| **TypeScript / JavaScript** | Native Tree-Sitter (`web-tree-sitter`) | Classes, methods, functions, interfaces, type aliases |
-| **Python** | Native Tree-Sitter (`web-tree-sitter`) | Classes, methods, functions, decorated definitions |
-| **Rust, Go, C++, Java, C#** | Polyglot Codedb Outline Fallback | Functions, methods, structs, traits, interfaces |
-
-Non-TypeScript and non-Python files automatically fall back to `codedb outline` rather than throwing errors.
 
 ## Model Context Protocol (MCP) Integration
 
@@ -283,18 +213,51 @@ By default, Waymark exposes the ultra-lean **Two-Verb Surface** (`waymark_ask` +
   * `architectural-map`: Structured call-graph and consensus memory mapping workflow.
   * `bootstrap-semantic-map`: Two-pass bootstrap agent prompt for repository onboarding.
 
-## Routing
+## Why this exists
 
-Four deterministic tiers coordinated by the Discovery Junction:
+The engine is the extracted discovery half of the original Waymark project (the in-flight
+continuity ledger was removed). Its design goal: an agent should never pay 10,000–50,000
+tokens of blind re-reading when a sub-second deterministic scan answers the question with
+exact file, symbol, and line spans — and it should say "miss" rather than guess.
 
-1. **Tier 1: AST Structural (`codedb`)** — exact identifier, definition, and call-graph queries hit the deterministic codedb structural index + resolved, fail-closed call graph ([`@paragon-ux/codedb-core`](https://github.com/paragon-ux/codedb-core) v1.0.2). Ambiguity surfaces file-scoped candidates rather than guessing.
-2. **Tier 2: Literal Path Router** — bare filenames and paths (`sample.ts`, `src/api/webhooks.ts`, `.gitignore`, `Dockerfile`) resolve against an in-memory path index, fail-closed on ambiguity.
-3. **Tier 3: Deterministic Fuzzy Matcher** — embedded Junegunn Choi `fzf` (`algo.go`) two-pass Smith-Waterman scoring with boundary bonuses, camelCase detection, and path-proximity boosts. Zero external dependencies.
-4. **Tier 4: Charted Memory (Capn BM25)** — conceptual and narrative questions hit long-term lexical consensus memory ([`@paragon-ux/capn-hook`](https://github.com/paragon-ux/capn-hook)).
+The semantic phase is **deterministic by construction**: it invokes the bundled
+BM25 store as a runtime dependency and refuses any store configured for
+embedding mode (`CAPN_STORE_UNINITIALIZED` / `CAPN_NON_DETERMINISTIC_MODE`,
+fail-closed).
 
-When structural and literal tiers miss, the **Discovery Junction** evaluates syntactic candidate signals and emits an inspectable recommendation (`status: "junction"`) with machine-readable continuation instructions (`tool: "waymark_ask"` and `cliCommand`), allowing agents to force alternative paths without guessing.
+## Library API
 
-A clean miss is a miss — the engine never guesses.
+```ts
+import {
+  ask,                  // two-phase router (codedb -> lexical charted memory)
+  discoverSymbolsInFile,// one-file AST symbol discovery
+  detectAstIntent,      // structural vs semantic intent
+  publish, unchart, bust, prune, listEntries, context, // wrapped capn surface
+  verifyHop,            // hash-pinned span verification (FRESH/MOVED/STALE)
+  anchorForRange,       // tamper-evidence primitive for a file range
+  assertLexicalStore,   // fail-closed determinism guard
+  WaymarkError,
+} from "waymark-engine";
+
+const hit = await ask(repoRoot(), "capn-cli", "", "Who calls verifyHop?");
+// { provider: "codedb", status: "hit", result: "function: verifyHop\ncallers: ..." }
+```
+
+## Tamper-Evidence & Integrity Primitives
+
+Retained standalone from the continuity layer for tamper-evidence verification:
+- `verifyHop(root, hop, maxWindows)` — hash-pinned span verification (FRESH / MOVED / STALE) with bounded relocation windows.
+- `anchorForRange(root, path, range)` — full-file SHA-256 + normalized span hash + structural signature to pin "this span said X" against code modifications.
+
+## Language Support & Polyglot Fallback Matrix
+
+| Language | Primary Engine | Extracted Symbols |
+| :--- | :--- | :--- |
+| **TypeScript / JavaScript** | Native Tree-Sitter (`web-tree-sitter`) | Classes, methods, functions, interfaces, type aliases |
+| **Python** | Native Tree-Sitter (`web-tree-sitter`) | Classes, methods, functions, decorated definitions |
+| **Rust, Go, C++, Java, C#** | Polyglot Codedb Outline Fallback | Functions, methods, structs, traits, interfaces |
+
+Non-TypeScript and non-Python files automatically fall back to `codedb outline` rather than throwing errors.
 
 ## Specifications & Documentation
 
@@ -306,6 +269,7 @@ The canonical technical specifications, contracts, and benchmark metrics for Way
 - [`spec/tier-3-fuzzy.md`](spec/tier-3-fuzzy.md) — Tier 3 deterministic Junegunn Choi `fzf` matcher
 - [`spec/tier-4-semantic.md`](spec/tier-4-semantic.md) — Tier 4 Capn lexical BM25 consensus memory
 - [`spec/discovery-junction.md`](spec/discovery-junction.md) — Discovery Junction recommendation state machine
+- [`spec/semantic-repo-map.md`](spec/semantic-repo-map.md) — Frontloaded 5-facet architectural consensus blueprint and bootstrap protocol
 - [`spec/command-registry.md`](spec/command-registry.md) — Canonical CLI commands, flags, Discovery options, and MCP tools
 - [`spec/error-codes.md`](spec/error-codes.md) — Status envelopes, error codes, miss codes, and exit codes
 - [`spec/metrics.md`](spec/metrics.md) — Measurable operational metrics schema and comparative benchmarks

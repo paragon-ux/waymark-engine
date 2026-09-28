@@ -273,6 +273,7 @@ The canonical technical specifications, contracts, and benchmark metrics for Way
 - [`spec/command-registry.md`](spec/command-registry.md) — Canonical CLI commands, flags, Discovery options, and MCP tools
 - [`spec/error-codes.md`](spec/error-codes.md) — Status envelopes, error codes, miss codes, and exit codes
 - [`spec/metrics.md`](spec/metrics.md) — Measurable operational metrics schema and comparative benchmarks
+- [`spec/aider-parity-benchmark.md`](spec/aider-parity-benchmark.md) — Steelmanned empirical parity benchmark vs. Aider Repo Map using `gpt-oss-120b`
 - [`CHANGELOG.md`](CHANGELOG.md) — Release history and breaking changes across versions
 
 ## Related

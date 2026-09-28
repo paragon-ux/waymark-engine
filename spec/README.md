@@ -52,6 +52,7 @@ Query Input
 | [**`error-codes.md`**](./error-codes.md) | Error & Status Registry | Machine-readable status values, error codes, miss codes, and exit code semantics. | **Authoritative** |
 | [**`metrics.md`**](./metrics.md) | Measurable Tier Metrics | Standardized metrics schema (tokens, latency, limits, resources) and benchmarks across all tiers. | **Authoritative** |
 | [**`adversarial-benchmark-grafana.md`**](./adversarial-benchmark-grafana.md) | Adversarial Benchmark | Empirical stress test on `grafana/grafana` (23,517 files, Go + TypeScript polyglot monorepo). | **Empirical** |
+| [**`aider-parity-benchmark.md`**](./aider-parity-benchmark.md) | Steelmanned Parity Benchmark | Empirical head-to-head evaluation vs Aider Repo Map using `gpt-oss-120b` (reasoning: low). | **Empirical** |
 
 ---
 

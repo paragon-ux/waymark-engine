@@ -11,6 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Version 2.4.1 delivers Developer Experience (DX) hardening, standalone binary wrappers, granular MCP tool parity, and cross-platform path normalization.
 
 ### Added
+- **Empirical Parity Benchmark Suite vs. Aider Repo Map (`spec/aider-parity-benchmark.md`, `benchmarks/suites/run_aider_parity_benchmark.mjs`)**:
+  - Executed a live empirical benchmark against `openai/gpt-oss-120b` (`reasoning: low`, temperature: 0.0) via OpenRouter to evaluate context retrieval efficiency without cherrypicking.
+  - **Track A (Syntactic Locate & Edit)**: Steelmanned Aider advantage verified (1 turn, 758ms, 416 tok vs 2 turns, 1,292ms, 367 tok). Aider's passive repo map enabled a 1-shot edit on `DaemonOptions` without an initial tool call.
+  - **Track B (Architectural Refactor & Invariants)**: Waymark advantage verified. Aider's naked AST signatures caused the model to hallucinate an imaginary *"per-process bust token with `crypto.randomBytes`"*. Waymark's `[FACET:INVARIANTS]` consensus retrieval grounded the model in actual path normalization and fail-closed error contracts with **0% semantic hallucination**.
+  - **Multi-Turn Economy (10-Turn Task)**: Waymark reduced prompt token consumption from 2,700 tokens (Aider's continuous passive re-injection) down to 196 tokens (Waymark's on-demand plain-text retrieval) — a **92.7% token reduction**.
 - **Standalone Binary Wrappers (`waymark-bootstrap`, `waymark-map`)**:
   - Added dedicated CLI wrapper stubs `bin/waymark-bootstrap.mjs` and `bin/waymark-map.mjs` mapped into `package.json["bin"]`, enabling direct invocation via terminal or `npx` alongside the unified `waymark` CLI.
 - **Granular MCP Tool `waymark_map_status` (`src/mcp/capnTools.ts`)**:

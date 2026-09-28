@@ -1,0 +1,98 @@
+{
+  "timestamp": "2026-09-28T14:29:01.161Z",
+  "model": "openai/gpt-oss-120b",
+  "reasoningEffort": "low",
+  "trackA": {
+    "task": "Locate & Edit DaemonOptions",
+    "aider": {
+      "turns": 1,
+      "promptTokens": 416,
+      "completionTokens": 306,
+      "durationMs": 758,
+      "success": true
+    },
+    "waymark": {
+      "turns": 2,
+      "promptTokens": 367,
+      "completionTokens": 284,
+      "durationMs": 1292,
+      "success": true
+    }
+  },
+  "trackB": {
+    "task": "Refactor IPC Bridge with Path Invariants",
+    "aider": {
+      "promptTokens": 426,
+      "completionTokens": 600,
+      "invariantAdherence": true,
+      "hallucinatedSemantics": true,
+      "durationMs": 188,
+      "content": "Below is a **stand‑alone, production‑ready** implementation that can replace the existing daemon‑IPC verification routine (e.g. `tryDaemonPing` in `src/daemon.ts`).  \n\nThe function:\n\n* **Normalises every path** with the repository‑wide `normalizePath` helper (so Windows `\\` → `/`, removes redundant `.`/`..`, and resolves symlinks when possible).  \n* **Applies the cache‑busting hash** that the rest of the code‑base expects (the same algorithm used by `src/capnAdapter.ts` – a SHA‑256 of the normalised path plus a random “bust” token).  \n* **Works cross‑platform** – it never relies on OS‑specific separators and always sends the same canonical string to the daemon.  \n* **Handles time‑outs** and returns a strongly‑typed result (`AskResult`), preserving the original API contract.  \n* **Caches the hash** for the lifetime of the process to avoid recomputing it for the same path/executable pair (mirroring the existing cache‑busting invariant).  \n\n```ts\n// src/daemon.ts\nimport { createHash, randomBytes } from \"crypto\";\nimport { spawn, ChildProcess } from \"child_process\";\nimport { normalizePath } from \"./paths\";\nimport type { AskResult, DaemonOptions } from \"./types\";\n\n/**\n * Internal cache for the “bust” token that is appended to every\n * normalised path before hashing.  The cache lives for the whole\n * process, guaranteeing that the same (root, executable) pair always\n * yields the same hash while the process is running – exactly the\n * invariant used elsewhere (e.g. `publish`/`bust` in capnAdapter.ts).\n */\nconst bustCache = new Map<string, string>();\n\n/**\n * Produce a deterministic hash for a given root + executable pair.\n *\n * The algorithm mirrors the one used in `src/capnAdapter.ts`:\n *   1. Normalise both `root` and `executable`.\n *   2. Retrieve (or generate) a per‑process “bust” token.\n *   3. Concatenate `root|executable|bust` and hash with SHA‑256.\n *\n * The resulting hex string is safe to send over IPC and works on\n * Windows, macOS and Linux.\n */\nfunction hashDaemonKey(root: string, executable: string): string {\n  const normRoot = normalizePath(root);\n  const normExe = normalizePath(executable);\n  const cacheKey = `${normRoot}|${normExe}`;\n\n "
+    },
+    "waymark": {
+      "promptTokens": 376,
+      "completionTokens": 600,
+      "invariantAdherence": true,
+      "hallucinatedSemantics": false,
+      "durationMs": 1341,
+      "content": "Below is a **self‑contained, production‑ready** implementation of the daemon‑side IPC‑connection‑verification routine that obeys the invariants reported by Waymark:\n\n* **Path‑normalisation invariants** – on Windows every incoming path is first\n  * converted to forward‑slashes,\n  * collapsed of duplicate separators,\n  * resolved of `.` / `..` segments,\n  * and finally forced to a **canonical, absolute** form.  \n  This guarantees that a malicious client cannot “hallucinate” a different\n  location by using back‑slashes, mixed separators or relative tricks.\n\n* **Zero‑hallucination / fail‑closed guard** – the function never returns a\n  “truthy” result unless **all** checks succeed.  Any error (including\n  unexpected exceptions) is caught, logged, and a **typed error object**\n  (`VerificationResult`) is returned.  The caller must treat any non‑`ok`\n  status as a failure – there is no “default‑allow” path.\n\n* **Cache‑busting invariant** – the verification result is **not** cached\n  across calls.  The function recomputes the canonical path each time and\n  clears any stale `fs.stat` information by using `fs.promises.stat` with\n  the `bigint` option (which forces a fresh system call on most platforms).\n\n* **Cross‑platform safety** – the implementation works on Windows, macOS,\n  and Linux without platform‑specific branches beyond the normalisation step.\n\n---\n\n### `src/daemon/ipcVerify.ts`\n\n```ts\n/* -------------------------------------------------------------\n * daemon/ipcVerify.ts\n *\n * Verifies that a client‑supplied IPC endpoint (socket / pipe) is\n * exactly the one the daemon expects, respecting Waymark’s\n * path‑normalisation and fail‑closed invariants.\n *\n *   - Windows back‑slash → forward‑slash normalisation\n *   - Duplicate / trailing separators are collapsed\n *   - Relative components ('.' / '..') are resolved\n *   - Result must be an absolute, canonical path\n *   - Any error results in a typed, machine‑readable status object\n *\n * ----------------------------------------------------------- */\n\nimport { promises as fs } from \"fs\";\nimport * as path from \"path\";\n\n/**\n * Machine‑readable verification outcome.\n *\n * The daemon must treat any status other than `ok` as a hard failure.\n */\nexport type VerificationResult =\n  | { ok: true; canonicalPath: string }\n  | {\n      ok: false;\n      code: \"INVALID_PATH\" | \"STAT_ERROR\" | \"MISMATCH\" | \"UNEXPECTED\";\n      message"
+    }
+  },
+  "multiTurnSimulation": {
+    "turns": [
+      {
+        "turn": 1,
+        "aiderTokens": 270,
+        "waymarkTokens": 28
+      },
+      {
+        "turn": 2,
+        "aiderTokens": 540,
+        "waymarkTokens": 56
+      },
+      {
+        "turn": 3,
+        "aiderTokens": 810,
+        "waymarkTokens": 84
+      },
+      {
+        "turn": 4,
+        "aiderTokens": 1080,
+        "waymarkTokens": 112
+      },
+      {
+        "turn": 5,
+        "aiderTokens": 1350,
+        "waymarkTokens": 112
+      },
+      {
+        "turn": 6,
+        "aiderTokens": 1620,
+        "waymarkTokens": 140
+      },
+      {
+        "turn": 7,
+        "aiderTokens": 1890,
+        "waymarkTokens": 140
+      },
+      {
+        "turn": 8,
+        "aiderTokens": 2160,
+        "waymarkTokens": 168
+      },
+      {
+        "turn": 9,
+        "aiderTokens": 2430,
+        "waymarkTokens": 196
+      },
+      {
+        "turn": 10,
+        "aiderTokens": 2700,
+        "waymarkTokens": 196
+      }
+    ],
+    "cumulativeAiderTokens": 2700,
+    "cumulativeWaymarkTokens": 196,
+    "tokenSavingsPct": 92.7
+  }
+}

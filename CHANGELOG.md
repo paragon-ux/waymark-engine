@@ -30,19 +30,25 @@ Version 2.4.0 introduces the **Semantic Repo Map**, establishing frontloaded arc
     - Querying `--facet <name>` routes and prioritizes lexical BM25 retrieval to documents tagged with `[FACET:<NAME>]`.
     - Querying `--path <file>` without a question extracts structured Tree-Sitter AST symbols (Mode A) in ~120 tokens.
   - **Write Surface (`waymark_memory` / `waymark memory`)**:
-    - Universal consensus ledger manager consolidating actions: `chart`, `bootstrap`, `status`, `bust`, `prune`, `list`, `unchart`, `init`, `context`.
+    - Universal consensus ledger manager consolidating actions: `bootstrap`, `status`, `chart`, `heal`, `export`, `bust`, `prune`, `list`, `unchart`, `init`, `context`.
+    - Added `action: "heal"` to reconcile Semantic Repo Map anchors against modified source lines.
+    - Added `action: "export"` to serialize SQLite consensus memory to Markdown or JSON.
     - Auto-tags architectural facets (`[FACET:<NAME>]`) and enforces the Anti-Hallucination Guard.
-- **MCP Prompt Token Optimization (<450 Tokens)**:
-  - Added `canonicalOnly: boolean` option to `McpServer` and `WAYMARK_MCP_COMPACT=1` environment flag.
-  - When enabled, `tools/list` advertises strictly the 2 canonical tools (`waymark_ask` and `waymark_memory`), eliminating ~3,000 tokens of tool schema bloat from system prompts.
+- **Two-Verb MCP Default (<450 Tokens)**:
+  - `McpServer` now defaults to `canonicalOnly: true`, advertising strictly the 2 canonical tools (`waymark_ask` and `waymark_memory`) out of the box. Eliminates ~3,000 tokens of tool schema bloat from every agent prompt turn.
+  - Zero client configuration required; optional `"WAYMARK_MCP_VERBOSE": "1"` available if users explicitly require the legacy 11 granular tools in `tools/list`.
+  - Registered new `bootstrap-semantic-map` prompt in `CAPN_PROMPTS` for guided repository onboarding.
   - Full backwards compatibility: all 11 tools remain registered in the dispatch table, ensuring legacy MCP tool calls succeed seamlessly.
+- **Cross-Platform Path Normalization (`src/capnAdapter.ts`)**:
+  - Normalized all file citations and cache-busting lookups to forward slashes across POSIX and Windows, preventing backslash mismatches during `bust` and anchor verification.
 - **CLI Commands & Extensions (`src/cli.ts`)**:
   - Added `waymark memory <action>` with full subcommand options (`--question`, `--answer`, `--facet`, `--files`, `--file`, `--id`, `--if-exists`, `--dry-run`, `--subsystem`).
   - Added `waymark bootstrap [--dry-run] [--subsystem <name>]`.
   - Added `waymark map [status|show|heal|export] [--format md|json]`.
   - Enhanced `waymark ask` with `--facet <name>` and `--path <file>`.
+  - Upstream structural engine updated to `@paragon-ux/codedb-core` `v1.1.0`.
 - **Comprehensive Integration Test Suite (`test/semanticRepoMap.test.ts`)**:
-  - Full test coverage for anti-hallucination backing file verification, two-pass bootstrapping, MCP `waymark_memory` actions, MCP `waymark_ask` facet addressing and path outline extraction, and tier isolation invariance.
+  - Expanded test battery to 67 unit/integration tests with full coverage for anti-hallucination backing file verification, two-pass bootstrapping, MCP `waymark_memory` actions (including `heal`, `export`, `bust`), MCP `waymark_ask` facet addressing and path outline extraction, and tier isolation invariance.
 
 ### Invariants Maintained
 

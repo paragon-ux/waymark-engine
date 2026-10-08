@@ -8,7 +8,18 @@ import { WaymarkError } from "./types.js";
 const require = createRequire(import.meta.url);
 
 export type StructuredLanguage = "typescript" | "python";
-export type StructuredSymbolKind = "class" | "function" | "method" | "interface" | "type";
+export type StructuredSymbolKind =
+  | "class"
+  | "function"
+  | "method"
+  | "interface"
+  | "type"
+  | "struct"
+  | "enum"
+  | "trait"
+  | "import"
+  | "constant"
+  | "variable";
 
 export interface StructuredSymbolPosition {
   line: number;
@@ -173,20 +184,33 @@ async function discoverSymbolsViaCodedbOutline(
     if (!run.ok || !parsed || !Array.isArray(parsed.symbols)) {
       return { ok: true, path: storedPath, language: (parsed?.language || "unknown") as any, symbols: [] };
     }
-    const symbols: StructuredSymbol[] = parsed.symbols.map((s: any) => {
-      let kind: StructuredSymbolKind = "function";
-      const rawKind = String(s.kind || "").toLowerCase();
-      if (rawKind.includes("class")) kind = "class";
-      else if (rawKind.includes("method")) kind = "method";
-      else if (rawKind.includes("interface")) kind = "interface";
-      else if (rawKind.includes("type")) kind = "type";
-      return {
-        name: s.name,
-        kind,
-        start: { line: s.line_start || 1, column: 0 },
-        end: { line: s.line_end || s.line_start || 1, column: 0 },
-      };
-    });
+    const symbols: StructuredSymbol[] = parsed.symbols
+      .filter((s: any) => Boolean(s && s.name))
+      .map((s: any) => {
+        let kind: StructuredSymbolKind = "function";
+        const rawKind = String(s.kind || "").toLowerCase();
+        if (rawKind.includes("struct")) kind = "struct";
+        else if (rawKind.includes("class")) kind = "class";
+        else if (rawKind.includes("method")) kind = "method";
+        else if (rawKind.includes("trait")) kind = "trait";
+        else if (rawKind.includes("interface")) kind = "interface";
+        else if (rawKind.includes("enum")) kind = "enum";
+        else if (rawKind.includes("type")) kind = "type";
+        else if (rawKind.includes("import") || rawKind.includes("use") || rawKind.includes("include")) kind = "import";
+        else if (rawKind.includes("const")) kind = "constant";
+        else if (rawKind.includes("var") || rawKind.includes("field") || rawKind.includes("property")) kind = "variable";
+        else if (rawKind.includes("func") || rawKind.includes("fn")) kind = "function";
+
+        const cleanName = String(s.name || "").trim().replace(/[\r\n]+$/, "");
+
+        return {
+          name: cleanName,
+          kind,
+          start: { line: s.line_start || 1, column: 0 },
+          end: { line: s.line_end || s.line_start || 1, column: 0 },
+        };
+      })
+      .filter((s: StructuredSymbol) => Boolean(s.name));
     return {
       ok: true,
       path: storedPath,

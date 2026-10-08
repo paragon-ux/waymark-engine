@@ -18,10 +18,11 @@ const VALUE_FLAGS = new Set([
   "profile", "path", "language", "capn-executable", "question", "answer", "files",
   "tier", "t", "format", "idle-timeout", "query", "symbol", "symbols", "q", "s",
   "depth", "direction", "manifest", "category", "id", "file", "facet", "action", "subsystem",
+  "root", "session",
 ]);
 
 const BOOLEAN_FLAGS = new Set([
-  "timing", "b", "json", "j", "plain", "p", "auto-resolve", "if-exists", "force", "daemon", "d", "exclude-tests", "dev", "dry-run",
+  "timing", "b", "json", "j", "plain", "p", "auto-resolve", "if-exists", "force", "daemon", "d", "exclude-tests", "dev", "dry-run", "live", "all",
 ]);
 
 function parseArgs(args: readonly string[]): ParsedArgs {
@@ -153,7 +154,7 @@ async function runCommand(command: string, rawArgs: readonly string[]): Promise<
       : undefined;
   if (suppression) return { value: { waymark: 1, kind: "suppressed", ok: true, reason: suppression } };
   const parsed = parseArgs(rawArgs);
-  const root = repoRoot();
+  const root = parsed.values.get("root") ? path.resolve(parsed.values.get("root")!) : repoRoot();
 
   if (command === "help" || command === "--help" || command === "-h") {
     return {
@@ -240,6 +241,8 @@ async function runCommand(command: string, rawArgs: readonly string[]): Promise<
     const manifestFile = parsed.values.get("manifest");
     const plain = parsed.values.has("plain");
     const dev = parsed.values.has("dev");
+    const live = parsed.values.has("live");
+    const sessionPath = parsed.values.get("session");
 
     if (scriptFile) {
       await runReplScript(scriptFile, root);
@@ -263,7 +266,7 @@ async function runCommand(command: string, rawArgs: readonly string[]): Promise<
       return { value: scoreboard, exitCode: scoreboard.failed > 0 ? 1 : 0 };
     }
 
-    await startRepl({ rootDir: root, plain, dev });
+    await startRepl({ rootDir: root, plain, dev, live, sessionPath });
     return { value: null };
   }
 
@@ -414,7 +417,18 @@ async function runCommand(command: string, rawArgs: readonly string[]): Promise<
       return { value: lines.join("\n") };
     }
 
-    throw new WaymarkError("UNKNOWN_COMMAND", `Unknown memory action: ${action}. Use chart, bootstrap, bust, prune, list, unchart, init, context, status, heal, or export.`);
+    if (action === "evict" || action === "close") {
+      const { closeResidentClient, closeAllResidentClients } = await import("./residentCodedb.js");
+      const target = parsed.positionals[1] || root;
+      if (parsed.values.has("all")) {
+        closeAllResidentClients();
+        return { value: { waymark: 1, ok: true, message: "Closed all resident codedb instances." } };
+      }
+      const closed = closeResidentClient(target);
+      return { value: { waymark: 1, ok: true, closed, root: target } };
+    }
+
+    throw new WaymarkError("UNKNOWN_COMMAND", `Unknown memory action: ${action}. Use chart, bootstrap, bust, prune, list, unchart, init, context, status, heal, export, evict, or close.`);
   }
 
   if (command === "bootstrap") {

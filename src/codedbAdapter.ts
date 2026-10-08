@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import path from "node:path";
 import os from "node:os";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -71,8 +72,8 @@ async function executeCold(root: string, command: ResolvedCodedbCommand, args: r
   }
   const fullArgs = [...command.prefix, ...args];
   const timeoutMs = process.env.WAYMARK_CODEDB_TIMEOUT
-    ? parseInt(process.env.WAYMARK_CODEDB_TIMEOUT, 10) || 120_000
-    : 120_000;
+    ? parseInt(process.env.WAYMARK_CODEDB_TIMEOUT, 10) || 45_000
+    : 45_000;
   const defaultThreads = Math.max(1, (os.availableParallelism?.() || os.cpus().length || 2) - 1);
   const maxThreads = process.env.CODEDB_MAX_THREADS || String(defaultThreads);
   return await execFileAsync(command.file, fullArgs, {
@@ -147,8 +148,17 @@ export async function runJson(root: string, command: ResolvedCodedbCommand, args
   try {
     const client = getResidentClient(root, command);
     return await client.send(args);
-  } catch {
-    // Resident client failed; fail-closed fallback to cold execution
+  } catch (err: any) {
+    // If resident client timed out during startup or query, do NOT repeat a cold execution
+    // that would compound another 45s wait and breach client deadlines.
+    if (err?.message && /timed out/i.test(err.message)) {
+      return {
+        ok: false,
+        payload: null,
+        error: `Repository indexing/query timed out: ${err.message}. For large monorepos, pre-warm with 'waymark daemon start'.`,
+      };
+    }
+    // Resident client failed with non-timeout error; fail-closed fallback to cold execution
     return await runJsonCold(root, command, args);
   }
 }
@@ -178,8 +188,8 @@ const HIGH_COLLISION_NAMES = new Set([
 export function isTestFile(filePath: string): boolean {
   const normalized = filePath.replace(/\\/g, "/");
   return (
-    /(?:^|\/)(?:tests?|__tests__|spec|testing)\//i.test(normalized) ||
-    /(?:[._-]test|[._-]spec)\.[^/]+$/i.test(normalized)
+    /(?:^|\/)(?:tests?|__tests__|spec|testing|benchmarks?|benches|examples|fixtures|testdata)\//i.test(normalized) ||
+    /(?:[._-]test|[._-]spec|[._-]bench)\.[^/]+$/i.test(normalized)
   );
 }
 
@@ -582,6 +592,45 @@ export interface MultiSymbolQueryResult {
   symbols: Record<string, MultiSymbolResultItem>;
 }
 
+function rankSymbolCandidates(
+  hits: Array<{ name: string; path: string; line: number; kind?: string; detail?: string }>,
+  targetSymbol: string,
+  root: string,
+): { name: string; path: string; line: number; kind?: string; detail?: string } | undefined {
+  if (hits.length === 0) return undefined;
+  if (hits.length === 1) return hits[0];
+
+  const rootBase = path.basename(root).toLowerCase();
+
+  const scored = hits.map((h) => {
+    let score = 0;
+    const isTest = isTestFile(h.path);
+    if (!isTest) score += 1000;
+
+    if (h.name === targetSymbol) score += 500;
+    else if (h.name.toLowerCase() === targetSymbol.toLowerCase()) score += 250;
+
+    const normPath = h.path.replace(/\\/g, "/").toLowerCase();
+    if (/(?:^|\/)(?:src|lib)\//i.test(normPath)) score += 200;
+    if (normPath.includes(rootBase + "/")) score += 150;
+
+    const kind = (h.kind || "").toLowerCase();
+    if (kind.includes("def") || kind === "class" || kind === "struct" || kind === "function") {
+      score += 100;
+    } else if (kind.includes("import") || kind.includes("use")) {
+      score -= 300;
+    }
+
+    // Shorter path length preference
+    score -= Math.min(100, normPath.length);
+
+    return { hit: h, score };
+  });
+
+  scored.sort((a, b) => b.score - a.score);
+  return scored[0]?.hit;
+}
+
 /**
  * Concurrently query codedb for multiple symbol identifiers and return a consolidated record.
  */
@@ -602,15 +651,15 @@ export async function queryMultiSymbols(
       try {
         const res = await runJson(root, command, ["symbol", trimmed, "--json"]);
         const hits = Array.isArray(res.payload?.results) ? (res.payload.results as Array<{ name: string; path: string; line: number; kind?: string; detail?: string }>) : [];
-        const first = hits[0];
-        if (first) {
+        const best = rankSymbolCandidates(hits, trimmed, root);
+        if (best) {
           hitCount++;
           results[trimmed] = {
             status: "hit",
-            path: first.path,
-            line: first.line,
-            kind: first.kind || "symbol",
-            detail: first.detail,
+            path: best.path,
+            line: best.line,
+            kind: best.kind || "symbol",
+            detail: best.detail ? best.detail.replace(/\r$/, "") : undefined,
           };
         } else {
           missCount++;

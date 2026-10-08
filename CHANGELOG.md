@@ -4,6 +4,39 @@ All notable changes to `waymark-engine` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.5.0] - 2026-09-29
+
+### Live REPL Observer, Process LRU Pooling, Monorepo Hardening, and Polyglot AST Outline
+
+Version 2.5.0 delivers the **Live REPL Agent Observer (`waymark repl --live`)**, real-time persistent telemetry logging, resident codedb child-process LRU pooling with automatic cleanup, monorepo cold-start deadline protection, disambiguated multi-symbol ranking, and expanded polyglot AST kinds.
+
+### Added
+- **PDLt-Style Live Agent Monitor (`waymark repl --live`, `src/repl.ts`, `src/sessionLogger.ts`)**:
+  - Live ANSI observer dashboard tailing agent tool executions from an append-only persistent NDJSON telemetry log (`.waymark/sessions/active.jsonl`).
+  - Displays query, caller source (`MCP` or `CLI`), tier traversal, matched symbols/paths with fzf score, prompt payload tokens vs. full-file equivalent, and token savings percentage (consistently 92–96% token savings).
+  - Interactive terminal controls: `q` to quit, `c` to clear screen, and `s` for cumulative session telemetry metrics (hit rate, query latency average, tokens consumed vs. saved).
+- **LRU Resident Codedb Pool & Process Lifecycle Defense (`src/residentCodedb.ts`)**:
+  - Enforces strict concurrent resident client limits (`MAX_RESIDENT_CLIENTS`, default 2, configurable via `WAYMARK_MAX_RESIDENT_CLIENTS`), preventing lingering background `codedb-win32-x64.exe` processes across multiple workspaces.
+  - Strict total-order monotonic LRU eviction sequencing and synchronous hard-kill cleanup (`SIGKILL` + Windows `taskkill /pid <pid> /f /t`).
+  - Added `evict` and `close` actions to `waymark_memory` (and CLI `waymark memory evict [root] [--all]`).
+- **Universal CLI `--root` and `--session` Flags (`src/cli.ts`)**:
+  - Added `--root <path>` flag across all CLI commands (`ask`, `memory`, `symbols`, `daemon`, etc.) ensuring full parity with the MCP `root` argument when querying external workspaces.
+  - Added `--session <path>` flag to point the live REPL observer to arbitrary session logs.
+
+### Fixed & Improved
+- **Monorepo Cold-Start Deadline Protection (`src/codedbAdapter.ts`, `src/residentCodedb.ts`)**:
+  - Lowered default codedb execution timeout from 180s to 45s and idle inactivity timeout from 300s to 120s (`WAYMARK_IDLE_TIMEOUT`), with immediate fail-closed protection to prevent compounding 3-minute MCP client transport deadlines on massive monorepos like Grafana.
+- **Disambiguated Multi-Symbol Definition Ranking (`src/codedbAdapter.ts`)**:
+  - Upgraded `queryMultiSymbols` candidate selection to prioritize canonical non-test definitions (`src/`, `lib/`, exact case matching, definition kinds) over test/benchmark suites, correctly resolving `BaseModel` in Pydantic to `pydantic/main.py:136` instead of `benchmarks/test_complex.py`.
+- **Polyglot AST Outline Kinds & Windows Line Endings (`src/astExtractor.ts`)**:
+  - Expanded `StructuredSymbolKind` to include `struct`, `enum`, `trait`, `import`, `constant`, and `variable` for Rust, Go, and C/C++ fallback paths.
+  - Stripped trailing CRLF `\r` line endings from symbol names and details across Windows.
+- **Fail-Closed Conceptual Routing & Narrative Entrypoints (`src/discoveryRouter.ts`)**:
+  - Upgraded AST intent detection to recognize narrative entrypoint queries (`"What is the main entry point?"`) and route directly to repository topology.
+  - Added fail-closed guardrail for broad narrative/conceptual questions (`"How does the sandbox work?"`), returning clean `NO_CHARTED_MEMORY` guidance with instructions to chart consensus memory, rather than hallucinating random fuzzy matches.
+
+---
+
 ## [2.4.1] - 2026-09-28
 
 ### Developer Experience Polish, MCP Tool Parity, and Standalone Wrapper Binaries

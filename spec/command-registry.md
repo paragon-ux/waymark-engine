@@ -74,6 +74,9 @@ Options and flags modify discovery routing, execution format, performance instru
 | `--force` | — | Flag | Boolean | `false` | `daemon` | **Stable** | Forces immediate termination of resident daemon via PID kill if graceful IPC shutdown is unresponsive. |
 | `--facet` | — | Value | `lifecycle`, `data_state`, `boundaries`, `invariants`, `failure` | None | `ask`, `map` | **Stable** | Restricts or prioritizes query discovery to a specific architectural facet within the Semantic Repo Map. |
 | `--subsystem` | — | Value | Subsystem directory/name | `default` | `bootstrap`, `map` | **Stable** | Scopes the Semantic Repo Map to a specific package or subsystem in monorepos. |
+| `--root` | — | Value | Filesystem path | Process cwd / git root | All | **Stable** | Overrides target workspace root directory across all CLI and discovery operations. |
+| `--live` | — | Flag | Boolean | `false` | `repl` | **Stable** | Launches the live PDLt-style agent session observer tailing queries and recording latency/token metrics. |
+| `--session` | — | Value | Filesystem path | `.waymark/sessions/active.jsonl` | `repl` | **Stable** | Specifies custom persistent NDJSON session log path for telemetry events. |
 
 ---
 
@@ -221,8 +224,8 @@ The resident stdio MCP server (`waymark-mcp`) provides two modes of tool exposur
     "properties": {
       "action": {
         "type": "string",
-        "enum": ["chart", "bootstrap", "bust", "prune", "list", "unchart", "init", "context", "status", "heal", "export"],
-        "description": "Consensus memory action to execute: chart | bootstrap | bust | prune | list | unchart | init | context | status | heal | export."
+        "enum": ["chart", "bootstrap", "bust", "prune", "list", "unchart", "init", "context", "status", "heal", "export", "evict", "close"],
+        "description": "Consensus memory action to execute: chart | bootstrap | bust | prune | list | unchart | init | context | status | heal | export | evict | close."
       },
       "question": { "type": "string", "description": "The question or topic charted (required for action='chart')." },
       "answer": { "type": "string", "description": "The conclusive charted answer adhering to <= 100 token budget (required for action='chart')." },

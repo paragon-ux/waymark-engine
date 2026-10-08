@@ -40,7 +40,7 @@ export { PrefixTrie, PrefixTrieNode } from "./prefixTrie.js";
 export { tryDaemonResolvePath, tryDaemonReload } from "./daemon.js";
 export { classifyTokenShape, scoreFzf, rankFzf, tracebackFzf, normalizeScore, SCORE_MATCH, SCORE_GAP_START, SCORE_GAP_EXTENSION, BONUS_BOUNDARY, BONUS_CAMEL_123, BONUS_CONSECUTIVE, BONUS_FIRST_CHAR_MULTIPLIER } from "./fuzzyMatcher.js";
 export { queryStructural, queryMultiHopCallGraph, queryFuzzyCandidates, queryMultiSymbols, isTestFile, resolveCodedbCommand, type MultiSymbolQueryResult, type MultiSymbolResultItem, type MultiSymbolResultItem as MultiSymbolItem } from "./codedbAdapter.js";
-export { discoverSymbolsInFile, discoverSymbolsInRepo, type SymbolDiscoveryResult, type StructuredSymbol, type RepoSymbolDiscoveryResult, type RepoSymbolHit } from "./astExtractor.js";
+export { discoverSymbolsInFile, discoverSymbolsInRepo, type SymbolDiscoveryResult, type StructuredSymbol, type StructuredSymbolKind, type RepoSymbolDiscoveryResult, type RepoSymbolHit } from "./astExtractor.js";
 export { verifyHop } from "./integrity.js";
 export { anchorForRange, normalizeRange, repoRoot, sha256, structuralSignature, normalizeSpan } from "./paths.js";
 export { startRepl, runReplScript, type ReplOptions } from "./repl.js";

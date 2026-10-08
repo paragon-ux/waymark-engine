@@ -86,22 +86,24 @@ export function detectAstIntent(question: string): AstIntent {
 
   // 1. Architecture / Entrypoints intent
   const isNarrativeQuestion =
-    /^(explain|describe|how|why|what\s+is|tell\s+me)\b/i.test(q);
+    /^(explain|describe|how|why|tell\s+me)\b/i.test(q) ||
+    (/^what\s+is\b/i.test(q) && !/(?:entry\s*point|main\s+entry|architecture)/i.test(q));
 
   const architectureMatch =
-    !isNarrativeQuestion &&
-    (
-      lower === "architecture" ||
-      lower === "architecture?" ||
-      /\b(repo|codebase|project|system)\s+architecture\b/i.test(q) ||
-      /\b(show|get|display|dump)\s+(the\s+)?architecture\b/i.test(q) ||
-      lower.includes("entrypoint") ||
-      lower.includes("entry point") ||
-      lower.includes("hotspots") ||
-      lower.includes("high-level structure") ||
-      lower.includes("overview of the repo") ||
-      lower.includes("project topology")
-    );
+    (!isNarrativeQuestion &&
+      (
+        lower === "architecture" ||
+        lower === "architecture?" ||
+        /\b(repo|codebase|project|system)\s+architecture\b/i.test(q) ||
+        /\b(show|get|display|dump)\s+(the\s+)?architecture\b/i.test(q) ||
+        lower.includes("entrypoint") ||
+        lower.includes("entry point") ||
+        lower.includes("hotspots") ||
+        lower.includes("high-level structure") ||
+        lower.includes("overview of the repo") ||
+        lower.includes("project topology")
+      )) ||
+    /\bwhat\s+(is|are)\s+(the\s+)?(main\s+)?entry\s*points?\b/i.test(q);
 
   if (architectureMatch) {
     return { requiresParser: true, tool: "get_architecture" };
@@ -900,6 +902,27 @@ async function routeDiscoveryCore(ctx: DiscoveryRouteContext): Promise<AskResult
     };
   }
 
+  // If the query was an explicit narrative/conceptual question (e.g. "How does the sandbox work?", "Explain the system"),
+  // and Tier 4 Capn memory had no charted answer, do NOT run exhaustive fuzzy search across individual stop words
+  // (which matches arbitrary symbols like 'ModelAlien' or 'doctor.rs'). Fail closed with clear guidance.
+  const isNarrativeQuery =
+    /^(explain|describe|how|why|tell\s+me)\b/i.test(question.trim()) ||
+    /\b(how\s+does|how\s+do|how\s+can|how\s+to|what\s+does|explain\s+how)\b/i.test(question.trim());
+
+  if (isNarrativeQuery) {
+    if (recordTiming) timings.total_ms = Math.round((performance.now() - startTime) * 100) / 100;
+    return {
+      waymark: 1,
+      kind: "ask",
+      status: "miss",
+      provider: "capn-cli",
+      missCode: "NO_CHARTED_MEMORY",
+      reason: `No charted consensus memory found for architectural question: "${question}". Run 'waymark memory bootstrap' or chart with 'waymark memory chart' to record architectural consensus.`,
+      matches: [],
+      ...(recordTiming ? { timings } : {}),
+    };
+  }
+
   // Stage 3: Both Stage 1 and Stage 2 missed -> Exhaustive fuzzy on plain tokens
   const tExhaustive0 = performance.now();
   let exhaustiveHit: FuzzyScoreResult | null = null;
@@ -997,24 +1020,32 @@ async function routeDiscoveryCore(ctx: DiscoveryRouteContext): Promise<AskResult
 export async function routeDiscovery(ctx: DiscoveryRouteContext): Promise<AskResult> {
   const isDev = Boolean(ctx.options?.dev);
   const res = await routeDiscoveryCore(ctx);
-  if (!isDev) return res;
+  let finalRes: AskResult = res;
 
-  const tiers: string[] = [];
-  if (res.timings) {
-    if (res.timings.ast_ms !== undefined) tiers.push("ast");
-    if (res.timings.path_ms !== undefined) tiers.push("path");
-    if (res.timings.fuzzy_ms !== undefined) tiers.push("fuzzy");
-    if (res.timings.capn_ms !== undefined) tiers.push("capn");
+  if (isDev) {
+    const tiers: string[] = [];
+    if (res.timings) {
+      if (res.timings.ast_ms !== undefined) tiers.push("ast");
+      if (res.timings.path_ms !== undefined) tiers.push("path");
+      if (res.timings.fuzzy_ms !== undefined) tiers.push("fuzzy");
+      if (res.timings.capn_ms !== undefined) tiers.push("capn");
+    }
+    const dev: DevDiagnostics = {
+      tiersEvaluated: tiers.length > 0 ? tiers : (res.provider ? [res.provider] : ["unknown"]),
+      timingBreakdownMs: res.timings || {},
+      daemonIpcUsed: Boolean(process.env.WAYMARK_AUTO_DAEMON === "1" || ctx.options?.daemon),
+      invariantsPassed: true,
+    };
+    finalRes = { ...res, dev };
   }
-  const dev: DevDiagnostics = {
-    tiersEvaluated: tiers.length > 0 ? tiers : (res.provider ? [res.provider] : ["unknown"]),
-    timingBreakdownMs: res.timings || {},
-    daemonIpcUsed: Boolean(process.env.WAYMARK_AUTO_DAEMON === "1" || ctx.options?.daemon),
-    invariantsPassed: true,
-  };
 
-  return {
-    ...res,
-    dev,
-  };
+  try {
+    const { logAskTelemetry } = await import("./sessionLogger.js");
+    const caller = process.env.WAYMARK_MCP_SESSION === "1" ? "mcp" : (process.env.WAYMARK_REPL_SESSION === "1" ? "repl" : "cli");
+    logAskTelemetry(ctx.root, ctx.question, finalRes, finalRes.timings?.total_ms ?? 0, caller);
+  } catch {
+    // Fail silent
+  }
+
+  return finalRes;
 }

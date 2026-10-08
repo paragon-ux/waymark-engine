@@ -10,21 +10,31 @@ import { renderPlainText } from "./renderPlainText.js";
 import { runBaselineSearch, computeBaselineComparison } from "./baselineSearch.js";
 import { runManifestEvaluation, executePromptTest } from "./evaluator.js";
 import { AskResult, DiscoveryTier } from "./types.js";
+import { resolveSessionLogPath, SessionTelemetryEvent } from "./sessionLogger.js";
 
 export interface ReplOptions {
   rootDir?: string;
   plain?: boolean;
   dev?: boolean;
   manifestPath?: string;
+  live?: boolean;
+  sessionPath?: string;
 }
 
 /**
- * Start the interactive Waymark REPL attached to the resident background daemon.
+ * Start the interactive Waymark REPL attached to the resident background daemon or live observer.
  */
 export async function startRepl(options: ReplOptions = {}): Promise<void> {
   const root = options.rootDir ? path.resolve(options.rootDir) : repoRoot();
+
+  if (options.live) {
+    await startLiveReplObserver(options);
+    return;
+  }
+
   let devMode = options.dev ?? true;
   let plainMode = options.plain ?? false;
+  process.env.WAYMARK_REPL_SESSION = "1";
 
   // Enforce resident daemon requirement
   process.stdout.write(`Connecting to Waymark resident daemon for: ${root} ...\n`);
@@ -478,3 +488,188 @@ export async function runReplScript(scriptPath: string, rootDir?: string): Promi
     });
   }
 }
+
+function formatLiveEvent(ev: SessionTelemetryEvent): string {
+  const time = ev.timestamp ? ev.timestamp.split("T")[1]?.slice(0, 8) : "";
+  const lines: string[] = [];
+  lines.push(`\x1b[1m[${time}]\x1b[0m \x1b[36mAGENT QUERY:\x1b[0m "${ev.query}"`);
+  lines.push(` ├─ \x1b[33mSource:\x1b[0m ${ev.caller.toUpperCase()} | \x1b[33mStatus:\x1b[0m ${ev.status.toUpperCase()}`);
+  lines.push(` ├─ \x1b[35mTier Traversal:\x1b[0m ${ev.tierRoute}`);
+  if (ev.matchedPath) {
+    const loc = `${ev.matchedPath}${ev.matchedLine ? `:${ev.matchedLine}` : ""}`;
+    const scoreStr = ev.score !== undefined ? ` (score: ${ev.score})` : "";
+    lines.push(` ├─ \x1b[32mMatch:\x1b[0m ${ev.matchedSymbol ? `${ev.matchedSymbol} -> ` : ""}${loc}${scoreStr}`);
+  }
+  const payloadTok = ev.payloadTokens ?? 0;
+  const fullTok = ev.fullFileTokensEquivalent ?? 1420;
+  lines.push(` ├─ \x1b[34mPayload:\x1b[0m ~${payloadTok} tokens | Full-file equivalent: ~${fullTok} tokens`);
+  const savings = ev.tokensSavedPct !== undefined ? `${ev.tokensSavedPct}%` : `${Math.max(0, Math.round((1 - payloadTok / fullTok) * 100))}%`;
+  const timings = ev.timingBreakdown ? Object.entries(ev.timingBreakdown).map(([k, v]) => `${k.replace("_ms", "")}: ${v}ms`).join(", ") : "";
+  const timingSuffix = timings ? ` (${timings})` : "";
+  lines.push(` └─ \x1b[32mLatency:\x1b[0m ${ev.latencyMs}ms${timingSuffix} | \x1b[1mToken Savings: ${savings}\x1b[0m`);
+  lines.push("--------------------------------------------------------------------------------");
+  return lines.join("\n");
+}
+
+export async function startLiveReplObserver(options: ReplOptions = {}): Promise<void> {
+  const root = options.rootDir ? path.resolve(options.rootDir) : repoRoot();
+  const sessionPath = resolveSessionLogPath(root, options.sessionPath);
+
+  // Ensure file and directory exist
+  const dir = path.dirname(sessionPath);
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+  if (!fs.existsSync(sessionPath)) {
+    fs.writeFileSync(sessionPath, "", "utf8");
+  }
+
+  const printHeader = () => {
+    process.stdout.write("\x1Bc"); // ANSI clear screen
+    process.stdout.write(
+      [
+        "================================================================================",
+        "  WAYMARK ENGINE LIVE AGENT MONITOR  |  PDLt-Style Observer",
+        `  Session: ${path.relative(root, sessionPath) || sessionPath}`,
+        `  Repo:    ${root}`,
+        "  Status:  LISTENING (press 'q' to quit, 'c' to clear, 's' for session stats)",
+        "================================================================================\n",
+      ].join("\n")
+    );
+  };
+
+  printHeader();
+
+  const stats = {
+    total: 0,
+    hits: 0,
+    misses: 0,
+    junctions: 0,
+    totalTokens: 0,
+    savedTokens: 0,
+    totalLatencyMs: 0,
+  };
+
+  let fileOffset = 0;
+
+  // Process existing lines if any
+  try {
+    const existing = fs.readFileSync(sessionPath, "utf8");
+    fileOffset = Buffer.byteLength(existing, "utf8");
+    const lines = existing.split("\n").filter((l) => l.trim().length > 0);
+    for (const l of lines) {
+      try {
+        const ev = JSON.parse(l) as SessionTelemetryEvent;
+        stats.total++;
+        if (ev.status === "hit") stats.hits++;
+        else if (ev.status === "junction") stats.junctions++;
+        else stats.misses++;
+        stats.totalTokens += ev.payloadTokens || 0;
+        stats.savedTokens += Math.max(0, (ev.fullFileTokensEquivalent || 1420) - (ev.payloadTokens || 0));
+        stats.totalLatencyMs += ev.latencyMs || 0;
+      } catch {}
+    }
+    if (lines.length > 0) {
+      const recent = lines.slice(-5);
+      process.stdout.write(`\x1b[2m--- Last ${recent.length} recent events from session ---\x1b[0m\n`);
+      for (const l of recent) {
+        try {
+          const ev = JSON.parse(l) as SessionTelemetryEvent;
+          process.stdout.write(formatLiveEvent(ev) + "\n");
+        } catch {}
+      }
+    }
+  } catch {}
+
+  // Poll for newly appended lines
+  let isChecking = false;
+  const pollInterval = setInterval(() => {
+    if (isChecking) return;
+    isChecking = true;
+    try {
+      if (!fs.existsSync(sessionPath)) {
+        isChecking = false;
+        return;
+      }
+      const stat = fs.statSync(sessionPath);
+      if (stat.size > fileOffset) {
+        const fd = fs.openSync(sessionPath, "r");
+        const bytesToRead = stat.size - fileOffset;
+        const buf = Buffer.alloc(bytesToRead);
+        fs.readSync(fd, buf, 0, bytesToRead, fileOffset);
+        fs.closeSync(fd);
+        fileOffset = stat.size;
+
+        const chunk = buf.toString("utf8");
+        const lines = chunk.split("\n").filter((l) => l.trim().length > 0);
+        for (const l of lines) {
+          try {
+            const ev = JSON.parse(l) as SessionTelemetryEvent;
+            stats.total++;
+            if (ev.status === "hit") stats.hits++;
+            else if (ev.status === "junction") stats.junctions++;
+            else stats.misses++;
+            stats.totalTokens += ev.payloadTokens || 0;
+            stats.savedTokens += Math.max(0, (ev.fullFileTokensEquivalent || 1420) - (ev.payloadTokens || 0));
+            stats.totalLatencyMs += ev.latencyMs || 0;
+
+            process.stdout.write(formatLiveEvent(ev) + "\n");
+          } catch {}
+        }
+      } else if (stat.size < fileOffset) {
+        // Truncated / restarted log
+        fileOffset = 0;
+      }
+    } catch {
+      // Ignore transient read errors
+    } finally {
+      isChecking = false;
+    }
+  }, 250);
+
+  // Setup stdin controls
+  if (process.stdin.isTTY) {
+    try {
+      process.stdin.setRawMode(true);
+      process.stdin.resume();
+      process.stdin.setEncoding("utf8");
+      process.stdin.on("data", (key: string) => {
+        if (key === "\u0003" || key.toLowerCase() === "q") {
+          clearInterval(pollInterval);
+          process.stdout.write("\nExiting Live Agent Monitor.\n");
+          process.exit(0);
+        } else if (key.toLowerCase() === "c") {
+          printHeader();
+        } else if (key.toLowerCase() === "s") {
+          const hitRate = stats.total > 0 ? Math.round((stats.hits / stats.total) * 1000) / 10 : 0;
+          const avgLatency = stats.total > 0 ? Math.round(stats.totalLatencyMs / stats.total) : 0;
+          const totalFull = stats.totalTokens + stats.savedTokens;
+          const savingsPct = totalFull > 0 ? Math.round((stats.savedTokens / totalFull) * 1000) / 10 : 0;
+          process.stdout.write(
+            [
+              "\n--------------------------------------------------------------------------------",
+              "  LIVE SESSION TELEMETRY SUMMARY",
+              `  Total Queries:     ${stats.total} (Hits: ${stats.hits}, Junctions: ${stats.junctions}, Misses: ${stats.misses})`,
+              `  Hit Rate:          ${hitRate}%`,
+              `  Avg Query Latency: ${avgLatency}ms`,
+              `  Prompt Tokens:     ${stats.totalTokens} tokens consumed`,
+              `  Full-File Equiv:   ${totalFull} tokens`,
+              `  Net Token Savings: ${savingsPct}%`,
+              "--------------------------------------------------------------------------------\n",
+            ].join("\n")
+          );
+        }
+      });
+    } catch {}
+  }
+
+  const cleanup = () => {
+    clearInterval(pollInterval);
+    process.stdout.write("\nExiting Live Agent Monitor.\n");
+    process.exit(0);
+  };
+
+  process.once("SIGINT", cleanup);
+  process.once("SIGTERM", cleanup);
+}
+

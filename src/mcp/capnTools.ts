@@ -246,8 +246,8 @@ export const waymarkMemoryTool: McpToolHandler = {
       properties: {
         action: {
           type: "string",
-          enum: ["chart", "bootstrap", "bust", "prune", "list", "unchart", "init", "context", "status", "heal", "export"],
-          description: "Consensus memory action to execute: chart | bootstrap | bust | prune | list | unchart | init | context | status | heal | export.",
+          enum: ["chart", "bootstrap", "bust", "prune", "list", "unchart", "init", "context", "status", "heal", "export", "evict", "close"],
+          description: "Consensus memory action to execute: chart | bootstrap | bust | prune | list | unchart | init | context | status | heal | export | evict | close.",
         },
         question: {
           type: "string",
@@ -462,7 +462,23 @@ export const waymarkMemoryTool: McpToolHandler = {
         return { content: [{ type: "text", text: lines.join("\n") }], isError: false };
       }
 
-      throw new WaymarkError("UNKNOWN_COMMAND", `Unknown memory action: ${action}. Allowed: chart, bootstrap, bust, prune, list, unchart, init, context, status, heal, export.`);
+      if (action === "evict" || action === "close") {
+        const { closeResidentClient, closeAllResidentClients } = await import("../residentCodedb.js");
+        const target = typeof args.root === "string" && args.root.trim() ? args.root.trim() : root;
+        const all = args.all === true;
+        if (all) {
+          closeAllResidentClients();
+          const msg = "Closed all resident codedb instances.";
+          return plain ? { content: [{ type: "text", text: msg }], isError: false } : jsonResult({ ok: true, message: msg });
+        }
+        const closed = closeResidentClient(target);
+        const msg = closed
+          ? `Closed resident codedb instance for ${target}.`
+          : `No active resident codedb instance found for ${target}.`;
+        return plain ? { content: [{ type: "text", text: msg }], isError: false } : jsonResult({ ok: true, closed, root: target });
+      }
+
+      throw new WaymarkError("UNKNOWN_COMMAND", `Unknown memory action: ${action}. Allowed: chart, bootstrap, bust, prune, list, unchart, init, context, status, heal, export, evict, close.`);
     } catch (error) {
       return errorResult(error);
     }

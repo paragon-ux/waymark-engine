@@ -42,6 +42,8 @@ function formatArg(arg: string): string {
   return arg;
 }
 
+let residentSequenceCounter = 0;
+
 export class ResidentCodedbClient {
   readonly root: string;
   readonly command: ResolvedCodedbCommand;
@@ -55,11 +57,25 @@ export class ResidentCodedbClient {
   private idleTimeoutMs: number;
   private stderrBuffer = "";
   private isClosing = false;
+  lastUsedMs: number = Date.now();
+  lastUsedSeq: number = ++residentSequenceCounter;
 
-  constructor(root: string, command: ResolvedCodedbCommand, idleTimeoutMs = 300_000) {
+  constructor(root: string, command: ResolvedCodedbCommand, idleTimeoutMs?: number) {
     this.root = root;
     this.command = command;
-    this.idleTimeoutMs = idleTimeoutMs;
+    const defaultIdle = process.env.WAYMARK_IDLE_TIMEOUT
+      ? parseInt(process.env.WAYMARK_IDLE_TIMEOUT, 10) || 120_000
+      : 120_000;
+    this.idleTimeoutMs = idleTimeoutMs ?? defaultIdle;
+  }
+
+  touch(): void {
+    this.lastUsedMs = Date.now();
+    this.lastUsedSeq = ++residentSequenceCounter;
+  }
+
+  get pid(): number | undefined {
+    return this.proc?.pid;
   }
 
   private unrefPipes(): void {
@@ -107,8 +123,8 @@ export class ResidentCodedbClient {
       const defaultThreads = Math.max(1, (os.availableParallelism?.() || os.cpus().length || 2) - 1);
       const maxThreads = process.env.CODEDB_MAX_THREADS || String(defaultThreads);
       const timeoutMs = process.env.WAYMARK_CODEDB_TIMEOUT
-        ? parseInt(process.env.WAYMARK_CODEDB_TIMEOUT, 10) || 120_000
-        : 120_000;
+        ? parseInt(process.env.WAYMARK_CODEDB_TIMEOUT, 10) || 45_000
+        : 45_000;
 
       const startupTimer = setTimeout(() => {
         if (!this.readyResolved) {
@@ -270,8 +286,10 @@ export class ResidentCodedbClient {
 
     const cmd = args.map(formatArg).join(" ");
     const timeoutMs = process.env.WAYMARK_CODEDB_TIMEOUT
-      ? parseInt(process.env.WAYMARK_CODEDB_TIMEOUT, 10) || 120_000
-      : 120_000;
+      ? parseInt(process.env.WAYMARK_CODEDB_TIMEOUT, 10) || 45_000
+      : 45_000;
+
+    this.touch();
 
     return new Promise<CodedbRun>((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -293,6 +311,7 @@ export class ResidentCodedbClient {
     if (this.isClosing) return;
     this.isClosing = true;
     this.clearIdleTimer();
+    unregisterResidentClient(this);
 
     if (this.rl) {
       this.rl.close();
@@ -300,6 +319,7 @@ export class ResidentCodedbClient {
     }
 
     if (this.proc) {
+      const pid = this.proc.pid;
       try {
         if (this.proc.stdin && this.proc.stdin.writable) {
           this.proc.stdin.end();
@@ -308,13 +328,22 @@ export class ResidentCodedbClient {
         // ignore
       }
       setTimeout(() => {
-        try {
-          this.proc?.kill();
-        } catch {
-          // ignore
+        if (this.proc) {
+          try {
+            this.proc.kill("SIGKILL");
+          } catch {
+            // ignore
+          }
+          if (process.platform === "win32" && pid) {
+            try {
+              spawn("taskkill", ["/pid", String(pid), "/f", "/t"], { windowsHide: true, stdio: "ignore" }).unref();
+            } catch {
+              // ignore
+            }
+          }
+          this.proc = null;
         }
-        this.proc = null;
-      }, 200).unref();
+      }, 150).unref();
     }
 
     this.cleanupState(new Error("Resident codedb client closed"));
@@ -323,11 +352,20 @@ export class ResidentCodedbClient {
 
   closeSync(): void {
     this.clearIdleTimer();
+    unregisterResidentClient(this);
     if (this.proc) {
+      const pid = this.proc.pid;
       try {
-        this.proc.kill();
+        this.proc.kill("SIGKILL");
       } catch {
         // ignore
+      }
+      if (process.platform === "win32" && pid) {
+        try {
+          spawn("taskkill", ["/pid", String(pid), "/f", "/t"], { windowsHide: true, stdio: "ignore" }).unref();
+        } catch {
+          // ignore
+        }
       }
       this.proc = null;
     }
@@ -336,21 +374,87 @@ export class ResidentCodedbClient {
 
 const residentRegistry = new Map<string, ResidentCodedbClient>();
 
-export function getResidentClient(root: string, command: ResolvedCodedbCommand): ResidentCodedbClient {
-  const key = `${root}::${command.file}`;
-  let client = residentRegistry.get(key);
-  if (!client) {
-    client = new ResidentCodedbClient(root, command);
-    residentRegistry.set(key, client);
+function normalizeKeyRoot(root: string): string {
+  return root.replace(/\\/g, "/").toLowerCase();
+}
+
+function unregisterResidentClient(client: ResidentCodedbClient): void {
+  for (const [key, val] of residentRegistry.entries()) {
+    if (val === client) {
+      residentRegistry.delete(key);
+      break;
+    }
   }
+}
+
+export function getMaxResidentClients(): number {
+  if (process.env.WAYMARK_MAX_RESIDENT_CLIENTS) {
+    const parsed = parseInt(process.env.WAYMARK_MAX_RESIDENT_CLIENTS, 10);
+    if (!isNaN(parsed) && parsed > 0) return parsed;
+  }
+  return 2;
+}
+
+export function getResidentClient(root: string, command: ResolvedCodedbCommand): ResidentCodedbClient {
+  const normRoot = root.replace(/\\/g, "/");
+  const key = `${normalizeKeyRoot(normRoot)}::${command.file}`;
+  let client = residentRegistry.get(key);
+  if (client) {
+    client.touch();
+    return client;
+  }
+
+  // LRU Eviction check: cap resident instances in RAM
+  const maxClients = getMaxResidentClients();
+  if (residentRegistry.size >= maxClients) {
+    let oldestKey: string | null = null;
+    let oldestSeq = Infinity;
+    for (const [k, c] of residentRegistry.entries()) {
+      if (c.lastUsedSeq < oldestSeq) {
+        oldestSeq = c.lastUsedSeq;
+        oldestKey = k;
+      }
+    }
+    if (oldestKey) {
+      const oldestClient = residentRegistry.get(oldestKey);
+      if (oldestClient) {
+        oldestClient.close();
+      }
+      residentRegistry.delete(oldestKey);
+    }
+  }
+
+  client = new ResidentCodedbClient(normRoot, command);
+  residentRegistry.set(key, client);
   return client;
 }
 
+export function closeResidentClient(root: string): boolean {
+  const norm = normalizeKeyRoot(root);
+  let closed = false;
+  for (const [k, client] of Array.from(residentRegistry.entries())) {
+    if (k.startsWith(norm + "::") || k === norm) {
+      client.close();
+      residentRegistry.delete(k);
+      closed = true;
+    }
+  }
+  return closed;
+}
+
 export function closeAllResidentClients(): void {
-  for (const client of residentRegistry.values()) {
+  for (const client of Array.from(residentRegistry.values())) {
     client.closeSync();
   }
   residentRegistry.clear();
+}
+
+export function listResidentClients(): Array<{ root: string; pid?: number; lastUsedMs: number }> {
+  return Array.from(residentRegistry.values()).map((c) => ({
+    root: c.root,
+    pid: c.pid,
+    lastUsedMs: c.lastUsedMs,
+  }));
 }
 
 process.once("exit", () => {

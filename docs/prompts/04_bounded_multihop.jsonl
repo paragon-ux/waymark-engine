@@ -1,0 +1,6 @@
+{"id":"HOP-01","query":"Who calls ask?","depth":2,"direction":"callers","expected_status":"hit","notes":"Multi-hop depth 2 caller expansion"}
+{"id":"HOP-02","query":"Who calls resolveRepositoryFile?","depth":3,"direction":"callers","expected_status":"hit","notes":"Multi-hop depth 3 caller expansion"}
+{"id":"HOP-03","query":"Callees of queryMultiHopCallGraph","depth":2,"direction":"callees","expected_status":"hit","notes":"Multi-hop depth 2 callee expansion"}
+{"id":"HOP-04","query":"Who calls verifyHop?","depth":2,"exclude_tests":true,"expected_status":"hit","notes":"Multi-hop with test file exclusion"}
+{"id":"HOP-05","query":"Who calls WaymarkDaemon?","depth":2,"direction":"both","expected_status":"hit","notes":"Multi-hop bidirectional expansion"}
+{"id":"HOP-06","query":"Who calls ask?","depth":5,"expected_status":"hit","notes":"Multi-hop bounded depth 5 ensuring <= 50 node truncation safety"}

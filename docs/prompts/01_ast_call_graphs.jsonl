@@ -1,0 +1,6 @@
+{"id":"AST-01","query":"Who calls verifyHop?","expected_provider":"codedb","expected_status":"hit","target_symbol":"verifyHop","notes":"Checks caller call-graph resolution"}
+{"id":"AST-02","query":"Callers of ask","expected_provider":"codedb","expected_status":"hit","target_symbol":"ask","notes":"Checks phrasing variation for caller trace"}
+{"id":"AST-03","query":"Where is WaymarkDaemon declared?","expected_provider":"codedb","expected_status":"hit","target_symbol":"WaymarkDaemon","notes":"Checks class definition location"}
+{"id":"AST-04","query":"Definition of normalizeRelativePath","expected_provider":"codedb","expected_status":"hit","target_symbol":"normalizeRelativePath","notes":"Checks function definition location"}
+{"id":"AST-05","query":"Callees of queryMultiHopCallGraph","expected_provider":"codedb","expected_status":"hit","target_symbol":"queryMultiHopCallGraph","notes":"Checks forward invocation callee resolution"}
+{"id":"AST-06","query":"Trace discoverSymbolsInFile","expected_provider":"codedb","expected_status":"hit","target_symbol":"discoverSymbolsInFile","notes":"Checks symbol tracing intent"}

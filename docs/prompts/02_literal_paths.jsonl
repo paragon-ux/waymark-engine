@@ -1,0 +1,6 @@
+{"id":"PATH-01","query":"package.json","expected_provider":"literal-path","expected_status":"hit","notes":"Checks root bare filename resolution via PrefixTrie"}
+{"id":"PATH-02","query":"src/daemon.ts","expected_provider":"literal-path","expected_status":"hit","notes":"Checks exact relative path resolution"}
+{"id":"PATH-03","query":"prefixTrie.ts","expected_provider":"literal-path","expected_status":"hit","notes":"Checks unique basename resolution"}
+{"id":"PATH-04","query":"./src/paths.ts","expected_provider":"literal-path","expected_status":"hit","notes":"Checks leading dot-slash path normalization"}
+{"id":"PATH-05","query":"src/mcp/capnTools.ts","expected_provider":"literal-path","expected_status":"hit","notes":"Checks multi-level nested relative path"}
+{"id":"PATH-06","query":"AGENTS.md","expected_provider":"literal-path","expected_status":"hit","notes":"Checks root markdown file resolution"}

@@ -1,0 +1,6 @@
+{"id":"BATCH-01","symbols":["ask","verifyHop"],"expected_hits":2,"expected_misses":0,"notes":"Two existing core symbols"}
+{"id":"BATCH-02","symbols":["WaymarkDaemon","PrefixTrie","ResidentCodedbClient"],"expected_hits":3,"expected_misses":0,"notes":"Three class definitions"}
+{"id":"BATCH-03","symbols":["ask","completelyNonExistentSymbol123"],"expected_hits":1,"expected_misses":1,"notes":"Partial hit and miss report"}
+{"id":"BATCH-04","symbols":["normalizeRelativePath","repoRoot","isInside"],"expected_hits":3,"expected_misses":0,"notes":"Path utility function cluster"}
+{"id":"BATCH-05","symbols":["nonExistentA","nonExistentB"],"expected_hits":0,"expected_misses":2,"notes":"All misses batch reporting"}
+{"id":"BATCH-06","symbols":["McpServer","discoverSymbolsInFile"],"expected_hits":2,"expected_misses":0,"notes":"MCP integration symbols"}

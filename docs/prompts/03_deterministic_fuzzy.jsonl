@@ -1,0 +1,6 @@
+{"id":"FUZZY-01","query":"verifyHp","expected_provider":"fuzzy-lexical","expected_status":"hit","tier":"fuzzy","notes":"Misspelling of verifyHop"}
+{"id":"FUZZY-02","query":"prefxTre","expected_provider":"fuzzy-lexical","expected_status":"hit","tier":"fuzzy","notes":"Misspelling of prefixTrie"}
+{"id":"FUZZY-03","query":"discovrSymbls","expected_provider":"fuzzy-lexical","expected_status":"hit","tier":"fuzzy","notes":"Misspelling of discoverSymbols"}
+{"id":"FUZZY-04","query":"WaymrkDaemon","expected_provider":"fuzzy-lexical","expected_status":"hit","tier":"fuzzy","notes":"Misspelling of WaymarkDaemon"}
+{"id":"FUZZY-05","query":"cpnTools","expected_provider":"fuzzy-lexical","expected_status":"hit","tier":"fuzzy","notes":"Partial token for capnTools"}
+{"id":"FUZZY-06","query":"normlizeRelatve","expected_provider":"fuzzy-lexical","expected_status":"hit","tier":"fuzzy","notes":"Misspelling of normalizeRelativePath"}

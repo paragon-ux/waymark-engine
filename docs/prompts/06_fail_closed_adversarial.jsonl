@@ -1,0 +1,6 @@
+{"id":"FAIL-01","query":"Who calls nonExistentMethodXYZ?","expected_status":"miss","notes":"Nonexistent symbol query fails closed cleanly"}
+{"id":"FAIL-02","query":"../../etc/passwd","expected_status":"miss","notes":"Path traversal attempt rejected fail-closed cleanly"}
+{"id":"FAIL-03","query":"nonexistent/file/path.ts","expected_status":"miss","notes":"Nonexistent path query misses cleanly"}
+{"id":"FAIL-04","query":"Who calls foo\u0000bar","expected_status":"miss","notes":"Null byte injection rejected fail-closed cleanly"}
+{"id":"FAIL-05","query":"Where is totallyFakeClassDeclared?","expected_status":"miss","notes":"Nonexistent class definition fails closed"}
+{"id":"FAIL-06","query":"unknownSymbol12345","expected_status":"miss","notes":"Bare token with no match emits clean miss"}

@@ -15,6 +15,6 @@ precision-probes.mjs
 local-*.mjs
 scripts/local-*
 scratch/
-docs/
+site/
 *.log
 .capn/

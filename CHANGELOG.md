@@ -4,6 +4,25 @@ All notable changes to `waymark-engine` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.0] - 2026-10-08
+
+### Zensical Documentation Portal, GitHub Pages Workflow, Executive README Alignment, and Glama Registry Schema
+
+Version 2.7.0 launches the official **Zensical Documentation Site** with GitHub Pages automated deployment, declutters and aligns `README.md` and npm package metadata, and adds first-class Glama MCP registry discovery.
+
+### Added
+- **Zensical Documentation Portal (`zensical.toml`, `docs/`)**:
+  - Structured static doc portal configured with Material theme, instant navigation, dark/light palette toggle, search index, and Mermaid diagrams.
+  - Comprehensive documentation suite: Overview (`docs/index.md`), Getting Started (`docs/getting-started.md`), 4-Tier Architecture (`docs/architecture.md`), Model Context Protocol (`docs/mcp.md`), CLI & Command Registry (`docs/commands.md`), Empirical Benchmarks (`docs/benchmarks.md`), and Library API & Integrity Primitives (`docs/library-api.md`).
+- **GitHub Pages CI/CD Workflow (`.github/workflows/docs.yml`)**:
+  - Automated deployment workflow building Zensical docs and deploying to GitHub Pages (`https://paragon-ux.github.io/waymark-engine/`).
+- **Glama MCP Schema (`glama.json`)**:
+  - Root `glama.json` schema declaring `https://glama.ai/mcp/schemas/server.json` and `maintainers: ["paragon-ux"]` for discovery on Glama.
+  - Added `glama.json` to npm package `files` manifest.
+- **Executive README & Metadata Refresh (`README.md`, `package.json`)**:
+  - Streamlined `README.md` from 293 to 112 lines, adding purple Zensical docs badge and live REPL observer guide.
+  - Aligned `package.json` description with the primary code intelligence thesis.
+
 ## [2.6.0] - 2026-10-08
 
 ### Standalone Web Live Viewer, SSE Telemetry Streaming, and Decoupled Viewport-Locked UI

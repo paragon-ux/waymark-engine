@@ -1,7 +1,7 @@
 {
   "name": "waymark-engine",
-  "version": "2.6.0",
-  "description": "Agentic code discovery: ask your codebase a question, get exact file + symbol + line span in milliseconds. No re-reading, no guessing, no index to build.",
+  "version": "2.7.0",
+  "description": "Sub-millisecond AST structural & lexical BM25 code intelligence for AI coding agents. Ask your codebase a question, get exact file + symbol + line span in milliseconds.",
   "type": "module",
   "main": "./dist/src/index.js",
   "exports": {
@@ -34,7 +34,8 @@
     "dist/src",
     "bin",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "glama.json"
   ],
   "engines": {
     "node": ">=22"

@@ -18,7 +18,7 @@ const VALUE_FLAGS = new Set([
   "profile", "path", "language", "capn-executable", "question", "answer", "files",
   "tier", "t", "format", "idle-timeout", "query", "symbol", "symbols", "q", "s",
   "depth", "direction", "manifest", "category", "id", "file", "facet", "action", "subsystem",
-  "root", "session",
+  "root", "session", "port",
 ]);
 
 const BOOLEAN_FLAGS = new Set([
@@ -266,7 +266,10 @@ async function runCommand(command: string, rawArgs: readonly string[]): Promise<
       return { value: scoreboard, exitCode: scoreboard.failed > 0 ? 1 : 0 };
     }
 
-    await startRepl({ rootDir: root, plain, dev, live, sessionPath });
+    const portStr = parsed.values.get("port");
+    const port = portStr ? parseInt(portStr, 10) : undefined;
+
+    await startRepl({ rootDir: root, plain, dev, live, sessionPath, port });
     return { value: null };
   }
 

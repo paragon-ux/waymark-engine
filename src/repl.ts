@@ -1,6 +1,7 @@
 import readline from "node:readline";
 import fs from "node:fs";
 import path from "node:path";
+import http from "node:http";
 import { ask } from "./capnAdapter.js";
 import { queryMultiSymbols } from "./codedbAdapter.js";
 import { discoverSymbolsInFile, discoverSymbolsInRepo } from "./astExtractor.js";
@@ -19,6 +20,7 @@ export interface ReplOptions {
   manifestPath?: string;
   live?: boolean;
   sessionPath?: string;
+  port?: number;
 }
 
 /**
@@ -489,7 +491,7 @@ export async function runReplScript(scriptPath: string, rootDir?: string): Promi
   }
 }
 
-function formatLiveEvent(ev: SessionTelemetryEvent): string {
+export function formatLiveEvent(ev: SessionTelemetryEvent): string {
   const time = ev.timestamp ? ev.timestamp.split("T")[1]?.slice(0, 8) : "";
   const lines: string[] = [];
   lines.push(`\x1b[1m[${time}]\x1b[0m \x1b[36mAGENT QUERY:\x1b[0m "${ev.query}"`);
@@ -511,9 +513,83 @@ function formatLiveEvent(ev: SessionTelemetryEvent): string {
   return lines.join("\n");
 }
 
+export interface SessionSummaryStats {
+  total: number;
+  hits: number;
+  junctions: number;
+  misses: number;
+  totalTokens: number;
+  savedTokens: number;
+  totalLatencyMs: number;
+  hitRatePct: number;
+  avgLatencyMs: number;
+  netSavingsPct: number;
+}
+
+export function computeSessionStats(events: SessionTelemetryEvent[]): SessionSummaryStats {
+  const stats = {
+    total: 0,
+    hits: 0,
+    misses: 0,
+    junctions: 0,
+    totalTokens: 0,
+    savedTokens: 0,
+    totalLatencyMs: 0,
+  };
+  for (const ev of events) {
+    stats.total++;
+    if (ev.status === "hit") stats.hits++;
+    else if (ev.status === "junction") stats.junctions++;
+    else stats.misses++;
+    stats.totalTokens += ev.payloadTokens || 0;
+    stats.savedTokens += Math.max(0, (ev.fullFileTokensEquivalent || 1420) - (ev.payloadTokens || 0));
+    stats.totalLatencyMs += ev.latencyMs || 0;
+  }
+  const hitRatePct = stats.total > 0 ? Math.round((stats.hits / stats.total) * 1000) / 10 : 0;
+  const avgLatencyMs = stats.total > 0 ? Math.round(stats.totalLatencyMs / stats.total) : 0;
+  const totalFull = stats.totalTokens + stats.savedTokens;
+  const netSavingsPct = totalFull > 0 ? Math.round((stats.savedTokens / totalFull) * 1000) / 10 : 0;
+  return {
+    ...stats,
+    hitRatePct,
+    avgLatencyMs,
+    netSavingsPct,
+  };
+}
+
+export function formatSessionSummary(stats: SessionSummaryStats): string {
+  const totalFull = stats.totalTokens + stats.savedTokens;
+  return [
+    "--------------------------------------------------------------------------------",
+    "  LIVE SESSION TELEMETRY SUMMARY",
+    `  Total Queries:     ${stats.total} (Hits: ${stats.hits}, Junctions: ${stats.junctions}, Misses: ${stats.misses})`,
+    `  Hit Rate:          ${stats.hitRatePct}%`,
+    `  Avg Query Latency: ${stats.avgLatencyMs}ms`,
+    `  Prompt Tokens:     ${stats.totalTokens} tokens consumed`,
+    `  Full-File Equiv:   ${totalFull} tokens`,
+    `  Net Token Savings: ${stats.netSavingsPct}%`,
+    "--------------------------------------------------------------------------------",
+  ].join("\n");
+}
+
+export function getLiveDashboardHtml(): string {
+  const candidates = [
+    path.join(import.meta.dirname, "viewer.html"),
+    path.join(import.meta.dirname, "../src/viewer.html"),
+    path.join(repoRoot(), "src", "viewer.html"),
+  ];
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) {
+      return fs.readFileSync(candidate, "utf8");
+    }
+  }
+  return "<!DOCTYPE html><html><body><h1>Waymark Live Monitor</h1><p>viewer.html not found.</p></body></html>";
+}
+
 export async function startLiveReplObserver(options: ReplOptions = {}): Promise<void> {
   const root = options.rootDir ? path.resolve(options.rootDir) : repoRoot();
   const sessionPath = resolveSessionLogPath(root, options.sessionPath);
+  const webPort = options.port || (process.env.WAYMARK_LIVE_PORT ? parseInt(process.env.WAYMARK_LIVE_PORT, 10) : undefined);
 
   // Ensure file and directory exist
   const dir = path.dirname(sessionPath);
@@ -524,21 +600,9 @@ export async function startLiveReplObserver(options: ReplOptions = {}): Promise<
     fs.writeFileSync(sessionPath, "", "utf8");
   }
 
-  const printHeader = () => {
-    process.stdout.write("\x1Bc"); // ANSI clear screen
-    process.stdout.write(
-      [
-        "================================================================================",
-        "  WAYMARK ENGINE LIVE AGENT MONITOR  |  PDLt-Style Observer",
-        `  Session: ${path.relative(root, sessionPath) || sessionPath}`,
-        `  Repo:    ${root}`,
-        "  Status:  LISTENING (press 'q' to quit, 'c' to clear, 's' for session stats)",
-        "================================================================================\n",
-      ].join("\n")
-    );
-  };
-
-  printHeader();
+  const sseClients = new Set<http.ServerResponse>();
+  let httpServer: http.Server | undefined;
+  const recentEvents: SessionTelemetryEvent[] = [];
 
   const stats = {
     total: 0,
@@ -549,6 +613,72 @@ export async function startLiveReplObserver(options: ReplOptions = {}): Promise<
     savedTokens: 0,
     totalLatencyMs: 0,
   };
+
+  const getComputedStats = () => {
+    const hitRate = stats.total > 0 ? Math.round((stats.hits / stats.total) * 1000) / 10 : 0;
+    const avgLatency = stats.total > 0 ? Math.round(stats.totalLatencyMs / stats.total) : 0;
+    const totalFull = stats.totalTokens + stats.savedTokens;
+    const savingsPct = totalFull > 0 ? Math.round((stats.savedTokens / totalFull) * 1000) / 10 : 0;
+    return {
+      ...stats,
+      hitRatePct: hitRate,
+      avgLatencyMs: avgLatency,
+      netSavingsPct: savingsPct,
+    };
+  };
+
+  if (webPort) {
+    httpServer = http.createServer((req, res) => {
+      const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
+      if (url.pathname === "/events") {
+        res.writeHead(200, {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+          "Connection": "keep-alive",
+          "Access-Control-Allow-Origin": "*",
+        });
+        res.write(`event: init\ndata: ${JSON.stringify({
+          repo: path.basename(root),
+          root,
+          stats: getComputedStats(),
+          events: recentEvents.slice(-25),
+        })}\n\n`);
+        sseClients.add(res);
+        res.on("close", () => {
+          sseClients.delete(res);
+        });
+        return;
+      }
+      if (url.pathname === "/api/stats") {
+        res.writeHead(200, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
+        res.end(JSON.stringify(getComputedStats()));
+        return;
+      }
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      res.end(getLiveDashboardHtml());
+    });
+
+    httpServer.listen(webPort, "0.0.0.0", () => {
+      // server active
+    });
+  }
+
+  const printHeader = () => {
+    process.stdout.write("\x1Bc"); // ANSI clear screen
+    process.stdout.write(
+      [
+        "================================================================================",
+        "  WAYMARK ENGINE LIVE AGENT MONITOR  |  PDLt-Style Observer",
+        `  Session:    ${path.relative(root, sessionPath) || sessionPath}`,
+        `  Repo:       ${root}`,
+        ...(webPort ? [`  Web Viewer: http://localhost:${webPort}`] : []),
+        "  Status:     LISTENING (press 'q' to quit, 'c' to clear, 's' for session stats)",
+        "================================================================================\n",
+      ].join("\n")
+    );
+  };
+
+  printHeader();
 
   let fileOffset = 0;
 
@@ -567,6 +697,7 @@ export async function startLiveReplObserver(options: ReplOptions = {}): Promise<
         stats.totalTokens += ev.payloadTokens || 0;
         stats.savedTokens += Math.max(0, (ev.fullFileTokensEquivalent || 1420) - (ev.payloadTokens || 0));
         stats.totalLatencyMs += ev.latencyMs || 0;
+        recentEvents.push(ev);
       } catch {}
     }
     if (lines.length > 0) {
@@ -613,7 +744,21 @@ export async function startLiveReplObserver(options: ReplOptions = {}): Promise<
             stats.savedTokens += Math.max(0, (ev.fullFileTokensEquivalent || 1420) - (ev.payloadTokens || 0));
             stats.totalLatencyMs += ev.latencyMs || 0;
 
+            recentEvents.push(ev);
+            if (recentEvents.length > 100) recentEvents.shift();
+
             process.stdout.write(formatLiveEvent(ev) + "\n");
+
+            if (sseClients.size > 0) {
+              const queryPayload = `event: query\ndata: ${JSON.stringify(ev)}\n\n`;
+              const statsPayload = `event: stats\ndata: ${JSON.stringify(getComputedStats())}\n\n`;
+              for (const client of sseClients) {
+                try {
+                  client.write(queryPayload);
+                  client.write(statsPayload);
+                } catch {}
+              }
+            }
           } catch {}
         }
       } else if (stat.size < fileOffset) {
@@ -635,9 +780,7 @@ export async function startLiveReplObserver(options: ReplOptions = {}): Promise<
       process.stdin.setEncoding("utf8");
       process.stdin.on("data", (key: string) => {
         if (key === "\u0003" || key.toLowerCase() === "q") {
-          clearInterval(pollInterval);
-          process.stdout.write("\nExiting Live Agent Monitor.\n");
-          process.exit(0);
+          cleanup();
         } else if (key.toLowerCase() === "c") {
           printHeader();
         } else if (key.toLowerCase() === "s") {
@@ -645,19 +788,13 @@ export async function startLiveReplObserver(options: ReplOptions = {}): Promise<
           const avgLatency = stats.total > 0 ? Math.round(stats.totalLatencyMs / stats.total) : 0;
           const totalFull = stats.totalTokens + stats.savedTokens;
           const savingsPct = totalFull > 0 ? Math.round((stats.savedTokens / totalFull) * 1000) / 10 : 0;
-          process.stdout.write(
-            [
-              "\n--------------------------------------------------------------------------------",
-              "  LIVE SESSION TELEMETRY SUMMARY",
-              `  Total Queries:     ${stats.total} (Hits: ${stats.hits}, Junctions: ${stats.junctions}, Misses: ${stats.misses})`,
-              `  Hit Rate:          ${hitRate}%`,
-              `  Avg Query Latency: ${avgLatency}ms`,
-              `  Prompt Tokens:     ${stats.totalTokens} tokens consumed`,
-              `  Full-File Equiv:   ${totalFull} tokens`,
-              `  Net Token Savings: ${savingsPct}%`,
-              "--------------------------------------------------------------------------------\n",
-            ].join("\n")
-          );
+          const summary = formatSessionSummary({
+            ...stats,
+            hitRatePct: hitRate,
+            avgLatencyMs: avgLatency,
+            netSavingsPct: savingsPct,
+          });
+          process.stdout.write(`\n${summary}\n`);
         }
       });
     } catch {}
@@ -665,6 +802,9 @@ export async function startLiveReplObserver(options: ReplOptions = {}): Promise<
 
   const cleanup = () => {
     clearInterval(pollInterval);
+    if (httpServer) {
+      try { httpServer.close(); } catch {}
+    }
     process.stdout.write("\nExiting Live Agent Monitor.\n");
     process.exit(0);
   };

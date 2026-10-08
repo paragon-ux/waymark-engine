@@ -4,6 +4,24 @@ All notable changes to `waymark-engine` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.0] - 2026-10-08
+
+### Standalone Web Live Viewer, SSE Telemetry Streaming, and Decoupled Viewport-Locked UI
+
+Version 2.6.0 introduces the **Standalone Web Live Viewer** (`waymark repl --live --port <port>`), real-time Server-Sent Events (SSE) telemetry streaming, a decoupled HTML dashboard template, and a principled viewport-locked flexbox layout with single internal scrollbar and default 125% zoom.
+
+### Added
+- **Web Live Monitor & SSE Telemetry Stream (`src/repl.ts`, `src/viewer.html`)**:
+  - Embedded zero-dependency HTTP server via `node:http` on configurable port (`--port <num>`, default `4141`, or `WAYMARK_LIVE_PORT`).
+  - Real-time Server-Sent Events (SSE) `/events` broadcast streaming query events (`event: query`) and live session metrics (`event: stats`).
+  - Programmatic session telemetry summary endpoint `GET /api/stats`.
+- **Decoupled Standalone UI Template (`src/viewer.html`)**:
+  - Extracted UI template into standalone [`src/viewer.html`](src/viewer.html) with automated build asset synchronization to `dist/src/viewer.html`.
+  - Implemented viewport-locked flexbox app-shell with `html, body { overflow: hidden; }` and flex item height constraints, ensuring zero dual/nested scrollbars across any viewport dimensions.
+  - Default $125\%$ zoom scaling paired with root typography scaling (`html { font-size: 125%; }` and `body { zoom: 125%; }`) for crisp readability on high-DPI displays.
+- **Exported Telemetry Aggregators (`src/repl.ts`)**:
+  - Exported `formatLiveEvent`, `computeSessionStats`, `formatSessionSummary`, and `getLiveDashboardHtml` for modular programmatic and testing consumption.
+
 ## [2.5.0] - 2026-09-29
 
 ### Live REPL Observer, Process LRU Pooling, Monorepo Hardening, and Polyglot AST Outline

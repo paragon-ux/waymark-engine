@@ -107,7 +107,7 @@ waymark repl [--live] [--port <port>]
 - **`--live`**: Launches the real-time Server-Sent Events (SSE) Web Viewer.
 - **`--port <port>`**: Port for Web Viewer (default: `4141`).
 
-The viewer binds only to `127.0.0.1`, emits no permissive CORS header, and starts only when `WAYMARK_TELEMETRY=1` is set. Persistent query/session logging also requires this opt-in; it is disabled by default. `WAYMARK_NO_LOG=1` remains an explicit deny switch.
+The viewer binds only to `127.0.0.1`, requires the per-session token in the printed access URL, rejects mismatched Host/Origin headers, and blocks framing. It emits no permissive CORS header and starts only when `WAYMARK_TELEMETRY=1` is set. Persistent query/session logging also requires this opt-in; it is disabled by default. `WAYMARK_NO_LOG=1` remains an explicit deny switch.
 
 `--subsystem` is not supported by discovery, charting, bootstrap, or map maintenance and returns `UNSUPPORTED_SUBSYSTEM` instead of silently querying the whole repository. On Windows, `WAYMARK_CODEDB_EXECUTABLE` must point to a native `.exe`; `.cmd` and `.bat` shims return `CODEDB_UNSUPPORTED_SHIM`.
 

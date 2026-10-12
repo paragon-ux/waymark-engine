@@ -953,7 +953,7 @@ async function routeDiscoveryCore(ctx: DiscoveryRouteContext): Promise<AskResult
       status: "miss",
       provider: "capn-cli",
       missCode: "NO_CHARTED_MEMORY",
-      reason: `No charted consensus memory found for architectural question: "${question}". Run 'waymark memory bootstrap' or chart with 'waymark memory chart' to record architectural consensus.`,
+      reason: `No charted consensus memory found for architectural question: "${question}". Run 'waymark memory bootstrap' to collect unverified source excerpts, verify them, then chart supported claims with 'waymark memory chart'.`,
       matches: [],
       ...(recordTiming ? { timings } : {}),
     };

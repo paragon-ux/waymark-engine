@@ -27,7 +27,7 @@ Invariants:
 - Tests cover both success and fail-closed paths. `npm run verify` must stay green.
 - `waymark memory bootstrap` returns source excerpts as unverified drafts; it never initializes `.capn` or publishes facts. Verify and explicitly chart claims.
 - Subsystem-scoped operations return `UNSUPPORTED_SUBSYSTEM`; omit subsystem to target the selected repository root.
-- Query/session telemetry is not persisted unless `WAYMARK_TELEMETRY=1`; the live viewer is loopback-only and also requires this opt-in.
+- Query/session telemetry is not persisted unless `WAYMARK_TELEMETRY=1`; the loopback live viewer also requires opt-in and a per-session access token, validates Host/Origin, and blocks framing.
 - On Windows, `WAYMARK_CODEDB_EXECUTABLE` must name a native `.exe`; `.cmd` and `.bat` shims are rejected rather than run through a shell.
 
 ---

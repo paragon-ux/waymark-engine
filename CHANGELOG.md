@@ -17,8 +17,10 @@ Version 2.7.2 hardens daemon shutdown and dashboard safety, improves discovery a
   - Lexical matches without topical evidence are not returned as successful answers, while relevant memory results remain available.
 - **Evidence-Backed Map Bootstrap (`src/semanticMap.ts`)**:
   - Bootstrap returns source-grounded excerpts as unverified drafts; it does not publish unsupported architectural claims as validated facts.
+- **Semantic Map Guidance (`src/semanticMap.ts`, `src/discoveryRouter.ts`)**:
+  - Uninitialized stores now direct users to `waymark memory init`; bootstrap is described as draft collection that requires verification and explicit charting.
 - **Live Dashboard Exposure (`src/repl.ts`)**:
-  - The observer requires telemetry opt-in, binds to loopback, and does not permit cross-origin access; no remote mode is supported.
+  - The observer requires telemetry opt-in, binds to loopback, and requires a random per-session token on the dashboard and telemetry endpoints. Host and Origin checks reject cross-origin access, and CSP blocks framing; no remote mode is supported.
 - **Dashboard HTML Injection (`src/viewer.html`)**:
   - Untrusted telemetry values are rendered as text and cannot inject markup or alter the dashboard structure.
 - **Anchor Integrity (`src/integrity.ts`)**:
@@ -28,7 +30,7 @@ Version 2.7.2 hardens daemon shutdown and dashboard safety, improves discovery a
 - **Prompt Evaluator Contracts (`src/evaluator.ts`)**:
   - Declared steps and expectations are executed and checked; unsupported operations fail explicitly, and results and exit status reflect actual execution.
 - **Windows Codedb Executable Contract (`src/executable.ts`, `src/codedbAdapter.ts`, `src/residentCodedb.ts`)**:
-  - Windows `.cmd` and `.bat` shims are explicitly rejected with typed errors in cold and resident paths; no shell interpolation is used.
+  - Configure `WAYMARK_CODEDB_EXECUTABLE` with a native `.exe`; Windows `.cmd` and `.bat` shims are rejected with typed errors in cold and resident paths, with no shell interpolation.
 - **Codedb Infrastructure Errors (`src/codedbAdapter.ts`, `src/astExtractor.ts`, `src/discoveryRouter.ts`)**:
   - Missing executables, timeouts, and process failures remain infrastructure errors instead of being reported as symbol misses.
 - **Subsystem Scope Contract (`src/semanticMap.ts`, `src/capnAdapter.ts`, `src/discoveryRouter.ts`, `src/cli.ts`, `src/mcp/capnTools.ts`)**:

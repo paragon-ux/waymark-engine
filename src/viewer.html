@@ -239,7 +239,8 @@
   </div>
 
   <script>
-    const evtSource = new EventSource('/events');
+    const token = new URLSearchParams(window.location.search).get('token') || '';
+    const evtSource = new EventSource('/events?token=' + encodeURIComponent(token));
     const eventList = document.getElementById('event-list');
     const mTotal = document.getElementById('m-total');
     const mHitrate = document.getElementById('m-hitrate');

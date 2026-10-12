@@ -76,9 +76,9 @@ Launch the interactive REPL with real-time SSE telemetry and browser viewer on p
 ```bash
 waymark repl --live --port 4141
 ```
-Open **`http://localhost:4141`** to observe query executions, tier breakdowns, cache hits, and run prompt evaluation batteries (`/battery`) in a viewport-locked layout.
+Open the access URL printed by the REPL to observe query executions, tier breakdowns, and cache hits in a viewport-locked layout. Run `/battery` in the REPL to execute prompt evaluations. The URL contains a random session token; keep it private.
 
-The live observer binds to `127.0.0.1` and requires explicit telemetry opt-in with `WAYMARK_TELEMETRY=1`. Persistent query/session logs are disabled by default. Do not expose the local viewer through a public interface.
+The live observer binds to `127.0.0.1`, requires explicit telemetry opt-in with `WAYMARK_TELEMETRY=1`, and checks the session token on the dashboard and telemetry endpoints. It rejects mismatched Host or Origin headers and blocks framing. Persistent query/session logs are disabled by default. Do not expose the local viewer through a public interface.
 
 ### Semantic Repo Map and Platform Limits
 

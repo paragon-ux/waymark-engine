@@ -6,6 +6,7 @@ import path from "node:path";
 import vm from "node:vm";
 import { execFileSync, spawn } from "node:child_process";
 import { createServer } from "node:net";
+import { request as httpRequest } from "node:http";
 import { normalizeRelativePath, anchorForRange, resolveRepositoryFile } from "../src/paths.js";
 import { verifyHop } from "../src/integrity.js";
 import { collectRepoPaths, invalidatePathsCache } from "../src/discoveryRouter.js";
@@ -175,12 +176,21 @@ test("live dashboard is loopback-only, omits permissive CORS, and renders teleme
     getElementById(id: string) { const value = elements.get(id) ?? new Element(); elements.set(id, value); return value; },
     createElement() { return new Element(); },
   };
+  const eventSourceUrls: string[] = [];
   class EventSource {
+    constructor(url: string) { eventSourceUrls.push(url); }
     addEventListener(name: string, callback: (event: { data: string }) => void) { listeners[name] = callback; }
   }
   const script = html.match(/<script>([\s\S]*?)<\/script>/u)?.[1];
   assert.ok(script);
-  vm.runInNewContext(script, { document, EventSource });
+  vm.runInNewContext(script, {
+    document,
+    EventSource,
+    URLSearchParams,
+    encodeURIComponent,
+    window: { location: { search: "?token=unit-test-token" } },
+  });
+  assert.deepEqual(eventSourceUrls, ["/events?token=unit-test-token"]);
   const hostile = "<img src=x onerror=alert(1)><script>alter()</script>";
   listeners.query!({ data: JSON.stringify({
     timestamp: hostile,
@@ -201,7 +211,7 @@ test("live dashboard is loopback-only, omits permissive CORS, and renders teleme
   assert.ok(eventList.children.every((node) => node.children.length === 2));
 });
 
-test("opted-in live dashboard serves over loopback without CORS headers", async () => {
+test("opted-in live dashboard requires its token, rejects hostile origins and hosts, and forbids framing", async () => {
   const root = workspace();
   const portProbe = createServer();
   await new Promise<void>((resolve, reject) => {
@@ -218,22 +228,66 @@ test("opted-in live dashboard serves over loopback without CORS headers", async 
   delete env.WAYMARK_HOOK_DEPTH;
   const cli = path.resolve(import.meta.dirname, "../src/cli.js");
   const child = spawn(process.execPath, [cli, "repl", "--live", "--port", String(port), "--root", root], {
-    stdio: ["pipe", "ignore", "pipe"], env,
+    stdio: ["pipe", "pipe", "pipe"], env,
   });
+  let stdout = "";
   let stderr = "";
+  child.stdout?.on("data", (chunk: Buffer) => { stdout += chunk.toString(); });
   child.stderr?.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
   try {
-    let response: Response | undefined;
-    for (let attempt = 0; attempt < 40 && !response; attempt++) {
-      try { response = await fetch(`http://${LIVE_OBSERVER_HOST}:${port}/`); }
-      catch {
-        if (child.exitCode !== null) break;
-        await new Promise((resolve) => setTimeout(resolve, 50));
-      }
+    let viewerUrl: URL | undefined;
+    for (let attempt = 0; attempt < 40 && !viewerUrl; attempt++) {
+      const match = stdout.match(/Web Viewer:\s*(http:\/\/127\.0\.0\.1:\d+\/\?token=[A-Za-z0-9_-]+)/u);
+      if (match?.[1]) viewerUrl = new URL(match[1]);
+      else if (child.exitCode !== null) break;
+      else await new Promise((resolve) => setTimeout(resolve, 50));
     }
-    assert.ok(response, `observer did not start: ${stderr}`);
+    assert.ok(viewerUrl, `observer did not start or print its access URL: ${stderr}\n${stdout}`);
+    assert.equal(viewerUrl.searchParams.get("token")?.length, 43);
+    const base = new URL(viewerUrl);
+    base.search = "";
+    const tokenless = await fetch(base);
+    assert.equal(tokenless.status, 403);
+    assert.equal((await fetch(new URL("/events", base))).status, 403);
+    assert.equal((await fetch(new URL("/api/stats", base))).status, 403);
+
+    const forgedHostStatuses = await Promise.all([false, true].map((absoluteForm) => new Promise<number>((resolve, reject) => {
+      const request = httpRequest({
+        hostname: base.hostname,
+        port: Number(base.port),
+        path: absoluteForm ? viewerUrl!.href : viewerUrl!.pathname + viewerUrl!.search,
+        headers: { Host: "attacker.example" },
+      }, (response) => {
+        response.resume();
+        resolve(response.statusCode ?? 0);
+      });
+      request.on("error", reject);
+      request.end();
+    })));
+    assert.deepEqual(forgedHostStatuses, [403, 403]);
+
+    const hostileOrigin = await fetch(viewerUrl, { headers: { Origin: "https://attacker.example" } });
+    assert.equal(hostileOrigin.status, 403);
+    const response = await fetch(viewerUrl);
+    assert.equal(response.status, 200);
     assert.equal(response.headers.get("access-control-allow-origin"), null);
-    assert.match(await response.text(), /Waymark Engine - Live Agent Monitor/u);
+    assert.match(response.headers.get("content-security-policy") ?? "", /frame-ancestors 'none'/u);
+    assert.equal(response.headers.get("x-frame-options"), "DENY");
+    assert.equal(response.headers.get("referrer-policy"), "no-referrer");
+    assert.match(await response.text(), /<script nonce="[A-Za-z0-9+/=]+">/u);
+
+    const statsUrl = new URL(viewerUrl);
+    statsUrl.pathname = "/api/stats";
+    const stats = await fetch(statsUrl, { headers: { Origin: viewerUrl.origin } });
+    assert.equal(stats.status, 200);
+    assert.equal((await stats.json() as { total: number }).total, 0);
+
+    const eventsUrl = new URL(`/events${viewerUrl.search}`, viewerUrl);
+    const hostileEvents = await fetch(eventsUrl, { headers: { Origin: "https://attacker.example" } });
+    assert.equal(hostileEvents.status, 403);
+    const events = await fetch(eventsUrl, { headers: { Origin: viewerUrl.origin } });
+    assert.equal(events.status, 200);
+    await events.body?.cancel();
   } finally {
     try { child.kill(); } catch {}
     if (child.exitCode === null) await Promise.race([

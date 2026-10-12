@@ -85,16 +85,6 @@ jobs:
           test -f "${tarball}"
           echo "tarball=${tarball}" >> "$GITHUB_OUTPUT"
           echo "release_tag=${release_tag}" >> "$GITHUB_OUTPUT"
-      - name: Publish to npm (OIDC Trusted Publishing or NPM_TOKEN)
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          CODEDB_ALLOW_TEMP: "1"
-        run: |
-          if [ -z "${NODE_AUTH_TOKEN}" ]; then
-            unset NODE_AUTH_TOKEN
-            npm config delete //registry.npmjs.org/:_authToken || true
-          fi
-          npm publish --access public --provenance
       - name: Create or update GitHub Release and attach npm tarball
         env:
           GH_TOKEN: ${{ github.token }}
@@ -105,3 +95,12 @@ jobs:
           else
             gh release create "${tag}" "${{ steps.pack.outputs.tarball }}" --verify-tag --generate-notes
           fi
+      - name: Publish to npm (OIDC Trusted Publishing or NPM_TOKEN)
+        env:
+          NPM_TOKEN_SECRET: ${{ secrets.NPM_TOKEN }}
+          CODEDB_ALLOW_TEMP: "1"
+        run: |
+          if [ -n "${NPM_TOKEN_SECRET}" ]; then
+            export NODE_AUTH_TOKEN="${NPM_TOKEN_SECRET}"
+          fi
+          npm publish --access public --provenance

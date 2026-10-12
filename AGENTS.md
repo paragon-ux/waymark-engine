@@ -25,6 +25,10 @@ Invariants:
 - Fuzzy matching is zero-dependency and strictly deterministic.
 - Host CPU responsiveness is protected: `CODEDB_MAX_THREADS` defaults to `max(1, cpus - 1)` so 1 logical core remains free.
 - Tests cover both success and fail-closed paths. `npm run verify` must stay green.
+- `waymark memory bootstrap` returns source excerpts as unverified drafts; it never initializes `.capn` or publishes facts. Verify and explicitly chart claims.
+- Subsystem-scoped operations return `UNSUPPORTED_SUBSYSTEM`; omit subsystem to target the selected repository root.
+- Query/session telemetry is not persisted unless `WAYMARK_TELEMETRY=1`; the live viewer is loopback-only and also requires this opt-in.
+- On Windows, `WAYMARK_CODEDB_EXECUTABLE` must name a native `.exe`; `.cmd` and `.bat` shims are rejected rather than run through a shell.
 
 ---
 
@@ -167,7 +171,7 @@ Consolidates all code intelligence, 4-tier queries, call graphs, AST symbol disc
 #### 2. Verb 2: `waymark_memory` (Write, Bootstrap & Lifecycle Maintenance)
 Consolidates all stateful operations, consensus memory management, and map maintenance through the **`action`** parameter:
 
-* **Subcommand `bootstrap`** (Two-Pass Semantic Repo Map generation into SQLite):
+* **Subcommand `bootstrap`** (source-evidence draft collection; no automatic publication):
   ```json
   {
     "name": "waymark_memory",
@@ -266,7 +270,7 @@ Consolidates all stateful operations, consensus memory management, and map maint
   }
   ```
 
-* **Subcommand `heal`** (Reconcile Semantic Repo Map anchors and update SQLite consensus ledger):
+* **Subcommand `heal`** (Recollect source-backed drafts without changing established claims):
   ```json
   {
     "name": "waymark_memory",
@@ -332,10 +336,10 @@ waymark ask --facet invariants "path rules"      # Scope query to architectural 
 waymark ask --facet status                       # Inspect Semantic Repo Map completion & drift
 
 # --- Verb 2: Write & Maintenance (waymark memory) ---
-waymark memory bootstrap                         # Two-pass Semantic Repo Map discovery into SQLite
+waymark memory bootstrap                         # Collect unverified source excerpts as drafts
 waymark memory status                            # Inspect 5-facet map health and completion ratio
 waymark memory chart --question "<q>" --answer "<a>" --files "<a,b>"
-waymark memory heal                              # Reconcile code changes and refresh map anchors
+waymark memory heal                              # Recollect source excerpts as drafts; established claims are unchanged
 waymark memory export --format md                # Export consensus architecture map
 waymark memory bust <path>                       # Invalidate entries citing a changed file
 waymark memory prune                             # Cleanly remove stale entries whose files vanished

@@ -86,10 +86,10 @@ Dispatches consensus memory and lifecycle operations using the **`action`** para
 
 | Action | Example Arguments | Description |
 | :--- | :--- | :--- |
-| **`bootstrap`** | `{"action": "bootstrap", "dry_run": false}` | Run two-pass architectural discovery and populate SQLite ledger. |
+| **`bootstrap`** | `{"action": "bootstrap", "dry_run": false}` | Collect source excerpts as unverified drafts. It does not initialize `.capn` or publish claims; verify and chart supported conclusions explicitly. |
 | **`status`** | `{"action": "status", "plain": true}` | Inspect Semantic Repo Map completion ratio, active facets, and file drift. |
 | **`chart`** | `{"action": "chart", "facet": "boundaries", "question": "IPC Protocol", "answer": "Named pipes on Windows...", "files": ["src/daemon.ts"]}` | Record architectural knowledge into consensus memory. |
-| **`heal`** | `{"action": "heal"}` | Reconcile code changes, verify anchors, and refresh SQLite ledger. |
+| **`heal`** | `{"action": "heal"}` | Recollect source-backed unverified drafts; established consensus entries are unchanged. |
 | **`export`** | `{"action": "export", "format": "md"}` | Export consensus architecture map as Markdown or JSON. |
 | **`bust`** | `{"action": "bust", "file": "src/daemon.ts"}` | Invalidate all consensus memories backed by a changed file. |
 | **`prune`** | `{"action": "prune"}` | Cleanly remove stale entries whose backing files vanished. |
@@ -180,6 +180,8 @@ If your agent framework requires flat, single-purpose tools, enable **Verbose Mo
 - `capn://status`: Memory store configuration and adapter status.
 
 ### Prompts
-- `explore-subsystem`: Guided 4-tier exploration workflow for a concept or module.
+- `explore-subsystem`: Guided repository-wide exploration workflow for a concept or module; scoped subsystem indexes are unsupported.
 - `architectural-map`: Structured call-graph and consensus memory mapping workflow.
-- `bootstrap-semantic-map`: Two-pass bootstrap agent prompt for repository onboarding.
+- `bootstrap-semantic-map`: Collects unverified source-backed drafts; a human must verify and explicitly chart any supported claim.
+
+Subsystem values supplied to discovery or memory tools fail with `UNSUPPORTED_SUBSYSTEM`. Tool requests do not silently widen to repository-root results.

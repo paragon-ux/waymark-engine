@@ -78,6 +78,14 @@ waymark repl --live --port 4141
 ```
 Open **`http://localhost:4141`** to observe query executions, tier breakdowns, cache hits, and run prompt evaluation batteries (`/battery`) in a viewport-locked layout.
 
+The live observer binds to `127.0.0.1` and requires explicit telemetry opt-in with `WAYMARK_TELEMETRY=1`. Persistent query/session logs are disabled by default. Do not expose the local viewer through a public interface.
+
+### Semantic Repo Map and Platform Limits
+
+`waymark memory bootstrap` collects source excerpts as **unverified drafts**; it does not publish architectural claims or initialize a Capn store. Verify each claim against its cited code, then publish it explicitly with `waymark memory chart`. Subsystem-scoped discovery and maps are not supported; requests that include `--subsystem` or `subsystem` return `UNSUPPORTED_SUBSYSTEM`.
+
+On Windows, `WAYMARK_CODEDB_EXECUTABLE` must name a native executable. `.cmd` and `.bat` shims are rejected with `CODEDB_UNSUPPORTED_SHIM` because Waymark never invokes external tools through a shell.
+
 ---
 
 ## Comprehensive Documentation

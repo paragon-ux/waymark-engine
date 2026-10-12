@@ -40,7 +40,7 @@ Waymark Engine provides both a unified binary (`waymark <command>`) and explicit
 | `waymark mcp`<br>`waymark-mcp` | **Stable** | [`src/mcp/server.ts`](../src/mcp/server.ts) | None (runs over `stdio`) | Launches the standard Model Context Protocol (MCP) server for IDE and agent integration. |
 | `waymark daemon [start\|stop\|restart\|reload\|status\|list\|ping\|run]`<br>`waymark-daemon [start\|stop\|restart\|reload\|status\|list\|ping]` | **Stable** | [`src/daemon.ts`](../src/daemon.ts) | Subcommand (`start`, `stop`, `restart`, `reload`, `status`, `list`, `ping`, `run`), `[--path <root>]` | Manages background resident codedb server (`serve --stdio`) and IPC socket/pipe bridge for sub-10ms warm query execution. Supports cache reloading via `reload`. |
 | `waymark repl`<br>`waymark-repl` | **Stable** | [`src/repl.ts`](../src/repl.ts) | `[--manifest <file>]`<br>`[--category <cat>]`<br>`[--id <id>]`<br>`[--file <script>]`<br>`[--live]`<br>`[--port <num>]`<br>`[--plain]`<br>`[--dev]` | Interactive diagnostic REPL shell, live PDLt-style telemetry observer and web viewer (`--live [--port <num>]`), hardened test battery runner with live daemon IPC, line drift calculation, and baseline comparison. |
-| `waymark bootstrap`<br>`waymark-bootstrap` | **Stable** | [`spec/semantic-repo-map.md`](./semantic-repo-map.md) | `[--subsystem <name>]`<br>`[--dry-run]` | Two-pass bootstrapping of the 5-facet Semantic Repo Map directly into the `.capn` SQLite consensus ledger. |
+| `waymark bootstrap`<br>`waymark-bootstrap` | **Stable** | [`spec/semantic-repo-map.md`](./semantic-repo-map.md) | `[--dry-run]` | Collects source-backed, unverified facet drafts. It never initializes `.capn` or publishes claims; explicit charting is required after verification. `--subsystem` is rejected. |
 | `waymark map [status\|show\|heal\|export]` | **Stable** | [`spec/semantic-repo-map.md`](./semantic-repo-map.md) | Subcommand (`status`, `show`, `heal`, `export`), `[facet]`, `[--plain]` | Inspects, displays, heals, or exports the repository Semantic Repo Map. |
 | `waymark help` / `-h` / `--help` | **Stable** | [`src/cli.ts`](../src/cli.ts) | None | Outputs brief command options, flags, and environment variable configuration. |
 
@@ -71,12 +71,12 @@ Options and flags modify discovery routing, execution format, performance instru
 | `--daemon` | `-d` | Flag | Boolean | `false` | `ask` | **Stable** | Opts in to resident in-memory daemon acceleration. Connects to existing daemon/MCP or starts background daemon if not running. |
 | `--exclude-tests` | — | Flag | Boolean | `false` | `ask` | **Stable** | Filter out test files (`*_test.*`, `test/*`, `__tests__/*`, `*.spec.*`) from call graph results to reduce token noise. |
 | `--idle-timeout` | — | Value | Integer seconds | `600` | `daemon` | **Stable** | Configures inactivity duration before the resident daemon automatically terminates to free system memory. |
-| `--force` | — | Flag | Boolean | `false` | `daemon` | **Stable** | Forces immediate termination of resident daemon via PID kill if graceful IPC shutdown is unresponsive. |
+| `--force` | — | Flag | Boolean | `false` | `daemon` | **Stable** | Requests forced shutdown through the root-specific daemon IPC endpoint; it never signals a PID read from untrusted metadata. If identity cannot be established, shutdown fails safely. |
 | `--facet` | — | Value | `lifecycle`, `data_state`, `boundaries`, `invariants`, `failure` | None | `ask`, `map` | **Stable** | Restricts or prioritizes query discovery to a specific architectural facet within the Semantic Repo Map. |
-| `--subsystem` | — | Value | Subsystem directory/name | `default` | `bootstrap`, `map` | **Stable** | Scopes the Semantic Repo Map to a specific package or subsystem in monorepos. |
+| `--subsystem` | — | Value | Subsystem directory/name | None | Discovery and map operations | **Unsupported** | Rejected with `UNSUPPORTED_SUBSYSTEM`; current indexes and backing-file validation operate at repository-root scope only. |
 | `--root` | — | Value | Filesystem path | Process cwd / git root | All | **Stable** | Overrides target workspace root directory across all CLI and discovery operations. |
-| `--live` | — | Flag | Boolean | `false` | `repl` | **Stable** | Launches the live PDLt-style agent session observer tailing queries and recording latency/token metrics. |
-| `--session` | — | Value | Filesystem path | `.waymark/sessions/active.jsonl` | `repl` | **Stable** | Specifies custom persistent NDJSON session log path for telemetry events. |
+| `--live` | — | Flag | Boolean | `false` | `repl` | **Stable** | Launches the live PDLt-style observer on loopback only; requires `WAYMARK_TELEMETRY=1`. |
+| `--session` | — | Value | Filesystem path | `.waymark/sessions/active.jsonl` | `repl` | **Stable** | Selects the NDJSON session path. Persistent query/session logging remains disabled unless `WAYMARK_TELEMETRY=1`. |
 
 ---
 
@@ -243,7 +243,7 @@ The resident stdio MCP server (`waymark-mcp`) provides two modes of tool exposur
       "id": { "type": "string", "description": "Entry hex ID to delete (required for action='unchart')." },
       "if_exists": { "type": "boolean", "description": "Idempotently succeed if entry id is already deleted (for action='unchart')." },
       "dry_run": { "type": "boolean", "description": "Inspect without writing changes (for action='bootstrap')." },
-      "subsystem": { "type": "string", "description": "Optional subsystem/package scope for bootstrap in monorepos." },
+      "subsystem": { "type": "string", "description": "Unsupported: subsystem-scoped maps are not implemented; requests fail with UNSUPPORTED_SUBSYSTEM." },
       "format": { "type": "string", "enum": ["md", "json"], "description": "Export format for action='export': md | json. Defaults to md." },
       "plain": { "type": "boolean", "description": "Emit token-minimal plain text formatted result for LLM context efficiency." },
       "capn_executable": { "type": "string", "description": "Optional custom path to the Capn executable." },
@@ -254,7 +254,7 @@ The resident stdio MCP server (`waymark-mcp`) provides two modes of tool exposur
   }
   ```
 - **Subcommand Behaviors & Output Shapes**:
-  - `bootstrap`: Executes two-pass Semantic Repo Map discovery and writes facets to `.capn` SQLite ledger. Output: `{ ok: true, status: SemanticMapStatus, charted: [...] }`.
+  - `bootstrap`: Collects source excerpts into unverified draft facets and does not write to `.capn`. Verify claims and publish explicitly with `chart`.
   - `status`: Inspects active facets, health, and anchor drift. Output: `{ ok: true, status: "healthy" | "drifted" | "empty", completion: "N/5", facets: [...], drifted: [...] }` (or compact text when `plain: true`).
   - `chart`: Inserts or updates architectural memory entry. Output: `{ waymark: 1, kind: "chart", published: true, adapter: string, output: string }`.
   - `bust`: Invalidates all memories citing `file`. Output: `{ waymark: 1, kind: "bust", ok: true, file: string }`.
@@ -263,14 +263,14 @@ The resident stdio MCP server (`waymark-mcp`) provides two modes of tool exposur
   - `unchart`: Deletes entry by `id`. Output: `{ waymark: 1, kind: "unchart", ok: true, id: string }`.
   - `init`: Initializes `.capn` lexical store. Output: `{ waymark: 1, kind: "init", ok: true }`.
   - `context`: Retrieves charting syntax and contract. Output: `{ ok: true, output: string }`.
-  - `heal`: Reconciles Semantic Repo Map anchors and updates SQLite ledger. Output: `{ ok: true, status: SemanticMapStatus }`.
+  - `heal`: Recollects source-backed unverified drafts and leaves established entries unchanged.
   - `export`: Exports consensus map as markdown or JSON. Output: `{ ok: true, output: string }` or JSON object.
 
 ### 4.13 MCP Prompts Registry
 The server registers standard prompts to orchestrate complex agentic discovery workflows:
 - **`explore-subsystem`**: Guides a structured 4-tier exploration of a subsystem or symbol in the codebase (`arguments: [{ name: "query", required: true }, { name: "root", required: false }]`).
 - **`architectural-map`**: Generates an architectural call-graph map and consensus memory summary for a feature (`arguments: [{ name: "topic", required: true }]`).
-- **`bootstrap-semantic-map`**: Two-pass agent prompt that inspects repository layout, harvests existing documentation, grounds concepts in Tree-Sitter AST symbols, and writes the 5-facet Semantic Repo Map (`arguments: [{ name: "subsystem", required: false }, { name: "root", required: false }]`).
+- **`bootstrap-semantic-map`**: Repository-wide prompt that gathers unverified source-backed drafts; humans verify and explicitly chart supported claims (`arguments: [{ name: "root", required: false }]`).
 
 ### 4.14 MCP Resources Registry
 The server exposes resident resources for configuration inspection and capability negotiation:

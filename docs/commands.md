@@ -69,10 +69,10 @@ waymark memory <action> [options]
 
 | Action | CLI Syntax | Description |
 | :--- | :--- | :--- |
-| **`bootstrap`** | `waymark memory bootstrap [--dry-run]` | Run two-pass architectural discovery and populate SQLite ledger. |
+| **`bootstrap`** | `waymark memory bootstrap [--dry-run]` | Collect source-backed, unverified facet drafts. Bootstrap does not initialize `.capn` or publish claims; verify drafts and chart supported conclusions explicitly. |
 | **`status`** | `waymark memory status [--plain]` | Inspect Semantic Repo Map completion ratio, active facets, and file drift. |
 | **`chart`** | `waymark memory chart --question <q> --answer <a> --files <f> [--facet <facet>]` | Publish architectural knowledge into consensus SQLite memory. |
-| **`heal`** | `waymark memory heal` | Reconcile code changes, verify anchors, and refresh SQLite ledger. |
+| **`heal`** | `waymark memory heal` | Recollect source-backed drafts; it does not rewrite established consensus entries. |
 | **`export`** | `waymark memory export [--format md\|json]` | Export consensus architecture map as Markdown or JSON. |
 | **`bust`** | `waymark memory bust <path>` | Invalidate all consensus memories citing a changed file. |
 | **`prune`** | `waymark memory prune` | Cleanly remove stale entries whose backing files vanished. |
@@ -106,6 +106,12 @@ waymark repl [--live] [--port <port>]
 
 - **`--live`**: Launches the real-time Server-Sent Events (SSE) Web Viewer.
 - **`--port <port>`**: Port for Web Viewer (default: `4141`).
+
+The viewer binds only to `127.0.0.1`, emits no permissive CORS header, and starts only when `WAYMARK_TELEMETRY=1` is set. Persistent query/session logging also requires this opt-in; it is disabled by default. `WAYMARK_NO_LOG=1` remains an explicit deny switch.
+
+`--subsystem` is not supported by discovery, charting, bootstrap, or map maintenance and returns `UNSUPPORTED_SUBSYSTEM` instead of silently querying the whole repository. On Windows, `WAYMARK_CODEDB_EXECUTABLE` must point to a native `.exe`; `.cmd` and `.bat` shims return `CODEDB_UNSUPPORTED_SHIM`.
+
+`waymark daemon stop --force` still shuts down only through the root-specific daemon IPC endpoint. If the daemon cannot be identified and reached, it fails safely and does not signal a PID read from disk.
 
 ### REPL Commands
 - `/battery`: Run the full 6-category hardened evaluation test battery.

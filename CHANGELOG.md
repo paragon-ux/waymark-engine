@@ -4,6 +4,19 @@ All notable changes to `waymark-engine` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - Audit Remediation
+
+### Fixed
+- Daemon force-stop no longer signals an untrusted PID; shutdown is sent through the root-specific IPC endpoint.
+- Capn results require topical lexical evidence, and bootstrap returns source excerpts as unverified drafts instead of publishing claims.
+- Dashboard telemetry is loopback-only and persistent query logging is opt-in with `WAYMARK_TELEMETRY=1`.
+- Span anchors, facet backing paths, codedb errors, subsystem requests, evaluator expectations, and Windows shim handling now fail closed.
+- Path discovery includes supported hidden configuration directories; fuzzy scoring, telemetry latency, and bounded caches are consistent.
+
+### Changed
+- Windows `.cmd` and `.bat` codedb shims and subsystem-scoped discovery are explicitly unsupported with typed errors.
+- Prompt catalogue route, file, and anchor expectations are evaluated; stale fixture hashes were refreshed against the current source intent.
+
 ## [2.7.1] - 2026-10-11
 
 ### Process Eviction Cleanup, Ambiguous Basename Collision Diagnostics, Read-Only Guard, and Lexical Consensus Recall

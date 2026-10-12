@@ -586,10 +586,16 @@ export function getLiveDashboardHtml(): string {
   return "<!DOCTYPE html><html><body><h1>Waymark Live Monitor</h1><p>viewer.html not found.</p></body></html>";
 }
 
+export const LIVE_OBSERVER_HOST = "127.0.0.1";
+
 export async function startLiveReplObserver(options: ReplOptions = {}): Promise<void> {
   const root = options.rootDir ? path.resolve(options.rootDir) : repoRoot();
+  if (process.env.WAYMARK_TELEMETRY !== "1") {
+    process.stdout.write("Live observer requires explicit telemetry opt-in: set WAYMARK_TELEMETRY=1.\n");
+    return;
+  }
   const sessionPath = resolveSessionLogPath(root, options.sessionPath);
-  const webPort = options.port || (process.env.WAYMARK_LIVE_PORT ? parseInt(process.env.WAYMARK_LIVE_PORT, 10) : undefined);
+  const webPort = options.port ?? (process.env.WAYMARK_LIVE_PORT ? parseInt(process.env.WAYMARK_LIVE_PORT, 10) : undefined);
 
   // Ensure file and directory exist
   const dir = path.dirname(sessionPath);
@@ -635,7 +641,6 @@ export async function startLiveReplObserver(options: ReplOptions = {}): Promise<
           "Content-Type": "text/event-stream",
           "Cache-Control": "no-cache",
           "Connection": "keep-alive",
-          "Access-Control-Allow-Origin": "*",
         });
         res.write(`event: init\ndata: ${JSON.stringify({
           repo: path.basename(root),
@@ -650,7 +655,7 @@ export async function startLiveReplObserver(options: ReplOptions = {}): Promise<
         return;
       }
       if (url.pathname === "/api/stats") {
-        res.writeHead(200, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
+        res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify(getComputedStats()));
         return;
       }
@@ -658,7 +663,7 @@ export async function startLiveReplObserver(options: ReplOptions = {}): Promise<
       res.end(getLiveDashboardHtml());
     });
 
-    httpServer.listen(webPort, "0.0.0.0", () => {
+    httpServer.listen(webPort, LIVE_OBSERVER_HOST, () => {
       // server active
     });
   }

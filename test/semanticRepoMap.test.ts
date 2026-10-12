@@ -69,7 +69,7 @@ function setupTestRepo(): string {
   return repo;
 }
 
-test("Anti-Hallucination Guardrail: rejects active facets without existing backing files", () => {
+test("Anti-Hallucination Guardrail: rejects missing, escaped, absolute, and symlinked backing files", () => {
   const repo = setupTestRepo();
 
   // 1. Empty files array
@@ -83,12 +83,78 @@ test("Anti-Hallucination Guardrail: rejects active facets without existing backi
     () => validateFacetBackingFiles(repo, ["src/does_not_exist.ts"]),
     (err: any) => err instanceof WaymarkError && err.code === "INVALID_BACKING_FILES"
   );
+  assert.throws(
+    () => validateFacetBackingFiles(repo, ["../outside.ts"]),
+    (err: any) => err instanceof WaymarkError && err.code === "INVALID_BACKING_FILES"
+  );
+  assert.throws(
+    () => validateFacetBackingFiles(repo, [path.join(os.tmpdir(), "outside.ts")]),
+    (err: any) => err instanceof WaymarkError && err.code === "INVALID_BACKING_FILES"
+  );
 
   // 3. Existing file passes cleanly
   assert.doesNotThrow(() => validateFacetBackingFiles(repo, ["src/index.ts"]));
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), "waymark-outside-"));
+  const link = path.join(repo, "src", "external");
+  fs.writeFileSync(path.join(outside, "secret.ts"), "export const secret = true;\n");
+  try {
+    fs.symlinkSync(outside, link, process.platform === "win32" ? "junction" : "dir");
+    assert.throws(
+      () => validateFacetBackingFiles(repo, ["src/external/secret.ts"]),
+      (err: any) => err instanceof WaymarkError && err.code === "INVALID_BACKING_FILES"
+    );
+  } finally {
+    fs.rmSync(link, { recursive: true, force: true });
+    fs.rmSync(outside, { recursive: true, force: true });
+  }
 });
 
-test("Two-pass bootstrap: charts all 5 foundational facets into SQLite .capn store", async () => {
+test("backing-file containment holds through status, bootstrap, publisher, CLI, and MCP", async () => {
+  const repo = setupTestRepo();
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), "waymark-outside-"));
+  const link = path.join(repo, "src", "external");
+  fs.writeFileSync(path.join(outside, "secret.ts"), "export const secret = true;\n");
+  fs.symlinkSync(outside, link, process.platform === "win32" ? "junction" : "dir");
+  try {
+    fs.writeFileSync(path.join(repo, ".capn", "entries", "escaped.md"), [
+      "---", "id: escaped", "files:", '  "src/external/secret.ts": true', "---",
+      "# [FACET:LIFECYCLE] external source", "Untrusted outside evidence.", "",
+    ].join("\n"));
+    const status = getSemanticMapStatus(repo);
+    assert.equal(status.facets.lifecycle.status, "drifted");
+    assert.deepEqual(status.facets.lifecycle.missingFiles, ["src/external/secret.ts"]);
+
+    const drafts = await bootstrapSemanticMap(repo, { dryRun: false });
+    assert.equal(drafts.published, false);
+    assert.ok(drafts.scaffolded.every((facet) => !facet.files.includes("src/external/secret.ts")));
+    await assert.rejects(() => publish(repo, "none", "", "Unsafe chart", "outside", ["src/external/secret.ts"]), /escapes repository root|symlink escapes/u);
+
+    const server = new McpServer({ root: repo });
+    for (const [name, args] of [
+      ["waymark_memory", { action: "chart", question: "Unsafe MCP chart", answer: "outside", files: ["src/external/secret.ts"], root: repo }],
+      ["waymark_chart", { question: "Unsafe legacy MCP chart", answer: "outside", files: ["src/external/secret.ts"], root: repo }],
+    ] as const) {
+      const response = await server.handleMessage(JSON.stringify({
+        jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args },
+      }));
+      const body = JSON.parse(response ?? "{}");
+      assert.equal(body.result?.isError, true);
+      assert.match(body.result?.content?.[0]?.text ?? "", /INVALID_BACKING_FILES|INVALID_PATH|SYMLINK_ESCAPE/u);
+    }
+
+    const cli = path.resolve(import.meta.dirname, "../src/cli.js");
+    assert.throws(
+      () => execFileSync(process.execPath, [cli, "memory", "chart", "--question", "Unsafe CLI chart", "--answer", "outside", "--files", "src/external/secret.ts", "--root", repo, "--json"], { encoding: "utf8" }),
+      (error: any) => error.status !== 0 && /INVALID_BACKING_FILES|INVALID_PATH|SYMLINK_ESCAPE/u.test(`${error.stdout}\n${error.stderr}`),
+    );
+  } finally {
+    fs.rmSync(link, { recursive: true, force: true });
+    fs.rmSync(outside, { recursive: true, force: true });
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("Bootstrap returns evidence-backed drafts and never publishes unverified facets", async () => {
   const repo = setupTestRepo();
 
   const initStatus = getSemanticMapStatus(repo);
@@ -100,23 +166,36 @@ test("Two-pass bootstrap: charts all 5 foundational facets into SQLite .capn sto
   const bootResult = await bootstrapSemanticMap(repo, { dryRun: false });
   assert.equal(bootResult.ok, true);
   assert.equal(bootResult.scaffolded.length, 5);
+  assert.equal(bootResult.published, false);
+  assert.ok(bootResult.scaffolded.every((facet) => facet.status === "draft" && facet.evidence.length > 0));
+  assert.ok(bootResult.scaffolded.every((facet) => facet.answer.includes("Unverified draft")));
 
-  // Status should now be healthy with 5/5 facets active
+  // A draft cannot become established map state without an explicit chart action.
   const postStatus = getSemanticMapStatus(repo);
-  assert.equal(postStatus.status, "healthy");
-  assert.equal(postStatus.completion, "5/5");
-  assert.equal(postStatus.percentage, 100);
-  assert.equal(postStatus.missing.length, 0);
-  assert.equal(postStatus.drifted.length, 0);
+  assert.equal(postStatus.status, "empty");
+  assert.equal(postStatus.completion, "0/5");
+  assert.equal(postStatus.missing.length, 5);
+  assert.equal(fs.readdirSync(path.join(repo, ".capn", "entries")).filter((file) => file.endsWith(".md")).length, 0);
 
-  // Plain text formatting
   const plainText = renderSemanticMapStatus(postStatus);
-  assert.match(plainText, /\[semantic-map: 5\/5 facets active \(100%\)\]/);
-  assert.match(plainText, /- lifecycle: active/);
-  assert.match(plainText, /- data_state: active/);
-  assert.match(plainText, /- boundaries: active/);
-  assert.match(plainText, /- invariants: active/);
-  assert.match(plainText, /- failure: active/);
+  assert.match(plainText, /\[semantic-map: 0\/5 facets active \(0%\)\]/);
+});
+
+test("minimal repository bootstrap adds no map facts or Capn store", async () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "waymark-empty-map-"));
+  try {
+    const result = await bootstrapSemanticMap(repo, { dryRun: false });
+    assert.equal(result.scaffolded.length, 0);
+    assert.equal(result.published, false);
+    assert.equal(fs.existsSync(path.join(repo, ".capn")), false);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("subsystem-scoped bootstrap is rejected explicitly", async () => {
+  const repo = setupTestRepo();
+  await assert.rejects(() => bootstrapSemanticMap(repo, { subsystem: "packages/api" }), /Subsystem-scoped semantic maps are not supported/u);
 });
 
 test("MCP waymark_memory tool: bootstrap -> status -> chart -> list -> bust -> unchart", async () => {
@@ -142,7 +221,7 @@ test("MCP waymark_memory tool: bootstrap -> status -> chart -> list -> bust -> u
   assert.equal(bootParsed.result?.isError, false);
   const bootBody = JSON.parse(bootParsed.result?.content?.[0]?.text ?? "{}");
   assert.equal(bootBody.ok, true);
-  assert.equal(bootBody.status?.completion, "5/5");
+  assert.equal(bootBody.status?.completion, "0/5");
 
   // 2. Status via MCP waymark_memory
   const statusRes = await server.handleMessage(
@@ -162,8 +241,8 @@ test("MCP waymark_memory tool: bootstrap -> status -> chart -> list -> bust -> u
   const statusParsed = JSON.parse(statusRes ?? "{}");
   assert.equal(statusParsed.result?.isError, false);
   const statusBody = JSON.parse(statusParsed.result?.content?.[0]?.text ?? "{}");
-  assert.equal(statusBody.status, "healthy");
-  assert.equal(statusBody.completion, "5/5");
+  assert.equal(statusBody.status, "empty");
+  assert.equal(statusBody.completion, "0/5");
 
   // 3. List via MCP waymark_memory
   const listRes = await server.handleMessage(
@@ -184,7 +263,7 @@ test("MCP waymark_memory tool: bootstrap -> status -> chart -> list -> bust -> u
   assert.equal(listParsed.result?.isError, false);
   const listBody = JSON.parse(listParsed.result?.content?.[0]?.text ?? "{}");
   assert.equal(listBody.ok, true);
-  assert.match(String(listBody.output), /\[FACET:LIFECYCLE\]/);
+  assert.doesNotMatch(String(listBody.output), /\[FACET:LIFECYCLE\]/);
 
   // 4. Chart custom facet entry via MCP waymark_memory
   const chartRes = await server.handleMessage(
@@ -255,7 +334,7 @@ test("MCP waymark_ask facet addressing & path outline mode", async () => {
   const statusParsed = JSON.parse(statusRes ?? "{}");
   assert.equal(statusParsed.result?.isError, false);
   const statusBody = JSON.parse(statusParsed.result?.content?.[0]?.text ?? "{}");
-  assert.equal(statusBody.completion, "5/5");
+  assert.equal(statusBody.completion, "0/5");
 
   // 2. Ask with facet: 'status' and plain: true
   const plainRes = await server.handleMessage(
@@ -276,7 +355,7 @@ test("MCP waymark_ask facet addressing & path outline mode", async () => {
   const plainParsed = JSON.parse(plainRes ?? "{}");
   assert.equal(plainParsed.result?.isError, false);
   const plainText = plainParsed.result?.content?.[0]?.text ?? "";
-  assert.match(plainText, /\[semantic-map: 5\/5 facets active/);
+  assert.match(plainText, /\[semantic-map: 0\/5 facets active/);
 
   // 3. Ask with path (Mode A AST symbol outline discovery)
   const pathRes = await server.handleMessage(
@@ -301,6 +380,24 @@ test("MCP waymark_ask facet addressing & path outline mode", async () => {
   assert.ok(pathBody.symbols.some((s: any) => s.name === "main"));
 
   // 4. Ask scoped to facet: 'lifecycle'
+  await server.handleMessage(
+    JSON.stringify({
+      jsonrpc: "2.0",
+      id: 40,
+      method: "tools/call",
+      params: {
+        name: "waymark_memory",
+        arguments: {
+          action: "chart",
+          facet: "lifecycle",
+          question: "Sample service entrypoints",
+          answer: "The verified entrypoints include the main function in src/index.ts.",
+          files: ["src/index.ts"],
+          root: repo,
+        },
+      },
+    })
+  );
   const facetQueryRes = await server.handleMessage(
     JSON.stringify({
       jsonrpc: "2.0",
@@ -372,7 +469,27 @@ test("MCP waymark_memory: heal, export (json & md), and backslash-normalized bus
   assert.equal(healParsed.result?.isError, false);
   const healBody = JSON.parse(healParsed.result?.content?.[0]?.text ?? "{}");
   assert.equal(healBody.ok, true);
-  assert.equal(healBody.status?.completion, "5/5");
+  assert.equal(healBody.status?.completion, "0/5");
+
+  const chartRes = await server.handleMessage(
+    JSON.stringify({
+      jsonrpc: "2.0",
+      id: 10,
+      method: "tools/call",
+      params: {
+        name: "waymark_memory",
+        arguments: {
+          action: "chart",
+          facet: "lifecycle",
+          question: "Sample service lifecycle entrypoint",
+          answer: "The verified lifecycle entrypoint is main in src/index.ts.",
+          files: ["src/index.ts"],
+          root: repo,
+        },
+      },
+    })
+  );
+  assert.equal(JSON.parse(chartRes ?? "{}").result?.isError, false);
 
   // 2. Export as markdown
   const exportMdRes = await server.handleMessage(
@@ -415,8 +532,8 @@ test("MCP waymark_memory: heal, export (json & md), and backslash-normalized bus
   const exportJsonParsed = JSON.parse(exportJsonRes ?? "{}");
   assert.equal(exportJsonParsed.result?.isError, false);
   const jsonBody = JSON.parse(exportJsonParsed.result?.content?.[0]?.text ?? "{}");
-  assert.equal(jsonBody.status, "healthy");
-  assert.equal(jsonBody.completion, "5/5");
+  assert.equal(jsonBody.status, "incomplete");
+  assert.equal(jsonBody.completion, "1/5");
 
   // 4. Windows backslash bust test: chart with forward slash, bust with backslash
   await server.handleMessage(

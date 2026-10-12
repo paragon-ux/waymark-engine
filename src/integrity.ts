@@ -64,6 +64,14 @@ function staleCheck(hop: HopRecord, reason: string, currentFileSha256?: string):
  * ledger: hash-pinned span verification without any trajectory state.
  */
 export function verifyHop(root: string, hop: HopRecord, maxWindows: number): HopCheck {
+  const range = hop.range;
+  if (!range || !Number.isInteger(range.start) || !Number.isInteger(range.end) || range.start < 1 || range.end < range.start ||
+      !Number.isInteger(hop.spanLineCount) || hop.spanLineCount !== range.end - range.start + 1 ||
+      !Number.isInteger(hop.normalizedSpanLen) || hop.normalizedSpanLen < 0 ||
+      !/^[a-f0-9]{64}$/iu.test(hop.fileSha256) || !/^[a-f0-9]{64}$/iu.test(hop.normalizedSpanHash)) {
+    return staleCheck(hop, "stored range or span metadata is invalid");
+  }
+
   let file: FileSnapshot;
   try {
     resolveRepositoryFile(root, hop.path);
@@ -73,13 +81,20 @@ export function verifyHop(root: string, hop: HopRecord, maxWindows: number): Hop
     return staleCheck(hop, reason);
   }
 
-  if (file.hash === hop.fileSha256) {
+  if (file.hash === hop.fileSha256 && !rangeFits(file.lines, range)) {
+    return staleCheck(hop, "stored range is outside the anchored file", file.hash);
+  }
+  if (file.hash === hop.fileSha256 && rangeFits(file.lines, range)) {
+    const normalized = normalizeSpan(extractRange(file.lines, range));
+    if (sha256(Buffer.from(normalized, "utf8")) !== hop.normalizedSpanHash || Buffer.byteLength(normalized, "utf8") !== hop.normalizedSpanLen) {
+      return staleCheck(hop, "stored span hash or length does not match the anchored range", file.hash);
+    }
     return { index: hop.index, path: hop.path, status: "FRESH", originalRange: hop.range, resolvedRange: hop.range, currentFileSha256: file.hash };
   }
 
-  if (rangeFits(file.lines, hop.range)) {
-    const current = normalizeSpan(extractRange(file.lines, hop.range));
-    if (sha256(Buffer.from(current, "utf8")) === hop.normalizedSpanHash) {
+  if (rangeFits(file.lines, range)) {
+    const current = normalizeSpan(extractRange(file.lines, range));
+    if (sha256(Buffer.from(current, "utf8")) === hop.normalizedSpanHash && Buffer.byteLength(current, "utf8") === hop.normalizedSpanLen) {
       return { index: hop.index, path: hop.path, status: "FRESH", originalRange: hop.range, resolvedRange: hop.range, currentFileSha256: file.hash };
     }
   }

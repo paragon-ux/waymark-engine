@@ -42,7 +42,7 @@ export function resolveSessionLogPath(repoRoot: string, customPath?: string): st
  * Non-blocking, fail-safe: never throws or disrupts query execution.
  */
 export function logSessionEvent(event: SessionTelemetryEvent, customPath?: string): void {
-  if (process.env.WAYMARK_TELEMETRY === "0" || process.env.WAYMARK_NO_LOG === "1") {
+  if (process.env.WAYMARK_TELEMETRY !== "1" || process.env.WAYMARK_NO_LOG === "1") {
     return;
   }
 

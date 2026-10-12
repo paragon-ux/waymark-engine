@@ -196,7 +196,7 @@ const SKIP_DIRS = new Set<string>([
   "node_modules", "dist", "out", "build", "coverage", "next", "nuxt",
   "capn", "waymark", "qmd", "claude", "codex", "zed",
   "eval", "experiments", "evidence", "sandbox", "tmp", "vendor", "venv",
-  "__pycache__",
+  "__pycache__", ".git", ".capn", ".waymark",
 ]);
 
 function canonicalRoot(r: string): string {
@@ -207,6 +207,10 @@ let pathCache: { root: string; at: number; paths: string[] } | null = null;
 let pathTrieCache: { root: string; at: number; trie: PrefixTrie } | null = null;
 
 export function invalidatePathsCache(): void {
+  const root = pathCache?.root || pathTrieCache?.root;
+  if (root) {
+    try { fs.unlinkSync(getCacheFilePath(root)); } catch {}
+  }
   pathCache = null;
   pathTrieCache = null;
 }
@@ -224,9 +228,9 @@ export function getRepoPrefixTrie(root: string, maxAgeMs = 60_000): PrefixTrie {
 
 function getCacheFilePath(root: string): string {
   if (fs.existsSync(path.join(root, ".capn"))) {
-    return path.join(root, ".capn", "paths.cache");
+    return path.join(root, ".capn", "paths.v2.cache");
   }
-  return path.join(root, ".waymark", "paths.cache");
+  return path.join(root, ".waymark", "paths.v2.cache");
 }
 
 export function collectRepoPaths(root: string, maxAgeMs = 60_000): string[] {
@@ -264,7 +268,7 @@ export function collectRepoPaths(root: string, maxAgeMs = 60_000): string[] {
     for (const ent of entries) {
       const full = path.join(dir, ent.name);
       if (ent.isDirectory()) {
-        if (!(ent.name.startsWith(".") || SKIP_DIRS.has(ent.name))) {
+        if (!SKIP_DIRS.has(ent.name)) {
           walk(full);
         }
       } else if (ent.isFile()) {
@@ -423,6 +427,9 @@ async function routeDiscoveryCore(ctx: DiscoveryRouteContext): Promise<AskResult
     assertLexicalStore,
     overrideCandidates,
   } = ctx;
+  if (options?.subsystem?.trim()) {
+    throw new WaymarkError("UNSUPPORTED_SUBSYSTEM", "Subsystem-scoped discovery is not supported; query the repository root or omit subsystem.");
+  }
   const startTime = performance.now();
   const timings: Record<string, number> = {};
   const isDev = Boolean(options?.dev);
@@ -479,7 +486,7 @@ async function routeDiscoveryCore(ctx: DiscoveryRouteContext): Promise<AskResult
         structuralIntent,
         root,
         codedbExecutable,
-        options ? { depth: options.depth, direction: options.direction, excludeTests: options.excludeTests } : undefined,
+        options ? { depth: options.depth, direction: options.direction, excludeTests: options.excludeTests, autoDaemon: options.daemon } : undefined,
       );
       if (recordTiming) timings.ast_ms = Math.round((performance.now() - tAst0) * 100) / 100;
 
@@ -492,6 +499,18 @@ async function routeDiscoveryCore(ctx: DiscoveryRouteContext): Promise<AskResult
           provider: "codedb",
           confidence: "exact",
           result: astResult.output,
+          ...(recordTiming ? { timings } : {}),
+        };
+      } else if (astResult.error) {
+        return {
+          waymark: 1,
+          kind: "ask",
+          status: "error",
+          provider: "codedb",
+          errorCode: /ENOENT|not found/iu.test(String(astResult.output)) ? "CODEDB_BINARY_MISSING" : /timeout/iu.test(String(astResult.output)) ? "CODEDB_PROCESS_TIMEOUT" : "CODEDB_PROCESS_ERROR",
+          message: String(astResult.output),
+          error: String(astResult.output),
+          retryable: true,
           ...(recordTiming ? { timings } : {}),
         };
       } else if (tier === "ast") {
@@ -579,7 +598,7 @@ async function routeDiscoveryCore(ctx: DiscoveryRouteContext): Promise<AskResult
     if (overrideCandidates && overrideCandidates.length > 0) {
       return overrideCandidates;
     }
-    return await queryFuzzyCandidates(token, root, codedbExecutable);
+    return await queryFuzzyCandidates(token, root, codedbExecutable, { autoDaemon: Boolean(options?.daemon) });
   };
 
   // Branch 1: Forced Tier fuzzy
@@ -1036,7 +1055,26 @@ async function routeDiscoveryCore(ctx: DiscoveryRouteContext): Promise<AskResult
 
 export async function routeDiscovery(ctx: DiscoveryRouteContext): Promise<AskResult> {
   const isDev = Boolean(ctx.options?.dev);
-  const res = await routeDiscoveryCore(ctx);
+  const startedAt = performance.now();
+  let res: AskResult;
+  try {
+    res = await routeDiscoveryCore(ctx);
+  } catch (error) {
+    const code = error instanceof WaymarkError ? error.code : "UNEXPECTED_ERROR";
+    if (code !== "UNSUPPORTED_SUBSYSTEM" && !code.startsWith("CODEDB_")) throw error;
+    const message = error instanceof Error ? error.message : String(error);
+    const isCodedb = code.startsWith("CODEDB_");
+    res = {
+      waymark: 1,
+      kind: "ask",
+      status: "error",
+      provider: isCodedb ? "codedb" : "waymark-engine",
+      errorCode: code,
+      message,
+      error: message,
+      retryable: code === "CODEDB_PROCESS_ERROR" || code === "CODEDB_PROCESS_TIMEOUT",
+    };
+  }
   let finalRes: AskResult = res;
 
   if (isDev) {
@@ -1059,7 +1097,7 @@ export async function routeDiscovery(ctx: DiscoveryRouteContext): Promise<AskRes
   try {
     const { logAskTelemetry } = await import("./sessionLogger.js");
     const caller = process.env.WAYMARK_MCP_SESSION === "1" ? "mcp" : (process.env.WAYMARK_REPL_SESSION === "1" ? "repl" : "cli");
-    logAskTelemetry(ctx.root, ctx.question, finalRes, finalRes.timings?.total_ms ?? 0, caller);
+    logAskTelemetry(ctx.root, ctx.question, finalRes, Math.max(1, finalRes.timings?.total_ms ?? (performance.now() - startedAt)), caller);
   } catch {
     // Fail silent
   }

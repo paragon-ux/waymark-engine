@@ -56,6 +56,10 @@ export const waymarkAskTool: McpToolHandler = {
           type: "string",
           description: "Repository-relative or absolute source file path. If provided alone or without question, performs file AST extraction.",
         },
+        subsystem: {
+          type: "string",
+          description: "Unsupported: all discovery currently covers the selected repository root; omit this value.",
+        },
         facet: {
           type: "string",
           enum: ["lifecycle", "data_state", "boundaries", "invariants", "failure", "status"],
@@ -123,6 +127,9 @@ export const waymarkAskTool: McpToolHandler = {
   handler: async (args) => {
     try {
       const root = resolveRoot(args);
+      if (typeof args.subsystem === "string" && args.subsystem.trim()) {
+        throw new WaymarkError("UNSUPPORTED_SUBSYSTEM", "Subsystem-scoped discovery is not supported; query the repository root or omit subsystem.");
+      }
       const rawQuestion = typeof args.question === "string" ? args.question.trim() : "";
       const rawQuery = typeof args.query === "string" ? args.query.trim() : "";
       const question = rawQuestion || rawQuery;
@@ -285,7 +292,7 @@ export const waymarkMemoryTool: McpToolHandler = {
         },
         subsystem: {
           type: "string",
-          description: "Optional subsystem/package scope for bootstrap in monorepos.",
+          description: "Unsupported: subsystem-scoped maps are not implemented; omit this value to target the repository root.",
         },
         format: {
           type: "string",
@@ -316,6 +323,9 @@ export const waymarkMemoryTool: McpToolHandler = {
   handler: async (args) => {
     try {
       const root = resolveRoot(args);
+      if (typeof args.subsystem === "string" && args.subsystem.trim()) {
+        throw new WaymarkError("UNSUPPORTED_SUBSYSTEM", "Subsystem-scoped memory operations are not supported; chart against the repository root or omit subsystem.");
+      }
       const action = typeof args.action === "string" ? args.action.trim() : "";
       const plain = args.plain === true;
       const executable = resolveExecutable(args);
@@ -571,6 +581,10 @@ export const discoverSymbolsTool: McpToolHandler = {
           type: "string",
           description: "Optional repository-relative source file path to extract symbols from.",
         },
+        subsystem: {
+          type: "string",
+          description: "Unsupported: discovery covers the selected repository root; omit this value.",
+        },
         query: {
           type: "string",
           description: "Optional symbol query to search across the repository or filter within a file.",
@@ -598,6 +612,9 @@ export const discoverSymbolsTool: McpToolHandler = {
   handler: async (args) => {
     try {
       const root = resolveRoot(args);
+      if (typeof args.subsystem === "string" && args.subsystem.trim()) {
+        throw new WaymarkError("UNSUPPORTED_SUBSYSTEM", "Subsystem-scoped discovery is not supported; query the repository root or omit subsystem.");
+      }
       const storedPath = typeof args.path === "string" ? args.path.trim() : "";
       const rawQuery = (typeof args.query === "string" ? args.query.trim() : "") || (typeof args.symbol === "string" ? args.symbol.trim() : "");
       const language = typeof args.language === "string" ? args.language : undefined;

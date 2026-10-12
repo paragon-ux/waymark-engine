@@ -14,6 +14,12 @@ import type { LiteralMatch } from "./types.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+export function canonicalRoot(root: string, platform = process.platform): string {
+  let canonical = path.resolve(root);
+  try { canonical = fs.realpathSync.native(canonical); } catch {}
+  return platform === "win32" ? canonical.toLowerCase() : canonical;
+}
+
 export interface DaemonRegistryEntry {
   root: string;
   pid: number;
@@ -22,9 +28,7 @@ export interface DaemonRegistryEntry {
 }
 
 export function getDaemonAddress(root: string): string {
-  let canonical = path.resolve(root);
-  try { canonical = fs.realpathSync.native(canonical); } catch {}
-  canonical = canonical.toLowerCase();
+  const canonical = canonicalRoot(root);
   const hash = crypto.createHash("sha256").update(canonical).digest("hex").slice(0, 16);
   if (process.platform === "win32") {
     return path.join("\\\\.\\pipe", `waymark-${hash}`);
@@ -33,9 +37,7 @@ export function getDaemonAddress(root: string): string {
 }
 
 export function getPidFilePath(root: string): string {
-  let canonical = path.resolve(root);
-  try { canonical = fs.realpathSync.native(canonical); } catch {}
-  canonical = canonical.toLowerCase();
+  const canonical = canonicalRoot(root);
   const hash = crypto.createHash("sha256").update(canonical).digest("hex").slice(0, 16);
   const capnDir = path.join(root, ".capn");
   if (fs.existsSync(capnDir)) {
@@ -69,18 +71,14 @@ export function writeRegistry(registry: Record<string, DaemonRegistryEntry>): vo
 
 export function registerDaemon(root: string, pid: number, address: string): void {
   const reg = readRegistry();
-  let canonical = path.resolve(root);
-  try { canonical = fs.realpathSync.native(canonical); } catch {}
-  canonical = canonical.toLowerCase();
+  const canonical = canonicalRoot(root);
   reg[canonical] = { root: path.resolve(root), pid, address, startedAt: Date.now() };
   writeRegistry(reg);
 }
 
 export function unregisterDaemon(root: string): void {
   const reg = readRegistry();
-  let canonical = path.resolve(root);
-  try { canonical = fs.realpathSync.native(canonical); } catch {}
-  canonical = canonical.toLowerCase();
+  const canonical = canonicalRoot(root);
   if (reg[canonical]) {
     delete reg[canonical];
     writeRegistry(reg);
@@ -379,37 +377,9 @@ export async function stopDaemon(root: string, options?: { force?: boolean; time
     return true;
   }
 
-  // If force is requested or graceful stop failed, attempt PID kill
+  // A PID file cannot establish process identity; never kill from it.
   if (options?.force) {
-    const pidFile = getPidFilePath(root);
-    let pid: number | null = null;
-    if (fs.existsSync(pidFile)) {
-      try {
-        pid = parseInt(fs.readFileSync(pidFile, "utf-8").trim(), 10);
-      } catch {}
-    }
-    if (!pid) {
-      const reg = readRegistry();
-      const canonical = path.resolve(root).toLowerCase();
-      pid = reg[canonical]?.pid ?? null;
-    }
-
-    if (pid) {
-      try {
-        process.kill(pid, "SIGKILL");
-      } catch {
-        // process may already be dead
-      }
-    }
-
-    if (fs.existsSync(pidFile)) {
-      try { fs.unlinkSync(pidFile); } catch {}
-    }
-    if (process.platform !== "win32" && fs.existsSync(address)) {
-      try { fs.unlinkSync(address); } catch {}
-    }
-    unregisterDaemon(root);
-    return true;
+      return false;
   }
 
   return false;

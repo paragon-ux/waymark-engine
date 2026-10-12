@@ -38,7 +38,7 @@ function isInside(root: string, candidate: string): boolean {
   try { normRoot = fs.realpathSync.native(normRoot); } catch {}
   try { normCand = fs.realpathSync.native(normCand); } catch {}
   const relative = path.relative(normRoot, normCand);
-  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+  return relative === "" || (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
 }
 
 export function normalizeRelativePath(input: string, root?: string): string {

@@ -1,7 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { repoRoot } from "./paths.js";
-import { publish, initCapn } from "./capnAdapter.js";
+import { repoRoot, resolveRepositoryFile } from "./paths.js";
 import { WaymarkError } from "./types.js";
 
 export type SemanticFacetId =
@@ -210,18 +209,15 @@ export function validateFacetBackingFiles(root: string, files: string[], isNotAp
     );
   }
 
-  const missing: string[] = [];
+  const invalid: string[] = [];
   for (const relFile of files) {
-    const absPath = path.resolve(root, relFile);
-    if (!fs.existsSync(absPath)) {
-      missing.push(relFile);
-    }
+    try { resolveRepositoryFile(root, relFile); } catch { invalid.push(relFile); }
   }
 
-  if (missing.length > 0) {
+  if (invalid.length > 0) {
     throw new WaymarkError(
       "INVALID_BACKING_FILES",
-      `Anti-Hallucination Guard: Backing file(s) do not exist on disk: ${missing.join(", ")}`
+      `Anti-Hallucination Guard: Backing file(s) must be regular files inside the repository: ${invalid.join(", ")}`
     );
   }
 }
@@ -292,10 +288,7 @@ export function getSemanticMapStatus(root: string): SemanticMapStatus {
     // Check backing files
     const missingFiles: string[] = [];
     for (const f of matchedEntry.files) {
-      const absPath = path.resolve(root, f);
-      if (!fs.existsSync(absPath)) {
-        missingFiles.push(f);
-      }
+      try { resolveRepositoryFile(root, f); } catch { missingFiles.push(f); }
     }
 
     if (matchedEntry.files.length === 0 || missingFiles.length > 0) {
@@ -406,13 +399,16 @@ export interface BootstrapResult {
     question: string;
     answer: string;
     files: string[];
+    status: "draft";
+    evidence: Array<{ file: string; line: number; excerpt: string }>;
   }>;
+  published: false;
   chartErrors?: string[];
 }
 
 /**
- * Two-pass bootstrapping: Harvests terms from existing documentation, queries AST to verify symbols,
- * formulates 5 facets, and charts them directly into SQLite .capn.
+ * Collects source excerpts as unverified candidates. Only an agent or developer
+ * can validate these excerpts and chart an architectural claim.
  */
 export async function bootstrapSemanticMap(
   root: string,
@@ -420,14 +416,11 @@ export async function bootstrapSemanticMap(
 ): Promise<BootstrapResult> {
   const dryRun = Boolean(options?.dryRun);
   const executable = options?.executable ?? "";
+  if (options?.subsystem?.trim()) throw new WaymarkError("UNSUPPORTED_SUBSYSTEM", "Subsystem-scoped semantic maps are not supported; bootstrap the repository root or omit --subsystem.");
 
-  // 1. Ensure capn store is initialized if writing
-  if (!dryRun) {
-    const capnConfig = path.join(root, ".capn", "config.json");
-    if (!fs.existsSync(capnConfig)) {
-      await initCapn(root, executable);
-    }
-  }
+  const isRepositoryFile = (file: string): boolean => {
+    try { resolveRepositoryFile(root, file); return true; } catch { return false; }
+  };
 
   const currentStatus = getSemanticMapStatus(root);
   const missingFacets = currentStatus.missing;
@@ -453,7 +446,7 @@ export async function bootstrapSemanticMap(
     "main.go",
     "app.py",
     "src/lib.rs",
-  ].filter((f): f is string => typeof f === "string" && fs.existsSync(path.resolve(root, f)));
+  ].filter((f): f is string => typeof f === "string" && isRepositoryFile(f));
 
   const candidateStorage = [
     "src/capnAdapter.ts",
@@ -461,7 +454,7 @@ export async function bootstrapSemanticMap(
     "src/db.ts",
     "src/database.ts",
     "src/store.ts",
-  ].filter((f) => fs.existsSync(path.resolve(root, f)));
+  ].filter(isRepositoryFile);
 
   const candidateBoundaries = [
     "src/daemon.ts",
@@ -469,102 +462,47 @@ export async function bootstrapSemanticMap(
     "src/server.ts",
     "src/ipc.ts",
     "src/api.ts",
-  ].filter((f) => fs.existsSync(path.resolve(root, f)));
+  ].filter(isRepositoryFile);
 
   const candidateInvariants = [
     "src/paths.ts",
     "src/integrity.ts",
     "src/security.ts",
     "src/utils.ts",
-  ].filter((f) => fs.existsSync(path.resolve(root, f)));
+  ].filter(isRepositoryFile);
 
   const candidateFailures = [
     "src/types.ts",
     "src/errors.ts",
     "src/error.ts",
-  ].filter((f) => fs.existsSync(path.resolve(root, f)));
+  ].filter(isRepositoryFile);
 
+  const candidates: Record<SemanticFacetId, string[]> = {
+    lifecycle: candidateEntries.length ? candidateEntries.slice(0, 3) : (isRepositoryFile("package.json") ? ["package.json"] : []),
+    data_state: candidateStorage.length ? candidateStorage.slice(0, 3) : (isRepositoryFile("package.json") ? ["package.json"] : []),
+    boundaries: candidateBoundaries.length ? candidateBoundaries.slice(0, 3) : (isRepositoryFile("package.json") ? ["package.json"] : []),
+    invariants: candidateInvariants.length ? candidateInvariants.slice(0, 3) : candidateEntries.slice(0, 2),
+    failure: candidateFailures.length ? candidateFailures.slice(0, 3) : candidateEntries.slice(0, 2),
+  };
   const scaffolded: BootstrapResult["scaffolded"] = [];
-  const chartErrors: string[] = [];
 
-  // Pass 2: Formulate facets adhering to <= 100 token budget (What / Where / Invariants)
+  // Collect evidence only; filenames and package metadata do not establish architecture.
   for (const fid of missingFacets) {
     const def = SEMANTIC_FACETS[fid];
-
-    if (fid === "lifecycle") {
-      const citedFiles = candidateEntries.length > 0 ? candidateEntries.slice(0, 3) : (fs.existsSync(pkgPath) ? ["package.json"] : []);
-      const answer = [
-        `what: Primary executable entrypoints and runtime bootstrapping sequence for ${pkgInfo.name || "the repository"}.`,
-        `where: ${citedFiles.join(", ") || "Root configuration and entry modules."}`,
-        `invariants: Initialized before query execution; resident background daemon auto-connects if available.`,
-      ].join("\n");
-      scaffolded.push({ id: fid, question: def.canonicalQuestion, answer, files: citedFiles });
-    } else if (fid === "data_state") {
-      if (candidateStorage.length > 0) {
-        const citedFiles = candidateStorage.slice(0, 3);
-        const answer = [
-          `what: Data persistence and consensus memory storage.`,
-          `where: ${citedFiles.join(", ")}`,
-          `invariants: Read/write synchronization preserves fail-closed determinism.`,
-        ].join("\n");
-        scaffolded.push({ id: fid, question: def.canonicalQuestion, answer, files: citedFiles });
-      } else {
-        const citedFiles = fs.existsSync(pkgPath) ? ["package.json"] : [];
-        const answer = [
-          `status: not_applicable`,
-          `rationale: Stateless package without on-disk relational databases or background state cache.`,
-        ].join("\n");
-        scaffolded.push({ id: fid, question: def.canonicalQuestion, answer, files: citedFiles });
-      }
-    } else if (fid === "boundaries") {
-      if (candidateBoundaries.length > 0) {
-        const citedFiles = candidateBoundaries.slice(0, 3);
-        const answer = [
-          `what: Inter-process boundary protocols and external interface bridges.`,
-          `where: ${citedFiles.join(", ")}`,
-          `invariants: Cross-boundary serialization uses structured JSON; platform-specific sockets fallback cleanly.`,
-        ].join("\n");
-        scaffolded.push({ id: fid, question: def.canonicalQuestion, answer, files: citedFiles });
-      } else {
-        const citedFiles = fs.existsSync(pkgPath) ? ["package.json"] : [];
-        const answer = [
-          `status: not_applicable`,
-          `rationale: Standalone library without external IPC sockets or HTTP microservice boundaries.`,
-        ].join("\n");
-        scaffolded.push({ id: fid, question: def.canonicalQuestion, answer, files: citedFiles });
-      }
-    } else if (fid === "invariants") {
-      const citedFiles = candidateInvariants.length > 0 ? candidateInvariants.slice(0, 3) : (candidateEntries.length > 0 ? candidateEntries.slice(0, 2) : (fs.existsSync(pkgPath) ? ["package.json"] : []));
-      const answer = [
-        `what: Path normalization and cross-platform execution invariants.`,
-        `where: ${citedFiles.join(", ") || "Configuration files"}`,
-        `invariants: Windows backslash normalization and zero-hallucination fail-closed guards must be preserved.`,
-      ].join("\n");
-      scaffolded.push({ id: fid, question: def.canonicalQuestion, answer, files: citedFiles });
-    } else if (fid === "failure") {
-      const citedFiles = candidateFailures.length > 0 ? candidateFailures.slice(0, 3) : (candidateEntries.length > 0 ? candidateEntries.slice(0, 2) : (fs.existsSync(pkgPath) ? ["package.json"] : []));
-      const answer = [
-        `what: Fail-closed miss policy and typed error recovery.`,
-        `where: ${citedFiles.join(", ") || "Type definitions"}`,
-        `invariants: Misses return typed status objects rather than fabricated answers; exceptions carry machine-readable error codes.`,
-      ].join("\n");
-      scaffolded.push({ id: fid, question: def.canonicalQuestion, answer, files: citedFiles });
-    }
-  }
-
-  // Publish to .capn if not dry-run
-  if (!dryRun) {
-    for (const item of scaffolded) {
-      if (item.files.length === 0) continue;
-      try {
-        validateFacetBackingFiles(root, item.files, item.answer.includes("not_applicable"));
-        const pub = await publish(root, "capn-cli", executable, item.question, item.answer, item.files);
-        if (!pub.published) {
-          chartErrors.push(`Failed to chart ${item.id}: ${pub.error || "Unknown error"}`);
-        }
-      } catch (err) {
-        chartErrors.push(`Failed to chart ${item.id}: ${err instanceof Error ? err.message : String(err)}`);
-      }
+    const files = candidates[fid].filter(isRepositoryFile);
+    const evidence = files.flatMap((file) => {
+      const text = fs.readFileSync(resolveRepositoryFile(root, file).real, "utf8");
+      return text.split(/\r?\n/u).flatMap((line, index) => line.trim() ? [{ file, line: index + 1, excerpt: line.trim().slice(0, 240) }] : []).slice(0, 3);
+    }).slice(0, 6);
+    if (evidence.length > 0) {
+      scaffolded.push({
+        id: fid,
+        question: def.canonicalQuestion,
+        answer: "Unverified draft. Review the cited source excerpts and replace this note before charting.",
+        files,
+        status: "draft",
+        evidence,
+      });
     }
   }
 
@@ -573,10 +511,10 @@ export async function bootstrapSemanticMap(
   return {
     waymark: 1,
     kind: "bootstrap",
-    ok: chartErrors.length === 0,
+    ok: true,
     dryRun,
     status: updatedStatus,
     scaffolded,
-    ...(chartErrors.length > 0 ? { chartErrors } : {}),
+    published: false,
   };
 }

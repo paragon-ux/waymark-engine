@@ -90,7 +90,10 @@ export function scoreFzf(pattern: string, target: string): number {
   // Smith-Waterman alignment with rolling score row
   // H[j] is score ending at target[j-1], M[j] is score matching target[j-1]
   const H = new Int32Array(tLen + 1);
-  const M = new Int32Array(tLen + 1);
+  let previousMatches = new Int32Array(tLen + 1);
+  let currentMatches = new Int32Array(tLen + 1);
+  previousMatches.fill(-100000);
+  currentMatches.fill(-100000);
 
   // Precompute contextual bonuses for each character in target
   const bonuses = new Int16Array(tLen);
@@ -113,35 +116,39 @@ export function scoreFzf(pattern: string, target: string): number {
   for (let i = 1; i <= pLen; i++) {
     const pChar = pLower.charCodeAt(i - 1);
     let prevH = 0;
+    currentMatches.fill(-100000);
     let maxInRow = -100000;
 
     for (let j = 1; j <= tLen; j++) {
       const tChar = tLower.charCodeAt(j - 1);
       const tempH = H[j] ?? 0;
 
+      if (j < i) {
+        H[j] = -100000;
+        prevH = tempH;
+        continue;
+      }
+
       if (pChar === tChar) {
-        let score = (i === 1) ? (SCORE_MATCH + (j - 1) * SCORE_GAP_EXTENSION) : (prevH + SCORE_MATCH);
         let bonus = bonuses[j - 1] ?? 0;
-
-        // First character multiplier
+        let score: number;
         if (i === 1) {
-          bonus *= BONUS_FIRST_CHAR_MULTIPLIER;
+          score = SCORE_MATCH + (j - 1) * SCORE_GAP_EXTENSION + bonus * BONUS_FIRST_CHAR_MULTIPLIER;
+        } else {
+          const ordinaryMatch = prevH + SCORE_MATCH + bonus;
+          const previousMatch = previousMatches[j - 1] ?? -100000;
+          const consecutiveMatch = previousMatch > -100000
+            ? previousMatch + SCORE_MATCH + BONUS_CONSECUTIVE
+            : -100000;
+          score = Math.max(ordinaryMatch, consecutiveMatch);
         }
-
-        // Consecutive bonus
-        if ((M[j - 1] ?? 0) > 0) {
-          bonus = Math.max(bonus, BONUS_CONSECUTIVE);
-        }
-
-        score += bonus;
-        M[j] = score;
+        currentMatches[j] = score;
 
         const hPrev = H[j - 1] ?? 0;
         const gapStartScore = hPrev + SCORE_GAP_START;
         const gapExtScore = hPrev + SCORE_GAP_EXTENSION;
         H[j] = Math.max(score, gapStartScore, gapExtScore);
       } else {
-        M[j] = -100000;
         const hPrev = H[j - 1] ?? 0;
         const gapStartScore = hPrev + SCORE_GAP_START;
         const gapExtScore = hPrev + SCORE_GAP_EXTENSION;
@@ -152,6 +159,9 @@ export function scoreFzf(pattern: string, target: string): number {
       const curH = H[j] ?? -100000;
       if (curH > maxInRow) maxInRow = curH;
     }
+    const previousRow = previousMatches;
+    previousMatches = currentMatches;
+    currentMatches = previousRow;
   }
 
   // Find max score in the final row
@@ -178,9 +188,22 @@ export function tracebackFzf(pattern: string, target: string): [number, number][
 
   const stride = tLen + 1;
   const H = new Int32Array((pLen + 1) * stride);
+  const M = new Int32Array((pLen + 1) * stride);
+  const consecutiveMatches = new Uint8Array((pLen + 1) * stride);
   H.fill(-100000);
+  M.fill(-100000);
   for (let j = 0; j <= tLen; j++) {
     H[j] = 0;
+  }
+
+  const bonuses = new Int16Array(tLen);
+  let prevChar = 0;
+  for (let j = 0; j < tLen; j++) {
+    const cur = target.charCodeAt(j);
+    if (j === 0 || isBoundaryChar(prevChar)) bonuses[j] = BONUS_BOUNDARY;
+    else if (isUpper(cur) && isLower(prevChar)) bonuses[j] = BONUS_CAMEL_123;
+    else if (isDigit(cur) && !isDigit(prevChar)) bonuses[j] = BONUS_CAMEL_123;
+    prevChar = cur;
   }
 
   for (let i = 1; i <= pLen; i++) {
@@ -189,12 +212,32 @@ export function tracebackFzf(pattern: string, target: string): [number, number][
     const prevRowOffset = (i - 1) * stride;
     for (let j = i; j <= tLen; j++) {
       const tChar = tLower.charCodeAt(j - 1);
-      let matchScore = -100000;
       if (pChar === tChar) {
-        matchScore = (H[prevRowOffset + j - 1] ?? -100000) + SCORE_MATCH;
+        let bonus = bonuses[j - 1] ?? 0;
+        let matchScore: number;
+        if (i === 1) {
+          matchScore = SCORE_MATCH + (j - 1) * SCORE_GAP_EXTENSION + bonus * BONUS_FIRST_CHAR_MULTIPLIER;
+        } else {
+          const ordinaryMatch = (H[prevRowOffset + j - 1] ?? -100000) + SCORE_MATCH + bonus;
+          const previousMatch = M[prevRowOffset + j - 1] ?? -100000;
+          const consecutiveMatch = previousMatch > -100000
+            ? previousMatch + SCORE_MATCH + BONUS_CONSECUTIVE
+            : -100000;
+          if (consecutiveMatch > ordinaryMatch) {
+            matchScore = consecutiveMatch;
+            consecutiveMatches[rowOffset + j] = 1;
+          } else {
+            matchScore = ordinaryMatch;
+          }
+        }
+        M[rowOffset + j] = matchScore;
       }
-      const gapLeft = (H[rowOffset + j - 1] ?? -100000) + SCORE_GAP_EXTENSION;
-      H[rowOffset + j] = Math.max(matchScore, gapLeft);
+      const previous = H[rowOffset + j - 1] ?? -100000;
+      H[rowOffset + j] = Math.max(
+        M[rowOffset + j] ?? -100000,
+        previous + SCORE_GAP_START,
+        previous + SCORE_GAP_EXTENSION,
+      );
     }
   }
 
@@ -213,16 +256,24 @@ export function tracebackFzf(pattern: string, target: string): [number, number][
   let j = bestJ;
 
   const matchedIndices: number[] = [];
+  let requireMatch = false;
   while (i > 0 && j > 0) {
-    const curScore = H[i * stride + j] ?? -100000;
-    const prevDiagScore = H[(i - 1) * stride + j - 1] ?? -100000;
-    if (pLower.charCodeAt(i - 1) === tLower.charCodeAt(j - 1) &&
-        curScore === prevDiagScore + SCORE_MATCH) {
+    const cell = i * stride + j;
+    const curScore = H[cell] ?? -100000;
+    if ((requireMatch || pLower.charCodeAt(i - 1) === tLower.charCodeAt(j - 1) && curScore === (M[cell] ?? -100000)) &&
+        pLower.charCodeAt(i - 1) === tLower.charCodeAt(j - 1) && (M[cell] ?? -100000) > -100000) {
       matchedIndices.push(j - 1);
+      requireMatch = consecutiveMatches[cell] === 1;
       i--;
       j--;
-    } else {
+    } else if (requireMatch) {
+      return [];
+    } else if (curScore === (H[i * stride + j - 1] ?? -100000) + SCORE_GAP_START ||
+               curScore === (H[i * stride + j - 1] ?? -100000) + SCORE_GAP_EXTENSION) {
       j--;
+    } else {
+      // Invalid states cannot form a consistent traceback.
+      return [];
     }
   }
 

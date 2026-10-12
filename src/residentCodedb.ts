@@ -3,6 +3,7 @@ import os from "node:os";
 import readline from "node:readline";
 import { spawn, type ChildProcess } from "node:child_process";
 import type { ResolvedCodedbCommand } from "./codedbAdapter.js";
+import { WaymarkError } from "./types.js";
 
 export interface CodedbJson {
   ok: boolean;
@@ -117,6 +118,10 @@ export class ResidentCodedbClient {
 
   private async ensureStarted(): Promise<void> {
     if (this.readyPromise) return this.readyPromise;
+
+    if (process.platform === "win32" && this.command.viaCmdShim) {
+      throw new WaymarkError("CODEDB_UNSUPPORTED_SHIM", "Windows .cmd/.bat codedb shims are unsupported; configure WAYMARK_CODEDB_EXECUTABLE with a native .exe to avoid shell argument expansion.", 2);
+    }
 
     this.readyResolved = false;
     this.readyPromise = new Promise<void>((resolve, reject) => {
@@ -374,8 +379,9 @@ export class ResidentCodedbClient {
 
 const residentRegistry = new Map<string, ResidentCodedbClient>();
 
-function normalizeKeyRoot(root: string): string {
-  return root.replace(/\\/g, "/").toLowerCase();
+export function normalizeKeyRoot(root: string, platform = process.platform): string {
+  const normalized = root.replace(/\\/g, "/");
+  return platform === "win32" ? normalized.toLowerCase() : normalized;
 }
 
 function unregisterResidentClient(client: ResidentCodedbClient): void {

@@ -26,7 +26,7 @@ export const CAPN_RESOURCES: McpResourceDefinition[] = [
 export const CAPN_PROMPTS: McpPromptDefinition[] = [
   {
     name: "explore-subsystem",
-    description: "Guide a structured 4-tier exploration of a subsystem or symbol in the codebase.",
+    description: "Guide a structured 4-tier, repository-wide exploration of a subsystem concept or symbol; filesystem-scoped subsystem queries are unsupported.",
     arguments: [
       {
         name: "query",
@@ -53,13 +53,8 @@ export const CAPN_PROMPTS: McpPromptDefinition[] = [
   },
   {
     name: "bootstrap-semantic-map",
-    description: "Two-pass agent prompt that inspects repository layout, harvests existing documentation, grounds concepts in Tree-Sitter AST symbols, and writes the 5-facet Semantic Repo Map.",
+    description: "Collect source excerpts as unverified drafts for the repository Semantic Repo Map; a human must verify and explicitly chart each claim.",
     arguments: [
-      {
-        name: "subsystem",
-        description: "Optional subsystem or package name in monorepos.",
-        required: false,
-      },
       {
         name: "root",
         description: "Optional repository root path.",
@@ -368,7 +363,7 @@ export class McpServer {
           jsonrpc: "2.0",
           id,
           result: {
-            description: "Guide a structured 4-tier exploration of a subsystem or symbol in the codebase.",
+            description: "Guide repository-wide discovery for a subsystem concept or symbol; filesystem-scoped queries are unsupported.",
             messages: [
               {
                 role: "user",
@@ -401,18 +396,17 @@ export class McpServer {
         };
       }
       if (name === "bootstrap-semantic-map") {
-        const subsystem = args.subsystem ? ` for subsystem "${args.subsystem}"` : "";
         return {
           jsonrpc: "2.0",
           id,
           result: {
-            description: "Two-pass agent prompt that inspects repository layout, harvests existing documentation, grounds concepts in Tree-Sitter AST symbols, and writes the 5-facet Semantic Repo Map.",
+            description: "Collect source excerpts as unverified drafts; a human must verify and explicitly chart each claim.",
             messages: [
               {
                 role: "user",
                 content: {
                   type: "text",
-                  text: `Initialize or verify the 5-facet Semantic Repo Map${subsystem}. First call waymark_memory with action="status" (or waymark_ask with facet="status") to check current map health. If facets are missing, call waymark_memory with action="bootstrap" (optional: dry_run=true first) to auto-generate the foundational architectural consensus into SQLite.`,
+                  text: `Inspect the repository-wide Semantic Repo Map with waymark_memory(action="status"). Bootstrap may collect source excerpts as unverified drafts but never publishes claims. Verify each claim against its cited source and publish only supported conclusions with waymark_memory(action="chart"). Subsystem-scoped maps are unsupported.`,
                 },
               },
             ],

@@ -259,28 +259,38 @@
     function renderEvent(ev, prepend = false) {
       const li = document.createElement('li');
       li.className = 'event-item';
-      const time = ev.timestamp ? ev.timestamp.split('T')[1].slice(0, 8) : '';
+      const time = typeof ev.timestamp === 'string' ? (ev.timestamp.split('T')[1] || '').slice(0, 8) : '';
       const pillClass = ev.status === 'hit' ? 'pill-hit' : (ev.status === 'junction' ? 'pill-junction' : 'pill-miss');
-      
-      let matchStr = '';
+      const span = (className, text) => {
+        const node = document.createElement('span');
+        if (className) node.className = className;
+        node.textContent = String(text ?? '');
+        return node;
+      };
+      const top = document.createElement('div');
+      top.className = 'event-top';
+      const query = document.createElement('span');
+      query.className = 'event-query';
+      query.appendChild(span('', '[' + time + '] '));
+      query.appendChild(span('', '"' + (ev.query || '') + '"'));
+      top.appendChild(query);
+      const pills = document.createElement('span');
+      pills.appendChild(span('pill pill-source', (ev.caller || '').toUpperCase()));
+      pills.appendChild(span('pill ' + pillClass, (ev.status || '').toUpperCase()));
+      top.appendChild(pills);
+
+      const meta = document.createElement('div');
+      meta.className = 'event-meta';
+      meta.appendChild(span('', 'Tier: ' + (ev.tierRoute || '')));
       if (ev.matchedPath) {
         const loc = ev.matchedPath + (ev.matchedLine ? ':' + ev.matchedLine : '');
-        matchStr = '<span class="event-match">' + (ev.matchedSymbol ? ev.matchedSymbol + ' &rarr; ' : '') + loc + (ev.score !== undefined ? ' (score: ' + ev.score + ')' : '') + '</span>';
+        const match = (ev.matchedSymbol ? ev.matchedSymbol + ' → ' : '') + loc + (ev.score !== undefined ? ' (score: ' + ev.score + ')' : '');
+        meta.appendChild(span('event-match', match));
       }
-
-      li.innerHTML = '<div class="event-top">' +
-        '<span class="event-query"><span style="color: var(--text-muted);">[' + time + ']</span> "' + (ev.query || '') + '"</span>' +
-        '<span>' +
-          '<span class="pill pill-source">' + (ev.caller || '').toUpperCase() + '</span> ' +
-          '<span class="pill ' + pillClass + '">' + (ev.status || '').toUpperCase() + '</span>' +
-        '</span>' +
-      '</div>' +
-      '<div class="event-meta">' +
-        '<span>Tier: ' + (ev.tierRoute || '') + '</span>' +
-        matchStr +
-        '<span class="token-savings">' + (ev.tokensSavedPct !== undefined ? ev.tokensSavedPct + '%' : '') + ' saved (~' + (ev.payloadTokens || 0) + ' tok)</span>' +
-        '<span>' + (ev.latencyMs || 0) + 'ms</span>' +
-      '</div>';
+      meta.appendChild(span('token-savings', (ev.tokensSavedPct !== undefined ? ev.tokensSavedPct + '%' : '') + ' saved (~' + (ev.payloadTokens || 0) + ' tok)'));
+      meta.appendChild(span('', (ev.latencyMs || 0) + 'ms'));
+      li.appendChild(top);
+      li.appendChild(meta);
 
       if (prepend && eventList.firstChild) {
         eventList.insertBefore(li, eventList.firstChild);
@@ -294,7 +304,7 @@
       if (data.repo) document.getElementById('repo-info').textContent = 'Repo: ' + data.repo;
       if (data.stats) updateStats(data.stats);
       if (data.events && Array.isArray(data.events)) {
-        eventList.innerHTML = '';
+        eventList.replaceChildren();
         data.events.slice().reverse().forEach(ev => renderEvent(ev, false));
       }
     });

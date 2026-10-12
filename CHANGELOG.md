@@ -4,6 +4,23 @@ All notable changes to `waymark-engine` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.1] - 2026-10-11
+
+### Process Eviction Cleanup, Ambiguous Basename Collision Diagnostics, Read-Only Guard, and Lexical Consensus Recall
+
+Version 2.7.1 is a hotfix release resolving background daemon process eviction, multi-path basename collision diagnostics, read-only cache guards, and deterministic lexical recall.
+
+### Fixed
+- **Resident Process Eviction Race (`src/residentCodedb.ts`)**:
+  - Replaced asynchronous close with atomic synchronous `closeSync()` on LRU eviction to prevent process overlap and file lock race conditions on Windows.
+  - Tuned default idle timeout from 120s to 60s for faster resource recovery.
+- **Ambiguous Basename Collision Diagnostics (`src/discoveryRouter.ts`, `src/types.ts`)**:
+  - When queries target bare basenames shared by multiple distinct files in the repository, returns structured `AMBIGUOUS_PATH_COLLISION` diagnostic listing candidates and prompting explicit relative paths.
+- **Read-Only Invariant Enforcement (`src/discoveryRouter.ts`)**:
+  - Guarded path crawler cache writing with `if (process.env.WAYMARK_READ_ONLY !== "1")` to guarantee zero disk mutations in read-only analysis sessions.
+- **Deterministic Lexical Consensus Recall (`src/capnAdapter.ts`)**:
+  - Added exact normalized H1 question matching against `.capn/entries/*.md` before BM25 fallback, ensuring deterministic 100-score recall for previously charted questions.
+
 ## [2.7.0] - 2026-10-08
 
 ### Zensical Documentation Portal, GitHub Pages Workflow, Executive README Alignment, and Glama Registry Schema

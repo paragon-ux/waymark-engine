@@ -64,8 +64,8 @@ export class ResidentCodedbClient {
     this.root = root;
     this.command = command;
     const defaultIdle = process.env.WAYMARK_IDLE_TIMEOUT
-      ? parseInt(process.env.WAYMARK_IDLE_TIMEOUT, 10) || 120_000
-      : 120_000;
+      ? parseInt(process.env.WAYMARK_IDLE_TIMEOUT, 10) || 60_000
+      : 60_000;
     this.idleTimeoutMs = idleTimeoutMs ?? defaultIdle;
   }
 
@@ -418,7 +418,7 @@ export function getResidentClient(root: string, command: ResolvedCodedbCommand):
     if (oldestKey) {
       const oldestClient = residentRegistry.get(oldestKey);
       if (oldestClient) {
-        oldestClient.close();
+        oldestClient.closeSync();
       }
       residentRegistry.delete(oldestKey);
     }

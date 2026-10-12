@@ -63,6 +63,40 @@ export function renderPlainText(value: unknown): string {
     return `${prefix}\n${statusStr}`.trimEnd();
   }
 
+  if (record.kind === "scope") {
+    if (record.action === "analyze") {
+      const a = record.analysis as any;
+      if (!a) return JSON.stringify(record, null, 2);
+      const lines = [
+        `[scope:analyze] Root: ${a.root} | Total Files: ${a.totalFiles} (~${Math.round(a.totalEstimatedTokens / 1000)}k tokens)`,
+        `Breakdown:`,
+      ];
+      for (const [k, v] of Object.entries(a.categories as Record<string, any>)) {
+        if (v.fileCount > 0) {
+          lines.push(`  - ${k}: ${v.fileCount} files (~${Math.round(v.estimatedTokens / 1000)}k tokens)`);
+        }
+      }
+      lines.push(`Recommendation: ${a.interactivePrompt?.options?.[0]?.label ?? "Medium"}`);
+      return lines.join("\n");
+    }
+    if (record.action === "set") {
+      const f = record.fence as any;
+      return `[scope:set] Active level: ${f?.level?.toUpperCase()} (${f?.excludePatterns?.length ?? 0} excludes active)`;
+    }
+    if (record.action === "get") {
+      const f = record.fence as any;
+      return f
+        ? `[scope:get] Active level: ${f.level?.toUpperCase()} (created: ${f.createdAt})`
+        : `[scope:get] Unbounded (no active scope fence)`;
+    }
+    if (record.action === "clear") {
+      return `[scope:clear] ${record.message}`;
+    }
+    if (record.action === "export") {
+      return String(record.content);
+    }
+  }
+
   if (record.tool === "call_graph") {
     return renderCallGraph(record as unknown as CallGraphData);
   }

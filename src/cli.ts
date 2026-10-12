@@ -18,7 +18,7 @@ const VALUE_FLAGS = new Set([
   "profile", "path", "language", "capn-executable", "question", "answer", "files",
   "tier", "t", "format", "idle-timeout", "query", "symbol", "symbols", "q", "s",
   "depth", "direction", "manifest", "category", "id", "file", "facet", "action", "subsystem",
-  "root", "session", "port",
+  "root", "session", "port", "level", "session-id", "include", "exclude",
 ]);
 
 const BOOLEAN_FLAGS = new Set([
@@ -313,6 +313,20 @@ async function runCommand(command: string, rawArgs: readonly string[]): Promise<
         question,
         { tier, timing: timing || dev, autoResolve, daemon, depth, direction, excludeTests, dev, facet: rawFacet, path: rawPath },
       ),
+    };
+  }
+
+  if (command === "scope") {
+    const subAction = (parsed.positionals[0] ?? parsed.values.get("action") ?? "analyze").toLowerCase();
+    const level = (parsed.positionals[1] ?? parsed.values.get("level") ?? "medium").toLowerCase();
+    const sessionId = parsed.values.get("session") ?? parsed.values.get("session-id");
+    const { handleScopeAction } = await import("./scopeManager.js");
+    return {
+      value: await handleScopeAction(root, {
+        action: subAction as any,
+        level: level as any,
+        session_id: sessionId,
+      }),
     };
   }
 

@@ -167,6 +167,27 @@ export const waymarkAskTool: McpToolHandler = {
 
       // 3. File AST outline discovery (Mode A) when path provided without question
       if (rawPath && !question && !facet) {
+        const { getScopeFence, isPathInScope } = await import("../scopeManager.js");
+        const sessionId = typeof args.session_id === "string" ? args.session_id : undefined;
+        const fence = getScopeFence(root, sessionId);
+        if (fence && !isPathInScope(rawPath, fence)) {
+          const outOfScopeRes = {
+            waymark: 1,
+            kind: "ask",
+            status: "out_of_scope",
+            provider: "scope-fence",
+            missCode: "OUT_OF_SCOPE",
+            reason: `Target path '${rawPath}' is excluded by active '${fence.level}' scope fence (${fence.excludePatterns.length} rules active). Adjust scope via waymark_scope(action='set') if needed.`,
+            matches: [],
+          };
+          if (plain) {
+            return {
+              content: [{ type: "text", text: `[out_of_scope] Path '${rawPath}' excluded by active ${fence.level} scope fence.` }],
+              isError: false,
+            };
+          }
+          return jsonResult(outOfScopeRes);
+        }
         const res = await discoverSymbolsInFile(root, rawPath, undefined, rawQuery || undefined);
         if (plain) {
           return {
@@ -925,14 +946,92 @@ export const waymarkMapStatusTool: McpToolHandler = {
   },
 };
 
+export const waymarkScopeTool: McpToolHandler = {
+  definition: {
+    name: "waymark_scope",
+    description: "Analyze repository topology, generate structural code graphs, and establish interactive scoping boundaries to prevent context explosion in large codebases.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        action: {
+          type: "string",
+          enum: ["analyze", "set", "get", "clear", "export"],
+          description: "Scoping action to execute: analyze | set | get | clear | export.",
+        },
+        level: {
+          type: "string",
+          enum: ["wide", "medium", "narrow", "custom"],
+          description: "Scoping preset for action='set': wide | medium | narrow | custom.",
+        },
+        session_id: {
+          type: "string",
+          description: "Optional session identifier to scope concurrently without disk mutations.",
+        },
+        include: {
+          type: "array",
+          items: { type: "string" },
+          description: "Explicit repository-relative path glob patterns to include.",
+        },
+        exclude: {
+          type: "array",
+          items: { type: "string" },
+          description: "Explicit repository-relative path glob patterns to exclude.",
+        },
+        root: {
+          type: "string",
+          description: "Optional repository root path. Defaults to current working directory.",
+        },
+        plain: {
+          type: "boolean",
+          description: "Emit token-minimal plain text formatted result (~35 tokens).",
+        },
+      },
+      required: ["action"],
+    },
+  },
+  handler: async (args) => {
+    try {
+      const root = resolveRoot(args);
+      const action = typeof args.action === "string" ? (args.action.trim().toLowerCase() as any) : "analyze";
+      const level = typeof args.level === "string" ? (args.level.trim().toLowerCase() as any) : undefined;
+      const session_id = typeof args.session_id === "string" && args.session_id.trim() ? args.session_id.trim() : undefined;
+      const include = Array.isArray(args.include) ? args.include.filter((i): i is string => typeof i === "string") : undefined;
+      const exclude = Array.isArray(args.exclude) ? args.exclude.filter((e): e is string => typeof e === "string") : undefined;
+      const plain = args.plain === true;
+
+      const { handleScopeAction } = await import("../scopeManager.js");
+      const res = await handleScopeAction(root, {
+        action,
+        level,
+        session_id,
+        include,
+        exclude,
+        plain,
+      });
+
+      if (plain) {
+        return {
+          content: [{ type: "text", text: renderPlainText(res) }],
+          isError: false,
+        };
+      }
+      return jsonResult(res);
+    } catch (error) {
+      return errorResult(error);
+    }
+  },
+};
+
 export const CANONICAL_MCP_TOOLS: McpToolHandler[] = [
   waymarkAskTool,
   waymarkMemoryTool,
+  waymarkScopeTool,
 ];
 
 export const WAYMARK_TOOLS: McpToolHandler[] = [
   waymarkAskTool,
   waymarkMemoryTool,
+  waymarkScopeTool,
   waymarkChartTool,
   discoverSymbolsTool,
   waymarkUnchartTool,

@@ -123,7 +123,7 @@ export class McpServer {
 
   public getToolDefinitions() {
     if (this.canonicalOnly) {
-      const canonicalNames = new Set(["waymark_ask", "waymark_memory"]);
+      const canonicalNames = new Set(["waymark_ask", "waymark_memory", "waymark_scope"]);
       return Array.from(this.toolMap.values())
         .filter((h) => canonicalNames.has(h.definition.name))
         .map((h) => h.definition);

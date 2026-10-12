@@ -87,6 +87,7 @@ test("MCP discovery server defaults to the two-verb model", async () => {
   assert.deepEqual(names.sort(), [
     "waymark_ask",
     "waymark_memory",
+    "waymark_scope",
   ]);
 });
 
@@ -107,6 +108,7 @@ test("MCP discovery server with canonicalOnly false exposes all tools", async ()
     "waymark_map_status",
     "waymark_memory",
     "waymark_prune",
+    "waymark_scope",
     "waymark_unchart",
   ]);
 });

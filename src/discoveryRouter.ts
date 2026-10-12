@@ -279,11 +279,13 @@ export function collectRepoPaths(root: string, maxAgeMs = 60_000): string[] {
   pathCache = { root: normRoot, at: Date.now(), paths: out };
 
   try {
-    const dir = path.dirname(cacheFile);
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
+    if (process.env.WAYMARK_READ_ONLY !== "1") {
+      const dir = path.dirname(cacheFile);
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+      fs.writeFileSync(cacheFile, out.join("\n"), "utf8");
     }
-    fs.writeFileSync(cacheFile, out.join("\n"), "utf8");
   } catch {
     // Fail silent if repository is read-only
   }
@@ -541,6 +543,21 @@ async function routeDiscoveryCore(ctx: DiscoveryRouteContext): Promise<AskResult
         (tier === "auto" && literal.isLiteral)
       ) {
         if (recordTiming) timings.total_ms = Math.round((performance.now() - startTime) * 100) / 100;
+        const trie = getRepoPrefixTrie(root);
+        const baseName = literal.normalized.split("/").pop()?.toLowerCase() ?? "";
+        const candidates = trie.getPaths().filter((p) => (p.split("/").pop() ?? "").toLowerCase() === baseName);
+        if (candidates.length > 1) {
+          return {
+            waymark: 1,
+            kind: "ask",
+            status: "miss",
+            provider: "literal-path",
+            missCode: "AMBIGUOUS_PATH_COLLISION",
+            reason: `Ambiguous basename collision for "${question}": found ${candidates.length} candidates (${candidates.slice(0, 5).join(", ")}${candidates.length > 5 ? "..." : ""}). Qualify path explicitly with relative path (e.g. ./${literal.normalized}).`,
+            matches: candidates.slice(0, 10).map((file) => ({ file, kind: "basename" as const })),
+            ...(recordTiming ? { timings } : {}),
+          };
+        }
         return {
           waymark: 1,
           kind: "ask",

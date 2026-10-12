@@ -113,7 +113,8 @@ export type WaymarkMissCode =
   | "JUNCTION_EXHAUSTED"
   | "TIER_FORCED_MISS"
   | "STORE_UNINITIALIZED"
-  | "CAPN_NON_DETERMINISTIC_MODE";
+  | "CAPN_NON_DETERMINISTIC_MODE"
+  | "AMBIGUOUS_PATH_COLLISION";
 
 export interface JunctionContinuation {
   tool: "waymark_ask";
@@ -181,7 +182,8 @@ export interface AskMissResult {
   provider: "waymark-engine" | "codedb" | "literal-path" | "capn-cli" | "none" | "fuzzy-lexical";
   missCode: WaymarkMissCode;
   reason: string;
-  matches: never[];
+  matches: LiteralMatch[] | never[];
+  candidates?: string[];
   timings?: Record<string, number>;
   dev?: DevDiagnostics;
 }

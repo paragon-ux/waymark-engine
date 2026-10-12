@@ -24,6 +24,7 @@ export {
   CAPN_TOOLS,
   waymarkAskTool,
   waymarkMemoryTool,
+  waymarkScopeTool,
   waymarkChartTool,
   discoverSymbolsTool,
   waymarkUnchartTool,
@@ -34,6 +35,25 @@ export {
   waymarkDaemonStatusTool,
   waymarkInitTool,
 } from "./mcp/capnTools.js";
+
+export {
+  classifyPath,
+  matchesPattern,
+  isPathInScope,
+  analyzeScope,
+  setScopeFence,
+  getScopeFence,
+  clearScopeFence,
+  exportScopeIgnore,
+  handleScopeAction,
+  type TopologyCategory,
+  type ScopeLevel,
+  type ScopeAction,
+  type ScopeCategorySummary,
+  type ScopePresetDefinition,
+  type ScopeAnalysis,
+  type ScopeFence,
+} from "./scopeManager.js";
 
 export { detectAstIntent, detectLiteralIntent, collectRepoPaths, getRepoPrefixTrie, invalidatePathsCache, matchLiteralPath, extractCandidateTokens, routeDiscovery, type AstIntent, type DiscoveryRouteContext } from "./discoveryRouter.js";
 export { PrefixTrie, PrefixTrieNode } from "./prefixTrie.js";

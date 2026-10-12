@@ -668,7 +668,7 @@ export async function startLiveReplObserver(options: ReplOptions = {}): Promise<
     process.stdout.write(
       [
         "================================================================================",
-        "  WAYMARK ENGINE LIVE AGENT MONITOR  |  PDLt-Style Observer",
+        "  WAYMARK ENGINE LIVE AGENT MONITOR  |  Universal Session Observer",
         `  Session:    ${path.relative(root, sessionPath) || sessionPath}`,
         `  Repo:       ${root}`,
         ...(webPort ? [`  Web Viewer: http://localhost:${webPort}`] : []),

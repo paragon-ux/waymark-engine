@@ -154,6 +154,9 @@ async function runCommand(command: string, rawArgs: readonly string[]): Promise<
       : undefined;
   if (suppression) return { value: { waymark: 1, kind: "suppressed", ok: true, reason: suppression } };
   const parsed = parseArgs(rawArgs);
+  if (parsed.values.get("subsystem")?.trim()) {
+    throw new WaymarkError("UNSUPPORTED_SUBSYSTEM", "Subsystem-scoped operations are not supported; query the repository root or omit --subsystem.");
+  }
   const root = parsed.values.get("root") ? path.resolve(parsed.values.get("root")!) : repoRoot();
 
   if (command === "help" || command === "--help" || command === "-h") {
@@ -165,7 +168,7 @@ async function runCommand(command: string, rawArgs: readonly string[]): Promise<
         "  symbols <symbol1> [symbol2 ...] [--plain] (batch query symbol definitions across repo)",
         "  ask <question> [--symbols a,b] [--facet <f>] [--tier auto|ast|path|fuzzy|capn] [--timing] [--json|--plain]",
         "  memory <chart|bootstrap|bust|prune|list|unchart|init|status|context|heal|export> [options]",
-        "  bootstrap [--dry-run] [--subsystem <s>] (bootstrap 5-facet Semantic Repo Map)",
+        "  bootstrap [--dry-run] [--subsystem <s>] (subsystem scope is currently unsupported)",
         "  map [status|show|heal|export] (inspect and manage Semantic Repo Map)",
         "  chart --question <q> --answer <a> --files <a,b> [--profile capn-cli|none] [--capn-executable <path>]",
         "  unchart <id> [--if-exists] | bust <path> | prune | list | context",

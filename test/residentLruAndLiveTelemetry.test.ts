@@ -85,6 +85,8 @@ test("detectAstIntent allows narrative phrasing for entrypoint discovery", () =>
 test("Session telemetry logger writes append-only NDJSON events", () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "waymark-telemetry-test-"));
   const sessionLog = path.join(tmpDir, ".waymark", "sessions", "active.jsonl");
+  const oldTelemetry = process.env.WAYMARK_TELEMETRY;
+  process.env.WAYMARK_TELEMETRY = "1";
 
   try {
     const dummyEvent: SessionTelemetryEvent = {
@@ -117,6 +119,8 @@ test("Session telemetry logger writes append-only NDJSON events", () => {
     assert.equal(parsed.matchedSymbol, "verifyHop");
     assert.equal(parsed.tokensSavedPct, 97.7);
   } finally {
+    if (oldTelemetry === undefined) delete process.env.WAYMARK_TELEMETRY;
+    else process.env.WAYMARK_TELEMETRY = oldTelemetry;
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
 });

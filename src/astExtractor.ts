@@ -180,10 +180,9 @@ async function discoverSymbolsViaCodedbOutline(
 
   try {
     const run = await runJson(repoRoot, command, ["outline", storedPath, "--json"]);
+    if (!run.ok) throw new WaymarkError("CODEDB_PROCESS_ERROR", run.error || "codedb outline failed", 2);
     const parsed = run.payload;
-    if (!run.ok || !parsed || !Array.isArray(parsed.symbols)) {
-      return { ok: true, path: storedPath, language: (parsed?.language || "unknown") as any, symbols: [] };
-    }
+    if (!parsed || !Array.isArray(parsed.symbols)) throw new WaymarkError("CODEDB_PROCESS_ERROR", "codedb outline returned an invalid response", 2);
     const symbols: StructuredSymbol[] = parsed.symbols
       .filter((s: any) => Boolean(s && s.name))
       .map((s: any) => {
@@ -217,7 +216,8 @@ async function discoverSymbolsViaCodedbOutline(
       language: (parsed.language || path.extname(storedPath).replace(".", "")) as any,
       symbols,
     };
-  } catch {
+  } catch (error) {
+    if (error instanceof WaymarkError && error.code.startsWith("CODEDB_")) throw error;
     throw new WaymarkError("UNSUPPORTED_LANGUAGE", `Cannot detect a supported discovery language for ${storedPath}`, 2);
   }
 }
@@ -245,31 +245,22 @@ export async function discoverSymbolsInRepo(
   const { resolveCodedbCommand, runJson } = await import("./codedbAdapter.js");
   const command = resolveCodedbCommand();
 
-  try {
-    const run = await runJson(repoRoot, command, ["symbol", query, "--json"]);
-    const results = run.ok && run.payload && Array.isArray(run.payload.results) ? run.payload.results : [];
-    return {
-      ok: true,
-      tool: "symbol",
-      query,
-      count: results.length,
-      results: results.map((r: any) => ({
-        name: r.name,
-        path: r.path,
-        line: r.line,
-        kind: r.kind || "symbol",
-        detail: r.detail,
-      })),
-    };
-  } catch {
-    return {
-      ok: true,
-      tool: "symbol",
-      query,
-      count: 0,
-      results: [],
-    };
-  }
+  const run = await runJson(repoRoot, command, ["symbol", query, "--json"]);
+  if (!run.ok || !run.payload) throw new WaymarkError("CODEDB_PROCESS_ERROR", run.error || "codedb symbol lookup failed", 2);
+  const results = Array.isArray(run.payload.results) ? run.payload.results : [];
+  return {
+    ok: true,
+    tool: "symbol",
+    query,
+    count: results.length,
+    results: results.map((r: any) => ({
+      name: r.name,
+      path: r.path,
+      line: r.line,
+      kind: r.kind || "symbol",
+      detail: r.detail,
+    })),
+  };
 }
 
 export async function discoverSymbolsInFile(

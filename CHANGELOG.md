@@ -4,6 +4,59 @@ All notable changes to `waymark-engine` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.2] - 2026-10-12
+
+### Process Safety, Discovery Correctness, and Repository Integrity
+
+Version 2.7.2 hardens daemon shutdown and dashboard safety, improves discovery and semantic-memory accuracy, and makes repository boundaries, evaluation, and query telemetry more reliable.
+
+### Fixed
+- **Daemon Process Safety (`src/daemon.ts`)**:
+  - Forced shutdown no longer signals a process based only on PID-file contents; it uses the root-specific daemon IPC endpoint and fails safely when daemon identity cannot be established.
+- **Semantic Memory Relevance (`src/capnAdapter.ts`, `src/discoveryRouter.ts`)**:
+  - Lexical matches without topical evidence are not returned as successful answers, while relevant memory results remain available.
+- **Evidence-Backed Map Bootstrap (`src/semanticMap.ts`)**:
+  - Bootstrap returns source-grounded excerpts as unverified drafts; it does not publish unsupported architectural claims as validated facts.
+- **Live Dashboard Exposure (`src/repl.ts`)**:
+  - The observer requires telemetry opt-in, binds to loopback, and does not permit cross-origin access; no remote mode is supported.
+- **Dashboard HTML Injection (`src/viewer.html`)**:
+  - Untrusted telemetry values are rendered as text and cannot inject markup or alter the dashboard structure.
+- **Anchor Integrity (`src/integrity.ts`)**:
+  - Stored ranges and span contents are validated before an anchor is considered fresh, even when the whole-file hash matches.
+- **Semantic Map Path Containment (`src/paths.ts`, `src/semanticMap.ts`, `src/capnAdapter.ts`)**:
+  - Facet backing files are constrained to the selected repository, including traversal and symlink cases, across validation, status, publishing, bootstrap, CLI, MCP, and public API paths.
+- **Prompt Evaluator Contracts (`src/evaluator.ts`)**:
+  - Declared steps and expectations are executed and checked; unsupported operations fail explicitly, and results and exit status reflect actual execution.
+- **Windows Codedb Executable Contract (`src/executable.ts`, `src/codedbAdapter.ts`, `src/residentCodedb.ts`)**:
+  - Windows `.cmd` and `.bat` shims are explicitly rejected with typed errors in cold and resident paths; no shell interpolation is used.
+- **Codedb Infrastructure Errors (`src/codedbAdapter.ts`, `src/astExtractor.ts`, `src/discoveryRouter.ts`)**:
+  - Missing executables, timeouts, and process failures remain infrastructure errors instead of being reported as symbol misses.
+- **Subsystem Scope Contract (`src/semanticMap.ts`, `src/capnAdapter.ts`, `src/discoveryRouter.ts`, `src/cli.ts`, `src/mcp/capnTools.ts`)**:
+  - Unsupported filesystem-scoped subsystem operations return explicit errors instead of silently returning repository-wide results.
+- **Hidden-Directory Discovery (`src/paths.ts`)**:
+  - Legitimate hidden project directories such as `.github` and `.vscode` are discoverable while internal metadata and runtime directories remain excluded.
+- **Filename Validation (`src/paths.ts`)**:
+  - Valid names beginning with `..`, including `..valid.ts`, are accepted while actual path escapes are rejected.
+- **Fuzzy Matching (`src/fuzzyMatcher.ts`)**:
+  - Scoring and traceback now agree on highlighted match positions and preserve deterministic ordering across repeated characters, gaps, and boundaries.
+- **Repository Root Identity (`src/daemon.ts`, `src/discoveryRouter.ts`, `src/residentCodedb.ts`)**:
+  - Case-distinct repository roots remain distinct on case-sensitive filesystems across daemon addresses, registry keys, and resident-client keys.
+- **Candidate Cache Bounds (`src/codedbAdapter.ts`)**:
+  - Expired entries are evicted and cache size is capped to bound memory use under many distinct query keys.
+- **Multi-Symbol Accounting (`src/codedbAdapter.ts`)**:
+  - Duplicate and empty symbol names produce consistent result maps, hit/miss counts, status, and totals while preserving empty-input behavior.
+- **Prompt Catalogue Fixture (`docs/prompts/CATALOGUE_MANIFEST.jsonl`, `src/evaluator.ts`)**:
+  - The `10-04` package-header case checks its intended anchor freshness behavior, and declared route, file, and anchor expectations are evaluated.
+
+### Changed
+- **Query Telemetry Privacy (`src/sessionLogger.ts`, `src/repl.ts`)**:
+  - Persistent query and session logging is disabled by default and requires `WAYMARK_TELEMETRY=1`; the live observer follows the same opt-in policy.
+- **Request-Scoped Daemon Selection (`src/capnAdapter.ts`, `src/discoveryRouter.ts`, `src/codedbAdapter.ts`)**:
+  - Daemon selection is passed through request-scoped options rather than mutating process-wide environment variables.
+- **Query Latency Telemetry (`src/discoveryRouter.ts`, `src/sessionLogger.ts`)**:
+  - Ordinary queries record elapsed time even when diagnostic timing is disabled; persisted logging remains subject to telemetry opt-in.
+
+
 ## [2.7.1] - 2026-10-11
 
 ### Process Eviction Cleanup, Ambiguous Basename Collision Diagnostics, Read-Only Guard, and Lexical Consensus Recall

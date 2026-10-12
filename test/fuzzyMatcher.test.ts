@@ -96,6 +96,50 @@ test("tracebackFzf produces contiguous match ranges for top survivors", () => {
   assert.deepEqual(r4, []);
 });
 
+test("fzf traceback highlights reproduce the score across repeats, gaps, and boundaries", () => {
+  const cases: [string, string][] = [
+    ["aa", "aabaaa"],
+    ["aba", "aabaa"],
+    ["fb", "fooBar"],
+    ["abc", "axbycz"],
+    ["nmp", "mainNamePath"],
+    ["abc", "x/a-b_c"],
+    ["aaaa", "a_a_a_a"],
+    ["zyx", "xYz"],
+    ["abc", "a".repeat(200) + "b" + "x".repeat(300) + "c"],
+  ];
+  const rangesScore = (pattern: string, target: string, ranges: [number, number][]): number => {
+    const indices = ranges.flatMap(([start, end]) => Array.from({ length: end - start }, (_, offset) => start + offset));
+    if (indices.length !== pattern.length) return -1;
+    let score = 0;
+    let previous = -1;
+    for (let i = 0; i < indices.length; i++) {
+      const index = indices[i]!;
+      if (pattern[i]!.toLowerCase() !== target[index]!.toLowerCase()) return -1;
+      const current = target.charCodeAt(index);
+      const before = index > 0 ? target.charCodeAt(index - 1) : 0;
+      const boundary = index === 0 || [47, 92, 95, 45, 46, 58, 32, 9].includes(before);
+      let bonus = boundary ? BONUS_BOUNDARY : current >= 65 && current <= 90 && before >= 97 && before <= 122 ? BONUS_CAMEL_123 : 0;
+      if (i === 0) {
+        bonus *= BONUS_FIRST_CHAR_MULTIPLIER;
+        score += (index) * SCORE_GAP_EXTENSION;
+      } else {
+        if (index === previous + 1) bonus = Math.max(bonus, BONUS_CONSECUTIVE);
+        score += (index - previous - 1) * SCORE_GAP_EXTENSION;
+      }
+      score += SCORE_MATCH + bonus;
+      previous = index;
+    }
+    return score;
+  };
+
+  for (const [pattern, target] of cases) {
+    const expected = scoreFzf(pattern, target);
+    const ranges = tracebackFzf(pattern, target);
+    assert.equal(rangesScore(pattern, target, ranges), expected, `${pattern} in ${target}`);
+  }
+});
+
 test("normalizeScore maps raw scores to a 0-100 range", () => {
   assert.equal(normalizeScore(-1, 5), 0);
   assert.equal(normalizeScore(0, 5), 0);

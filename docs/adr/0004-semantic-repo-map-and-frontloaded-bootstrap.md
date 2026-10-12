@@ -1,5 +1,7 @@
 # ADR-0004: Semantic Repo Map via Direct SQLite Consensus Ledger Parity
 
+> **Implementation update (audit remediation):** The historical decision below proposed automatic publication and subsystem maps. The implementation now returns source-backed bootstrap drafts only, requires explicit human-verified `chart` calls, and rejects subsystem scope with `UNSUPPORTED_SUBSYSTEM`. This note supersedes those claims until scoped indexes and end-to-end validation are implemented.
+
 - **Status:** Accepted
 - **Date:** 2026-09-28
 - **Invariants:** 100% Determinism, Zero Hallucination, Fail-Closed Precision, Single SQLite Ledger Parity, Zero Agent File Overhead
@@ -72,9 +74,9 @@ The foundational prefill establishes 5 atomic Q&A entries in SQLite:
 - `waymark bootstrap` is an explicit on-demand tool/command, never an unsolicited background hijack during unrelated user tasks.
 
 
-### F. First-Class `NOT_APPLICABLE` and Subsystem Scoping
+### F. First-Class `NOT_APPLICABLE` and (Historically Planned) Subsystem Scoping
 - If a facet does not apply (e.g., a stateless CLI tool has no database persistence), the agent records a first-class `status: "NOT_APPLICABLE"` with a 1-sentence rationale. A verified `NOT_APPLICABLE` counts as complete.
-- Monorepos support modular scoping via `--subsystem <name>`, generating distinct facet entries per package.
+- The original design planned modular scoping via `--subsystem <name>`. Current code rejects this option; see the implementation update above.
 
 ### G. BM25 Lexical Scoping & Query Routing
 - Each facet is charted with a deterministic header tag (`[FACET:LIFECYCLE]`, `[FACET:STATE]`, etc.).

@@ -7,6 +7,7 @@ import { AdapterProfile, PublicationResult, WaymarkError, AskOptions, AskResult 
 import { collectRepoPaths, detectAstIntent, detectLiteralIntent, matchLiteralPath, routeDiscovery } from "./discoveryRouter.js";
 import { queryStructural } from "./codedbAdapter.js";
 import { resolveWindowsExecutable } from "./executable.js";
+import { resolveRepositoryFile } from "./paths.js";
 
 export { resolveWindowsExecutable };
 
@@ -170,6 +171,7 @@ export async function publish(
   files: readonly string[],
 ): Promise<PublicationResult> {
   const selectedFiles = uniqueFiles(files);
+  for (const file of selectedFiles) resolveRepositoryFile(root, file);
   if (profile === "none") return { published: false, adapter: profile, output: "publication disabled" };
 
   if (readCapnConfig(root) === null) {
@@ -251,6 +253,27 @@ function lookupExactCapnEntry(root: string, query: string): unknown | null {
   }
 }
 
+const MEMORY_QUERY_STOPWORDS = new Set([
+  "who", "what", "where", "when", "why", "how", "does", "do", "did", "is", "are", "was", "were",
+  "the", "a", "an", "of", "in", "on", "to", "for", "and", "or", "with", "from", "by", "which", "that",
+  "find", "locate", "show", "tell", "me", "please", "function", "method", "class", "symbol", "declared",
+  "defined", "implemented", "declaration", "definition", "implementation", "calls", "callers", "callees",
+]);
+
+function memoryTerms(value: string): Set<string> {
+  return new Set(value.replace(/([a-z0-9])([A-Z])/gu, "$1 $2").toLowerCase().match(/[\p{L}\p{N}_]+/gu)
+    ?.filter((term) => term.length > 1 && !MEMORY_QUERY_STOPWORDS.has(term)) ?? []);
+}
+
+function isRelevantMemoryCandidate(question: string, candidate: Record<string, unknown>): boolean {
+  const queryTerms = memoryTerms(question);
+  const candidateText = [candidate.question, candidate.details, ...(Array.isArray(candidate.files) ? candidate.files : [])]
+    .filter((part): part is string => typeof part === "string").join(" ");
+  if (queryTerms.size === 0) return false;
+  const answerTerms = memoryTerms(candidateText);
+  return [...queryTerms].some((term) => answerTerms.has(term));
+}
+
 async function queryCapnMemory(
   root: string,
   executable: string,
@@ -281,12 +304,14 @@ async function queryCapnMemory(
     const result = await execute(root, resolveCapnCommand(executable), ["ask", question]);
     const stdout = (result.stdout || "").trim();
     if (stdout && !stdout.startsWith("No charted answer.")) {
-      try {
-        const parsed: unknown = JSON.parse(stdout);
-        return { hit: true, result: parsed };
-      } catch {
-        return { hit: true, result: digestOutput(stdout) };
-      }
+      const candidates = stdout.split(/\r?\n/u).flatMap((line) => {
+        try {
+          const value: unknown = JSON.parse(line);
+          return value && typeof value === "object" && !Array.isArray(value) ? [value as Record<string, unknown>] : [];
+        } catch { return []; }
+      });
+      const relevant = candidates.find((candidate) => isRelevantMemoryCandidate(question, candidate));
+      if (relevant) return { hit: true, result: relevant };
     }
     return { hit: false, result: null };
   } catch (error) {
@@ -316,10 +341,17 @@ export async function ask(
   question: string,
   options?: AskOptions,
 ): Promise<AskResult | Record<string, unknown>> {
-  if (options?.daemon) {
-    process.env.WAYMARK_AUTO_DAEMON = "1";
+  if (options?.subsystem?.trim() && profile === "none") {
+    return {
+      waymark: 1,
+      kind: "ask",
+      status: "error",
+      provider: "waymark-engine",
+      errorCode: "UNSUPPORTED_SUBSYSTEM",
+      message: "Subsystem-scoped discovery is not supported; query the repository root or omit subsystem.",
+      retryable: false,
+    };
   }
-
   if (profile === "none") return { waymark: 1, kind: "ask", provider: "none", status: "miss", matches: [] };
 
   return await routeDiscovery({

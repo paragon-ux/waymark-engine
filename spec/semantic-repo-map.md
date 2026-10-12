@@ -160,10 +160,10 @@ A verified `not_applicable` entry satisfies the completion requirements for 100%
 
 | Command | Status | Input / Arguments | Behavioral Contract |
 | :--- | :--- | :--- | :--- |
-| `waymark bootstrap`<br>`waymark-bootstrap` | **Stable** | `[--subsystem <name>]`<br>`[--dry-run]` | Two-pass bootstrapping: Harvests terms from existing documentation, queries AST to verify symbols, formulates 5 facets, and charts them directly into SQLite `.capn`. |
+| `waymark bootstrap`<br>`waymark-bootstrap` | **Stable** | `[--dry-run]` | Collects source excerpts as unverified drafts. It does not initialize `.capn` or publish architectural claims; a human must verify and chart supported conclusions. `--subsystem` is rejected with `UNSUPPORTED_SUBSYSTEM`. |
 | `waymark map status` | **Stable** | `[--plain]` | Reports health of Semantic Repo Map (e.g. `5/5 Facets Active`, drift status, stale anchors in SQLite). |
 | `waymark map show [facet]` | **Stable** | `[facet_name]`<br>`[--plain]` | Prints compact summary and backing files for one or all charted facets. |
-| `waymark map heal` | **Stable** | None | Re-evaluates all backing file anchors via `anchorForRange`. Updates line numbers or prompts agent to refresh drifted facets in SQLite. |
+| `waymark map heal` | **Stable** | None | Recollects source-backed, unverified draft candidates; established consensus entries are not automatically rewritten. |
 | `waymark map export` | **Stable** | `[--format md\|json]` | Exports charted facets from SQLite into human-readable markdown (`docs/ARCHITECTURE_MAP.md`). |
 
 ### 4.2 Query Routing Parity (`waymark ask`)
@@ -200,7 +200,7 @@ When `--facet <name>` is provided, the query router prioritizes documents tagged
 ### 5.2 Prompts
 
 #### `bootstrap-semantic-map`
-* **Description**: Guided multi-turn agent prompt that inspects repository layout, harvests existing documentation, resolves top entrypoints via Tree-Sitter AST, and populates the 5 foundational facets directly into the `.capn` SQLite consensus ledger.
+* **Description**: Guided repository-wide prompt that collects source excerpts as unverified drafts. A human verifies every claim and explicitly charts supported conclusions; subsystem-scoped maps are unsupported.
 
 ---
 
@@ -208,12 +208,12 @@ When `--facet <name>` is provided, the query router prioritizes documents tagged
 
 The specification formally mandates adherence to the 9 Anti-Pattern Guardrails:
 
-1. **Anti-Hallucination Guard**: Every active facet MUST cite $\ge 1$ existing files verified via `fs.existsSync`. Pure descriptive prose without backing file citations is rejected.
+1. **Backing-File Guard**: Every active facet MUST cite at least one regular file resolved inside the selected repository, including symlink containment. Pure descriptive prose without backing file citations is rejected.
 2. **Progressive Availability**: An incomplete map (e.g. 2/5 facets charted) is immediately queryable. Ad-hoc charts are never blocked by an incomplete map.
-3. **Subsystem Scoping & N/A**: Monorepos support independent maps per package via `--subsystem`. Irrelevant facets accept `NOT_APPLICABLE` with a 1-sentence rationale.
+3. **Repository Boundary**: All map and discovery operations target the selected repository root. Subsystem arguments are rejected with `UNSUPPORTED_SUBSYSTEM` until scoped indexes and backing-file containment are implemented end to end. Explicitly charted `not_applicable` entries remain supported.
 4. **Coarse-Grained Anchoring**: Anchors bind to top-level module files and entry spans, preventing alert fatigue from volatile internal line shifts.
 5. **Strict Token Budget**: Answers are hard-capped at $\le 100$ tokens (3–5 bullets) formatted as *What / Where / Invariants*.
 6. **Task Isolation**: `waymark bootstrap` is strictly an on-demand operation; regular `ask` queries on unmapped repos return a non-blocking advisory and never hijack the user's active task.
-7. **Direct SQLite Consensus Ledger Parity**: The Semantic Repo Map lives directly in the existing `.capn` SQLite ledger via `publish()` / `capn chart` primitives, eliminating auxiliary file management and syntax corruption risks. The agent interacts exclusively through API / CLI / MCP tools.
+7. **Direct SQLite Consensus Ledger Parity**: Human-verified Semantic Repo Map claims live in the existing `.capn` SQLite ledger via `publish()` / `capn chart` primitives. Bootstrap drafts are returned to the caller and are never written as established consensus.
 8. **Two-Pass Grounding**: Bootstrap harvests existing human docs before verifying code against AST.
 9. **BM25 Lexical Scoping**: Facet entries carry unique header tags (`[FACET:*]`) and support explicit `--facet` query isolation.

@@ -115,6 +115,8 @@ waymark repl --live --port 4141
 
 Once launched, open **`http://localhost:4141`** in any web browser.
 
+The observer binds to `127.0.0.1` and requires `WAYMARK_TELEMETRY=1`. Persistent query/session logging is disabled unless the same explicit opt-in is set.
+
 ### Key Capabilities of the Live Viewer:
 - **Server-Sent Events (SSE)**: Queries, cache hits, tier execution timings, and latency metrics stream instantaneously to the browser.
 - **Fixed-Viewport App-Shell**: Viewport-locked single internal scroll mechanism (`overflow: hidden` on root, flexbox list layout), eliminating double scrollbars even at scaled zoom levels (125% / 150%).

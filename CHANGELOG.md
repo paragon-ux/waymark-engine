@@ -4,6 +4,17 @@ All notable changes to `waymark-engine` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.3] - 2026-10-12
+
+### Added
+- **In-Process Tree-Sitter JavaScript & TypeScript Module AST Extraction (`src/astExtractor.ts`)**: Enabled bundled `tree-sitter-javascript.wasm` for `.js`, `.jsx`, `.mjs`, and `.cjs` files and `tree-sitter-typescript.wasm` for `.mts` and `.cts` files in `STRUCTURED_EXTENSIONS`. Extracts classes, methods, functions, and arrow/function expressions with exact line/column spans while filtering out local variable/constant noise.
+- **Polyglot Language Support & Tier Fallback Documentation (`docs/architecture.md`, `README.md`)**: Documented the exact language boundaries across Tier 1A (`web-tree-sitter`), Tier 1B (`@paragon-ux/codedb-core`), and language-agnostic Tiers 2–4 (`PrefixTrie`, `fzf`, and `.capn` BM25 consensus memory).
+
+### Fixed
+- **Fail-Closed Unsupported Language Boundary (`src/astExtractor.ts`, `test/symbolDiscovery.test.ts`)**: Removed unsupported `.cs` and `.scala` extensions from `CODEDB_OUTLINE_EXTENSIONS` and enforced a fail-closed `UNSUPPORTED_LANGUAGE` guard when `codedb outline` reports `language: "unknown"`, preventing silent `0 symbols` false positives.
+
+---
+
 ## [2.7.2] - 2026-10-12
 
 ### Process Safety, Discovery Correctness, and Repository Integrity

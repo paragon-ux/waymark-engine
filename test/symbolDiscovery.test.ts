@@ -33,6 +33,23 @@ function setupRepo(): string {
     "    return Greeter()",
     "",
   ].join("\n"), "utf8");
+  fs.writeFileSync(path.join(repo, "hook.mjs"), [
+    "export class GuardRunner {",
+    "  verify(cmd) {",
+    "    const localNoise = 42;",
+    "    return localNoise;",
+    "  }",
+    "}",
+    "export function resolveRtkBinary() { return 'rtk'; }",
+    "export const checkHealth = () => true;",
+    "",
+  ].join("\n"), "utf8");
+  fs.writeFileSync(path.join(repo, "module.mts"), [
+    "export interface ModuleSpec { name: string; }",
+    "export function loadModuleSpec(): ModuleSpec { return { name: 'core' }; }",
+    "",
+  ].join("\n"), "utf8");
+  fs.writeFileSync(path.join(repo, "unsupported.cs"), "class Program { static void Main() {} }\n", "utf8");
   fs.writeFileSync(path.join(repo, "broken.ts"), "export function broken( {\n", "utf8");
   fs.writeFileSync(path.join(repo, "notes.txt"), "not source\n", "utf8");
   fs.writeFileSync(path.join(repo, "large.ts"), Buffer.alloc(1024 * 1024 + 1, "x"));
@@ -88,7 +105,7 @@ test("Waymark structured discovery has one normalized result across direct, MCP,
   }
 });
 
-test("Waymark structured discovery supports Python and fails closed at parser boundaries", async () => {
+test("Waymark structured discovery supports Python, JavaScript (.mjs/.js), TypeScript (.mts), and fails closed at parser boundaries", async () => {
   const repo = setupRepo();
   try {
     const python = await discoverSymbolsInFile(repo, "sample.py");
@@ -97,8 +114,25 @@ test("Waymark structured discovery supports Python and fails closed at parser bo
     assert.equal(python.symbols.find((symbol) => symbol.name === "hello")?.kind, "method");
     assert.equal(python.symbols.find((symbol) => symbol.name === "build")?.kind, "function");
 
+    const mjs = await discoverSymbolsInFile(repo, "hook.mjs");
+    assert.equal(mjs.language, "javascript");
+    assert.deepEqual(mjs.symbols.map((s) => `${s.name}:${s.kind}`), [
+      "GuardRunner:class",
+      "verify:method",
+      "resolveRtkBinary:function",
+      "checkHealth:function",
+    ]);
+
+    const mts = await discoverSymbolsInFile(repo, "module.mts");
+    assert.equal(mts.language, "typescript");
+    assert.deepEqual(mts.symbols.map((s) => `${s.name}:${s.kind}`), [
+      "ModuleSpec:interface",
+      "loadModuleSpec:function",
+    ]);
+
     await assert.rejects(() => discoverSymbolsInFile(repo, "../sample.ts"), (error: any) => error.code === "INVALID_PATH");
     await assert.rejects(() => discoverSymbolsInFile(repo, "notes.txt"), (error: any) => error.code === "UNSUPPORTED_LANGUAGE");
+    await assert.rejects(() => discoverSymbolsInFile(repo, "unsupported.cs"), (error: any) => error.code === "UNSUPPORTED_LANGUAGE");
     await assert.rejects(() => discoverSymbolsInFile(repo, "broken.ts"), (error: any) => error.code === "PARSE_ERROR");
     await assert.rejects(() => discoverSymbolsInFile(repo, "large.ts"), (error: any) => error.code === "FILE_TOO_LARGE");
   } finally {

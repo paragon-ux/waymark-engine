@@ -88,20 +88,29 @@ Rather than returning an empty response or hallucinating an answer, the Discover
 
 ---
 
-## Polyglot Support & Fallback Matrix
+## Polyglot Language Support & Tier Fallback Matrix
 
-Waymark Engine provides polyglot symbol extraction across major programming languages:
+Waymark Engine combines three extraction layers with explicit fail-closed boundaries so agents always know what is structurally indexed vs. lexically recalled:
 
-| Language | Primary Extraction Engine | Symbols Extracted |
-| :--- | :--- | :--- |
-| **TypeScript / JavaScript** | Native Tree-Sitter (`web-tree-sitter`) | Classes, methods, functions, interfaces, types |
-| **Python** | Native Tree-Sitter (`web-tree-sitter`) | Classes, methods, functions, decorated definitions |
-| **Rust** | Polyglot Codedb Outline Fallback | Functions, methods, structs, traits, impl blocks |
-| **Go** | Polyglot Codedb Outline Fallback | Functions, methods, structs, interfaces |
-| **C++ / C** | Polyglot Codedb Outline Fallback | Classes, functions, structs, namespaces |
-| **Java / C#** | Polyglot Codedb Outline Fallback | Classes, interfaces, methods, properties |
+### 1. Single-File AST Outlines (`waymark ask --path <file>` / `waymark_ask(path)`)
 
-Non-TypeScript and non-Python files automatically fall back to `codedb outline` rather than throwing errors.
+| Language | File Extensions | Extraction Engine | Fidelity & Symbols Extracted |
+| :--- | :--- | :--- | :--- |
+| **TypeScript** | `.ts`, `.tsx`, `.mts`, `.cts` | Native Tree-Sitter (`tree-sitter-typescript.wasm`) | Exact line + column spans for classes, methods, functions (including arrow functions), interfaces, and type aliases |
+| **JavaScript** | `.js`, `.jsx`, `.mjs`, `.cjs` | Native Tree-Sitter (`tree-sitter-javascript.wasm`) | Exact line + column spans for classes, methods, functions, and arrow/function expressions (filters out local variable noise) |
+| **Python** | `.py` | Native Tree-Sitter (`tree-sitter-python.wasm`) | Exact line + column spans for classes, methods, and functions |
+| **Rust, Go, Java, Ruby, Swift, Kotlin** | `.rs`, `.go`, `.java`, `.rb`, `.swift`, `.kt` | Polyglot `codedb outline` Fallback (`@paragon-ux/codedb-core`) | Line-level structural outlines (functions, methods, structs, classes, traits, interfaces) |
+| **C / C++ / PHP** | `.c`, `.h`, `.cpp`, `.hpp`, `.cc`, `.cxx`, `.php` | Polyglot `codedb outline` Fallback (`@paragon-ux/codedb-core`) | Partial structural outline (class/struct/qualified definitions) |
+| **Unsupported Extensions** | `.cs`, `.scala`, `.sql`, `.md`, `.json`, etc. | Fail-Closed Guard | Rejects single-file AST extraction with `UNSUPPORTED_LANGUAGE` (never returns a silent `0 symbols` false positive) |
+
+### 2. Repo-Wide Call Graph & Symbol Search (`waymark ask "<symbol>"` / `waymark_ask(query | symbols)`)
+- **Indexed by `@paragon-ux/codedb-core`**: `.ts`, `.tsx`, `.js`, `.jsx`, `.py`, `.rs`, `.go`, `.java`, `.rb`, `.swift`, `.kt` (plus partial `.c`/`.cpp`/`.php`).
+- **Module Extension Note (`.mjs`, `.cjs`, `.mts`, `.cts`)**: The upstream `codedb` Rust scanner indexes `.ts`/`.tsx`/`.js`/`.jsx` for repo-wide call graphs but skips `.mjs`/`.cjs`/`.mts`/`.cts`. For those files, use **Single-File Tree-Sitter AST** (`waymark_ask(path="scripts/hook.mjs")`), **Tier 2 Path Router**, **Tier 3 Fuzzy Matcher**, or **Tier 4 Charted Consensus Memory**.
+
+### 3. Tiers 2, 3, and 4 (100% Language-Agnostic)
+- **Tier 2 (`PrefixTrie` Path Router)**: Resolves exact and basename paths for **any** file extension in `<1ms`.
+- **Tier 3 (`fzf` Fuzzy Matcher)**: Scores path and token candidates across **all** tracked files.
+- **Tier 4 (`.capn` BM25 Consensus Memory & 5-Facet Semantic Repo Map)**: Charts and recalls verified `<100`-token architectural answers with SHA-256 file drift tracking for **any** language or file type.
 
 ---
 

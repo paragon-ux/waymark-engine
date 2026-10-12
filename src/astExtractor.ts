@@ -7,7 +7,7 @@ import { WaymarkError } from "./types.js";
 
 const require = createRequire(import.meta.url);
 
-export type StructuredLanguage = "typescript" | "python";
+export type StructuredLanguage = "typescript" | "javascript" | "python";
 export type StructuredSymbolKind =
   | "class"
   | "function"
@@ -45,17 +45,25 @@ export const MAX_SYMBOL_DISCOVERY_FILE_BYTES = 1024 * 1024;
 // Precise single-file structured discovery is deliberately kept on web-tree-sitter
 // (not the codedb index): codedb's `outline` is a coarse ranking index and does not
 // reproduce the class/method/interface/type fidelity this surface guarantees
-// (e.g. it omits Python classes and mis-names `export interface`). Repo-wide call
-// graph and symbol search now run through codedb (see codedbAdapter.ts).
+// (e.g. it omits Python classes, mis-names `export interface`, over-indexes .js
+// local variables, and skips .mjs/.cjs/.mts/.cts). Repo-wide call graph and symbol
+// search run through codedb (see codedbAdapter.ts).
 
 const STRUCTURED_EXTENSIONS: Record<string, StructuredLanguage> = {
   ".ts": "typescript",
   ".tsx": "typescript",
+  ".mts": "typescript",
+  ".cts": "typescript",
+  ".js": "javascript",
+  ".jsx": "javascript",
+  ".mjs": "javascript",
+  ".cjs": "javascript",
   ".py": "python",
 };
 
 const STRUCTURED_LANGUAGE_WASM: Record<StructuredLanguage, string> = {
   typescript: "tree-sitter-typescript.wasm",
+  javascript: "tree-sitter-javascript.wasm",
   python: "tree-sitter-python.wasm",
 };
 
@@ -168,7 +176,7 @@ function collectStructuredSymbols(rootNode: any): StructuredSymbol[] {
 
 const CODEDB_OUTLINE_EXTENSIONS = new Set<string>([
   ".go", ".rs", ".java", ".c", ".h", ".cpp", ".hpp", ".cc", ".cxx",
-  ".cs", ".rb", ".php", ".swift", ".kt", ".scala", ".js", ".jsx", ".mjs", ".cjs"
+  ".rb", ".php", ".swift", ".kt"
 ]);
 
 async function discoverSymbolsViaCodedbOutline(
@@ -183,6 +191,9 @@ async function discoverSymbolsViaCodedbOutline(
     if (!run.ok) throw new WaymarkError("CODEDB_PROCESS_ERROR", run.error || "codedb outline failed", 2);
     const parsed = run.payload;
     if (!parsed || !Array.isArray(parsed.symbols)) throw new WaymarkError("CODEDB_PROCESS_ERROR", "codedb outline returned an invalid response", 2);
+    if (!parsed.language || parsed.language === "unknown") {
+      throw new WaymarkError("UNSUPPORTED_LANGUAGE", `Cannot detect a supported discovery language for ${storedPath}`, 2);
+    }
     const symbols: StructuredSymbol[] = parsed.symbols
       .filter((s: any) => Boolean(s && s.name))
       .map((s: any) => {

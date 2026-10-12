@@ -86,6 +86,17 @@ The live observer binds to `127.0.0.1`, requires explicit telemetry opt-in with 
 
 On Windows, `WAYMARK_CODEDB_EXECUTABLE` must name a native executable. `.cmd` and `.bat` shims are rejected with `CODEDB_UNSUPPORTED_SHIM` because Waymark never invokes external tools through a shell.
 
+### Language Support & Tier Fallbacks
+
+- **Single-File AST Outlines (`waymark ask --path <file>`)**:
+  - **In-Process `web-tree-sitter` (Exact line + column spans)**: TypeScript (`.ts`, `.tsx`, `.mts`, `.cts`), JavaScript (`.js`, `.jsx`, `.mjs`, `.cjs`), and Python (`.py`).
+  - **Polyglot `codedb outline` Fallback**: Rust (`.rs`), Go (`.go`), Java (`.java`), Ruby (`.rb`), Swift (`.swift`), Kotlin (`.kt`), and partial C/C++/PHP (`.c`, `.h`, `.cpp`, `.hpp`, `.cc`, `.cxx`, `.php`).
+  - **Fail-Closed Boundary**: Unsupported extensions (e.g. `.cs`, `.scala`, `.md`, `.txt`) fail closed with `UNSUPPORTED_LANGUAGE`.
+- **Repo-Wide Call Graph & Symbol Search (`waymark ask "<symbol>"`)**:
+  - Indexed via `@paragon-ux/codedb-core` across `.ts`, `.tsx`, `.js`, `.jsx`, `.py`, `.rs`, `.go`, `.java`, `.rb`, `.swift`, `.kt` (plus partial `.c`/`.cpp`/`.php`). Note: `.mjs`, `.cjs`, `.mts`, and `.cts` are supported via Single-File Tree-Sitter AST (`--path`) and Tiers 2–4.
+- **Language-Agnostic Tiers (Tiers 2, 3, and 4)**:
+  - **Tier 2 (`PrefixTrie` Path Router)**, **Tier 3 (`fzf` Fuzzy Matcher)**, and **Tier 4 (`.capn` BM25 Consensus Memory & 5-Facet Semantic Repo Map)** operate across **all** repository files regardless of language.
+
 ---
 
 ## Comprehensive Documentation

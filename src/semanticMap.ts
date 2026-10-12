@@ -249,7 +249,7 @@ export function getSemanticMapStatus(root: string): SemanticMapStatus {
       facets: emptyFacets,
       missing: [...ALL_FACET_IDS],
       drifted: [],
-      message: "Consensus memory store (.capn) is uninitialized. Run 'waymark memory init' or 'waymark memory bootstrap'.",
+      message: "Consensus memory store (.capn) is uninitialized. Run 'waymark memory init' to initialize it; bootstrap only collects unverified source-evidence drafts.",
     };
   }
 
@@ -381,8 +381,10 @@ export function renderSemanticMapStatus(status: SemanticMapStatus): string {
     }
   }
 
-  if (status.status !== "healthy") {
-    lines.push(`Recommendation: Run 'waymark memory bootstrap' or chart missing facets via 'waymark memory chart'.`);
+  if (status.status === "uninitialized") {
+    lines.push(`Recommendation: Run 'waymark memory init' to initialize lexical recall; bootstrap only collects unverified drafts.`);
+  } else if (status.status !== "healthy") {
+    lines.push(`Recommendation: Run 'waymark memory bootstrap' to collect unverified drafts, verify them, then chart supported claims with 'waymark memory chart'.`);
   }
 
   return lines.join("\n");

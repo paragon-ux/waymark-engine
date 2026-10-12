@@ -109,6 +109,19 @@ test("Anti-Hallucination Guardrail: rejects missing, escaped, absolute, and syml
   }
 });
 
+test("uninitialized map guidance distinguishes store initialization from draft bootstrap", () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "waymark-uninitialized-map-"));
+  try {
+    const status = getSemanticMapStatus(repo);
+    assert.equal(status.status, "uninitialized");
+    assert.match(status.message ?? "", /waymark memory init/u);
+    assert.match(status.message ?? "", /bootstrap only collects unverified source-evidence drafts/u);
+    assert.match(renderSemanticMapStatus(status), /waymark memory init.*bootstrap only collects unverified drafts/u);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
 test("backing-file containment holds through status, bootstrap, publisher, CLI, and MCP", async () => {
   const repo = setupTestRepo();
   const outside = fs.mkdtempSync(path.join(os.tmpdir(), "waymark-outside-"));

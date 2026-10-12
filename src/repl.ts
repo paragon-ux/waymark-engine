@@ -2,6 +2,7 @@ import readline from "node:readline";
 import fs from "node:fs";
 import path from "node:path";
 import http from "node:http";
+import { randomBytes, timingSafeEqual } from "node:crypto";
 import { ask } from "./capnAdapter.js";
 import { queryMultiSymbols } from "./codedbAdapter.js";
 import { discoverSymbolsInFile, discoverSymbolsInRepo } from "./astExtractor.js";
@@ -633,13 +634,63 @@ export async function startLiveReplObserver(options: ReplOptions = {}): Promise<
     };
   };
 
+  const accessToken = randomBytes(32).toString("base64url");
   if (webPort) {
     httpServer = http.createServer((req, res) => {
-      const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
+      let url: URL;
+      let host: URL;
+      try {
+        if (!req.headers.host) throw new Error("missing Host header");
+        host = new URL(`http://${req.headers.host}`);
+        if (
+          host.hostname !== LIVE_OBSERVER_HOST ||
+          host.port !== String(webPort) ||
+          host.username !== "" ||
+          host.password !== "" ||
+          host.pathname !== "/" ||
+          host.search !== "" ||
+          host.hash !== ""
+        ) throw new Error("unexpected Host header");
+        url = new URL(req.url || "/", host);
+        if (url.origin !== host.origin) throw new Error("request origin does not match Host");
+      } catch {
+        res.writeHead(403, { "Cache-Control": "no-store", "Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'" });
+        res.end("Forbidden");
+        return;
+      }
+
+      const suppliedToken = url.searchParams.get("token") ?? "";
+      const expectedToken = Buffer.from(accessToken);
+      const candidateToken = Buffer.from(suppliedToken);
+      const tokenMatches = candidateToken.length === expectedToken.length && timingSafeEqual(candidateToken, expectedToken);
+      const origin = req.headers.origin;
+      if (
+        (origin !== undefined && origin !== url.origin) ||
+        !tokenMatches
+      ) {
+        res.writeHead(403, { "Cache-Control": "no-store", "Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'" });
+        res.end("Forbidden");
+        return;
+      }
+
+      if (req.method !== "GET") {
+        res.writeHead(405, { Allow: "GET", "Cache-Control": "no-store" });
+        res.end("Method Not Allowed");
+        return;
+      }
+
+      const nonce = randomBytes(18).toString("base64");
+      const headers = {
+        "Cache-Control": "no-store",
+        "Content-Security-Policy": `default-src 'self'; script-src 'self' 'nonce-${nonce}'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; object-src 'none'`,
+        "Referrer-Policy": "no-referrer",
+        "X-Content-Type-Options": "nosniff",
+        "X-Frame-Options": "DENY",
+      };
       if (url.pathname === "/events") {
         res.writeHead(200, {
+          ...headers,
           "Content-Type": "text/event-stream",
-          "Cache-Control": "no-cache",
           "Connection": "keep-alive",
         });
         res.write(`event: init\ndata: ${JSON.stringify({
@@ -655,12 +706,13 @@ export async function startLiveReplObserver(options: ReplOptions = {}): Promise<
         return;
       }
       if (url.pathname === "/api/stats") {
-        res.writeHead(200, { "Content-Type": "application/json" });
+        res.writeHead(200, { ...headers, "Content-Type": "application/json" });
         res.end(JSON.stringify(getComputedStats()));
         return;
       }
-      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-      res.end(getLiveDashboardHtml());
+      const html = getLiveDashboardHtml().replace(/<script(?=[\s>])/giu, `<script nonce="${nonce}"`);
+      res.writeHead(200, { ...headers, "Content-Type": "text/html; charset=utf-8" });
+      res.end(html);
     });
 
     httpServer.listen(webPort, LIVE_OBSERVER_HOST, () => {
@@ -676,7 +728,7 @@ export async function startLiveReplObserver(options: ReplOptions = {}): Promise<
         "  WAYMARK ENGINE LIVE AGENT MONITOR  |  Universal Session Observer",
         `  Session:    ${path.relative(root, sessionPath) || sessionPath}`,
         `  Repo:       ${root}`,
-        ...(webPort ? [`  Web Viewer: http://localhost:${webPort}`] : []),
+        ...(webPort ? [`  Web Viewer: http://${LIVE_OBSERVER_HOST}:${webPort}/?token=${accessToken}`] : []),
         "  Status:     LISTENING (press 'q' to quit, 'c' to clear, 's' for session stats)",
         "================================================================================\n",
       ].join("\n")

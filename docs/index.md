@@ -56,7 +56,7 @@ When an AI agent needs to locate an implementation or trace a dependency, readin
 1. **Deterministic by Construction**: Every query path is zero-randomness. Semantic recall utilizes pure lexical BM25 (`@paragon-ux/capn-hook`) and hard-refuses embedding stores (`CAPN_NON_DETERMINISTIC_MODE`).
 2. **Fail-Closed on Ambiguity**: When a symbol or caller cannot be verified with certainty, the engine emits a structured miss or a machine-readable Discovery Junction continuation. It **never guesses**.
 3. **Two-Verb Lean Interface**: MCP surface is distilled into `waymark_ask` (read) and `waymark_memory` (write), minimizing tool catalog sprawl in LLM contexts.
-4. **Live Observability**: Built-in interactive REPL and fixed-viewport SSE Web Viewer (`localhost:4141`) for real-time telemetry, cache hit tracking, and test battery execution.
+4. **Live Observability**: Built-in interactive REPL and fixed-viewport SSE Web Viewer at the tokenized loopback URL printed by the REPL.
 
 ---
 

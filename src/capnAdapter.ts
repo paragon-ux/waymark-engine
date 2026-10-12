@@ -195,6 +195,62 @@ export async function publish(
   }
 }
 
+function lookupExactCapnEntry(root: string, query: string): unknown | null {
+  try {
+    const entriesDir = path.join(root, ".capn", "entries");
+    if (!fs.existsSync(entriesDir)) return null;
+
+    const files = fs.readdirSync(entriesDir).filter((f) => f.endsWith(".md"));
+    if (files.length === 0) return null;
+
+    const normQuery = query.trim().toLowerCase().replace(/[?.,!]+$/g, "");
+
+    for (const f of files) {
+      const fullPath = path.join(entriesDir, f);
+      const content = fs.readFileSync(fullPath, "utf8");
+
+      // Extract H1 question
+      const h1Match = content.match(/^#\s+(.+)$/m);
+      if (!h1Match) continue;
+
+      const chartedQuestion = h1Match[1]?.trim() ?? "";
+      const normCharted = chartedQuestion.toLowerCase().replace(/[?.,!]+$/g, "");
+
+      if (normQuery === normCharted) {
+        // Extract frontmatter fields
+        const idMatch = content.match(/^id:\s*([a-f0-9]+)/m);
+        const id = idMatch ? idMatch[1] : path.basename(f, ".md");
+
+        // Extract files from frontmatter
+        const filesList: string[] = [];
+        const filesBlockMatch = content.match(/^files:\s*\n([\s\S]*?)(?=\n---\n|\n[a-z]+:)/m);
+        if (filesBlockMatch && filesBlockMatch[1]) {
+          const fileLines = filesBlockMatch[1].split("\n");
+          for (const line of fileLines) {
+            const m = line.match(/^\s+([^:]+):/);
+            if (m && m[1]) filesList.push(m[1].trim());
+          }
+        }
+
+        // Extract details (body after H1)
+        const h1Index = content.indexOf(h1Match[0]);
+        const body = content.slice(h1Index + h1Match[0].length).trim();
+
+        return {
+          id,
+          question: chartedQuestion,
+          files: filesList.sort(),
+          score: 100,
+          ...(body ? { details: body } : {}),
+        };
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 async function queryCapnMemory(
   root: string,
   executable: string,
@@ -216,6 +272,10 @@ async function queryCapnMemory(
       reason: "CAPN_NON_DETERMINISTIC_MODE",
       note: "Capn store is in embedding mode. Re-initialize with deterministic lexical mode.",
     };
+  }
+  const exactHit = lookupExactCapnEntry(root, question);
+  if (exactHit !== null) {
+    return { hit: true, result: exactHit };
   }
   try {
     const result = await execute(root, resolveCapnCommand(executable), ["ask", question]);

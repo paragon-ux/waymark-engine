@@ -3,20 +3,24 @@ import MarkdownIt from "markdown-it";
 import path from "node:path";
 import fs from "node:fs";
 import { createRequire } from "node:module";
+import { fileURLToPath } from "node:url";
 import { normalizeRelativePath, readFileText } from "./paths.js";
 import { WaymarkError } from "./types.js";
 
 const require = createRequire(import.meta.url);
 
-export type StructuredLanguage =
-  | "typescript"
-  | "javascript"
-  | "python"
-  | "json"
-  | "toml"
-  | "yaml"
-  | "bash"
-  | "markdown";
+export const SUPPORTED_STRUCTURED_LANGUAGES = [
+  "typescript",
+  "javascript",
+  "python",
+  "json",
+  "toml",
+  "yaml",
+  "bash",
+  "markdown",
+] as const;
+
+export type StructuredLanguage = (typeof SUPPORTED_STRUCTURED_LANGUAGES)[number];
 
 export type StructuredSymbolKind =
   | "class"
@@ -74,8 +78,6 @@ const STRUCTURED_EXTENSIONS: Record<string, StructuredLanguage> = {
   ".cjs": "javascript",
   ".py": "python",
   ".json": "json",
-  ".jsonc": "json",
-  ".json5": "json",
   ".toml": "toml",
   ".yaml": "yaml",
   ".yml": "yaml",
@@ -98,10 +100,34 @@ const STRUCTURED_LANGUAGE_WASM: Partial<Record<StructuredLanguage, string>> = {
 };
 
 let parserInitialized = false;
+let patchVerified = false;
 const loadedLanguages: Map<string, unknown> = new Map();
+
+function ensureWebTreeSitterPatched(): void {
+  if (patchVerified) return;
+  patchVerified = true;
+  try {
+    const treeSitterPath = require.resolve("web-tree-sitter");
+    const code = fs.readFileSync(treeSitterPath, "utf8");
+    if (!code.includes('wasmImports["_Znwm"]')) {
+      try {
+        const patchScript = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../scripts/patch-web-tree-sitter.cjs");
+        if (fs.existsSync(patchScript)) {
+          const { patchWebTreeSitter } = require(patchScript);
+          patchWebTreeSitter(false);
+        }
+      } catch {
+        console.warn("[waymark] Warning: web-tree-sitter C++ scanner patch was not applied (e.g. pnpm or --ignore-scripts). Run 'node scripts/patch-web-tree-sitter.cjs' to enable YAML parsing.");
+      }
+    }
+  } catch {
+    // ignore
+  }
+}
 
 export async function initParser(): Promise<void> {
   if (!parserInitialized) {
+    ensureWebTreeSitterPatched();
     await Parser.init();
     parserInitialized = true;
   }
@@ -114,11 +140,41 @@ function resolveWasmPath(wasmName: string): string | null {
     const candidate = path.join(outDir, wasmName);
     if (fs.existsSync(candidate)) return candidate;
   } catch {
-    // fallback to relative search
+    // fallback to directory walk
   }
+
+  // Walk up ancestor directories to handle hoisted or virtual node_modules
+  try {
+    let currentDir = path.dirname(fileURLToPath(import.meta.url));
+    for (let i = 0; i < 6; i++) {
+      const candidate = path.join(currentDir, "node_modules", "tree-sitter-wasms", "out", wasmName);
+      if (fs.existsSync(candidate)) return candidate;
+      const parent = path.dirname(currentDir);
+      if (parent === currentDir) break;
+      currentDir = parent;
+    }
+  } catch {
+    // ignore
+  }
+
   const fallback = path.resolve(process.cwd(), "node_modules", "tree-sitter-wasms", "out", wasmName);
   if (fs.existsSync(fallback)) return fallback;
   return null;
+}
+
+function decodePropertyKey(text: string): string {
+  const trimmed = text.trim();
+  if (trimmed.startsWith('"') && trimmed.endsWith('"')) {
+    try {
+      return JSON.parse(trimmed);
+    } catch {
+      return trimmed.slice(1, -1);
+    }
+  }
+  if (trimmed.startsWith("'") && trimmed.endsWith("'")) {
+    return trimmed.slice(1, -1).replace(/''/g, "'");
+  }
+  return trimmed;
 }
 
 async function getLanguageForWasm(wasmName: string): Promise<unknown | null> {
@@ -285,7 +341,7 @@ function collectJsonSymbols(rootNode: any): StructuredSymbol[] {
       if (pair.type === "pair") {
         const keyNode = pair.childForFieldName("key");
         const valNode = pair.childForFieldName("value");
-        const rawKey = keyNode ? keyNode.text.replace(/^"|"$/g, "") : "<unknown>";
+        const rawKey = keyNode ? decodePropertyKey(keyNode.text) : "<unknown>";
         symbols.push({
           name: rawKey,
           kind: "config_block",
@@ -296,7 +352,7 @@ function collectJsonSymbols(rootNode: any): StructuredSymbol[] {
           for (const subPair of valNode.namedChildren) {
             if (subPair.type === "pair") {
               const subKeyNode = subPair.childForFieldName("key");
-              const subKey = subKeyNode ? subKeyNode.text.replace(/^"|"$/g, "") : "<unknown>";
+              const subKey = subKeyNode ? decodePropertyKey(subKeyNode.text) : "<unknown>";
               symbols.push({
                 name: `${rawKey}.${subKey}`,
                 kind: "config_block",
@@ -312,44 +368,52 @@ function collectJsonSymbols(rootNode: any): StructuredSymbol[] {
   return symbols;
 }
 
+function extractTomlPairs(containerNode: any, tableName: string, symbols: StructuredSymbol[]): void {
+  for (const inner of containerNode.namedChildren) {
+    if (inner.type === "pair") {
+      const keyNode = inner.childForFieldName("key") || inner.namedChildren[0];
+      if (keyNode) {
+        const keyName = decodePropertyKey(keyNode.text);
+        symbols.push({
+          name: `${tableName}.${keyName}`,
+          kind: "config_block",
+          start: { line: inner.startPosition.row + 1, column: inner.startPosition.column },
+          end: { line: inner.endPosition.row + 1, column: inner.endPosition.column },
+        });
+      }
+    }
+  }
+}
+
 function collectTomlSymbols(rootNode: any): StructuredSymbol[] {
   const symbols: StructuredSymbol[] = [];
   for (const child of rootNode.namedChildren) {
     if (child.type === "table") {
-      const headerNode = child.namedChildren.find((n: any) => n.type.includes("header") || n.type === "bare_key" || n.type === "dotted_key");
-      const tableName = headerNode ? headerNode.text.replace(/^\[|\]$/g, "").trim() : child.namedChildren[0]?.text || "table";
+      const headerNode = child.namedChildren.find((n: any) => n.type.includes("header") || n.type === "bare_key" || n.type === "dotted_key" || n.type === "quoted_key");
+      const rawHeader = headerNode ? headerNode.text.replace(/^\[|\]$/g, "").trim() : child.namedChildren[0]?.text || "table";
+      const tableName = decodePropertyKey(rawHeader);
       symbols.push({
         name: `[${tableName}]`,
         kind: "config_block",
         start: { line: child.startPosition.row + 1, column: child.startPosition.column },
         end: { line: child.endPosition.row + 1, column: child.endPosition.column },
       });
-      for (const inner of child.namedChildren) {
-        if (inner.type === "pair") {
-          const keyNode = inner.childForFieldName("key") || inner.namedChildren[0];
-          if (keyNode) {
-            symbols.push({
-              name: `${tableName}.${keyNode.text.trim()}`,
-              kind: "config_block",
-              start: { line: inner.startPosition.row + 1, column: inner.startPosition.column },
-              end: { line: inner.endPosition.row + 1, column: inner.endPosition.column },
-            });
-          }
-        }
-      }
+      extractTomlPairs(child, tableName, symbols);
     } else if (child.type === "table_array_element") {
       const headerNode = child.namedChildren[0];
-      const name = headerNode ? headerNode.text.replace(/^\[\[|\]\]$/g, "").trim() : "array";
+      const rawHeader = headerNode ? headerNode.text.replace(/^\[\[|\]\]$/g, "").trim() : "array";
+      const name = decodePropertyKey(rawHeader);
       symbols.push({
         name: `[[${name}]]`,
         kind: "config_block",
         start: { line: child.startPosition.row + 1, column: child.startPosition.column },
         end: { line: child.endPosition.row + 1, column: child.endPosition.column },
       });
+      extractTomlPairs(child, name, symbols);
     } else if (child.type === "pair") {
       const keyNode = child.childForFieldName("key") || child.namedChildren[0];
       symbols.push({
-        name: keyNode ? keyNode.text.trim() : "<key>",
+        name: keyNode ? decodePropertyKey(keyNode.text) : "<key>",
         kind: "constant",
         start: { line: child.startPosition.row + 1, column: child.startPosition.column },
         end: { line: child.endPosition.row + 1, column: child.endPosition.column },
@@ -359,49 +423,73 @@ function collectTomlSymbols(rootNode: any): StructuredSymbol[] {
   return symbols;
 }
 
-function findYamlBlockMapping(node: any, depth = 0): any {
-  if (!node || depth > 20) return null;
-  if (node.type === "block_mapping") return node;
-  for (const child of node.namedChildren) {
-    const res = findYamlBlockMapping(child, depth + 1);
-    if (res) return res;
-  }
-  return null;
-}
-
-function collectYamlSymbols(rootNode: any): StructuredSymbol[] {
-  const symbols: StructuredSymbol[] = [];
-  const rootMapping = findYamlBlockMapping(rootNode);
-  if (rootMapping) {
-    for (const child of rootMapping.namedChildren) {
-      if (child.type === "block_mapping_pair") {
-        const keyNode = child.childForFieldName("key");
-        const valNode = child.childForFieldName("value");
-        const keyName = keyNode ? keyNode.text.trim() : "<key>";
-        symbols.push({
-          name: keyName,
-          kind: "config_block",
-          start: { line: child.startPosition.row + 1, column: child.startPosition.column },
-          end: { line: child.endPosition.row + 1, column: child.endPosition.column },
-        });
-        const subMapping = valNode ? findYamlBlockMapping(valNode) : null;
+function collectYamlMappingPairs(mappingNode: any, prefix: string, symbols: StructuredSymbol[], depth = 0): void {
+  if (depth > 5) return;
+  for (const child of mappingNode.namedChildren) {
+    if (child.type === "block_mapping_pair" || child.type === "flow_pair") {
+      const keyNode = child.childForFieldName("key");
+      const valNode = child.childForFieldName("value");
+      const rawKey = keyNode ? decodePropertyKey(keyNode.text) : "<key>";
+      const fullName = prefix ? `${prefix}.${rawKey}` : rawKey;
+      symbols.push({
+        name: fullName,
+        kind: "config_block",
+        start: { line: child.startPosition.row + 1, column: child.startPosition.column },
+        end: { line: child.endPosition.row + 1, column: child.endPosition.column },
+      });
+      if (valNode && depth < 2) {
+        const subMapping = valNode.type === "block_mapping" || valNode.type === "flow_mapping"
+          ? valNode
+          : valNode.namedChildren?.find((n: any) => n.type === "block_mapping" || n.type === "flow_mapping");
         if (subMapping && subMapping.namedChildren.length <= 50) {
-          for (const subChild of subMapping.namedChildren) {
-            if (subChild.type === "block_mapping_pair") {
-              const subKeyNode = subChild.childForFieldName("key");
-              const subKeyName = subKeyNode ? subKeyNode.text.trim() : "<key>";
-              symbols.push({
-                name: `${keyName}.${subKeyName}`,
-                kind: "config_block",
-                start: { line: subChild.startPosition.row + 1, column: subChild.startPosition.column },
-                end: { line: subChild.endPosition.row + 1, column: subChild.endPosition.column },
-              });
-            }
-          }
+          collectYamlMappingPairs(subMapping, fullName, symbols, depth + 1);
         }
       }
     }
   }
+}
+
+function collectYamlSequenceItems(seqNode: any, prefix: string, symbols: StructuredSymbol[]): void {
+  let idx = 0;
+  for (const item of seqNode.namedChildren) {
+    if (item.type === "block_sequence_item" || item.type === "flow_sequence_item") {
+      const itemPrefix = prefix ? `${prefix}[${idx}]` : `[${idx}]`;
+      symbols.push({
+        name: itemPrefix,
+        kind: "config_block",
+        start: { line: item.startPosition.row + 1, column: item.startPosition.column },
+        end: { line: item.endPosition.row + 1, column: item.endPosition.column },
+      });
+      const innerBlock = item.namedChildren.find((n: any) => n.type === "block_node" || n.type === "block_mapping" || n.type === "flow_mapping");
+      const innerMapping = innerBlock?.type === "block_mapping" || innerBlock?.type === "flow_mapping"
+        ? innerBlock
+        : innerBlock?.namedChildren?.find((n: any) => n.type === "block_mapping" || n.type === "flow_mapping");
+      if (innerMapping) {
+        collectYamlMappingPairs(innerMapping, itemPrefix, symbols, 1);
+      }
+      idx++;
+    }
+  }
+}
+
+function collectYamlSymbols(rootNode: any): StructuredSymbol[] {
+  const symbols: StructuredSymbol[] = [];
+  const documents = rootNode.namedChildren.filter((n: any) => n.type === "document");
+  const isMultiDoc = documents.length > 1;
+
+  documents.forEach((docNode: any, docIdx: number) => {
+    const docPrefix = isMultiDoc ? `doc[${docIdx}]` : "";
+    const blockNode = docNode.namedChildren.find((n: any) => n.type === "block_node" || n.type === "flow_node");
+    const rootShape = blockNode ? blockNode.namedChildren[0] || blockNode : docNode.namedChildren[0];
+    if (!rootShape) return;
+
+    if (rootShape.type === "block_mapping" || rootShape.type === "flow_mapping") {
+      collectYamlMappingPairs(rootShape, docPrefix, symbols);
+    } else if (rootShape.type === "block_sequence" || rootShape.type === "flow_sequence") {
+      collectYamlSequenceItems(rootShape, docPrefix, symbols);
+    }
+  });
+
   return symbols;
 }
 

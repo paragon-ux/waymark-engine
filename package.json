@@ -64,7 +64,7 @@
   "license": "MIT",
   "scripts": {
     "postinstall": "node scripts/patch-web-tree-sitter.cjs",
-    "build": "node scripts/patch-web-tree-sitter.cjs && tsc -p tsconfig.json && node -e \"fs.copyFileSync('src/viewer.html', 'dist/src/viewer.html')\"",
+    "build": "node scripts/patch-web-tree-sitter.cjs --strict && tsc -p tsconfig.json && node -e \"fs.copyFileSync('src/viewer.html', 'dist/src/viewer.html')\"",
     "test": "npm run build && node --test \"dist/test/**/*.test.js\"",
     "verify": "npm run build && node --test \"dist/test/**/*.test.js\"",
     "test:prompts": "npm run build && node dist/src/cli.js repl --manifest docs/prompts/CATALOGUE_MANIFEST.jsonl",
@@ -80,7 +80,7 @@
     "@paragon-ux/capn-hook": "^1.1.0",
     "@paragon-ux/codedb-core": "^1.1.0",
     "markdown-it": "^15.0.2",
-    "tree-sitter-wasms": "^0.1.13",
+    "tree-sitter-wasms": "0.1.13",
     "web-tree-sitter": "0.24.0"
   }
 }

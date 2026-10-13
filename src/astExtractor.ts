@@ -579,8 +579,9 @@ export async function discoverSymbolsInFile(
         const wasmName = STRUCTURED_LANGUAGE_WASM[language];
         if (!wasmName) throw new Error(`No wasm configured for ${language}`);
         grammar = await getLanguageForWasm(wasmName);
-      } catch {
-        throw new WaymarkError("PARSER_UNAVAILABLE", `Waymark grammar is unavailable for ${language}`, 2);
+      } catch (err) {
+        const detail = err instanceof Error ? err.message : String(err);
+        throw new WaymarkError("PARSER_UNAVAILABLE", `Waymark grammar is unavailable for ${language}: ${detail}`, 2);
       }
       if (!grammar) throw new WaymarkError("PARSER_UNAVAILABLE", `Waymark grammar is unavailable for ${language}`, 2);
 
@@ -612,7 +613,8 @@ export async function discoverSymbolsInFile(
         };
       } catch (err) {
         if (err instanceof WaymarkError) throw err;
-        throw new WaymarkError("PARSE_ERROR", `Unable to parse ${language} source: ${storedPath}`, 2);
+        const detail = err instanceof Error ? err.message : String(err);
+        throw new WaymarkError("PARSE_ERROR", `Unable to parse ${language} source: ${storedPath}: ${detail}`, 2);
       } finally {
         if (tree) {
           try {

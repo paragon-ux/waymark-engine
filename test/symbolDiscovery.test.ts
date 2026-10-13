@@ -53,6 +53,49 @@ function setupRepo(): string {
   fs.writeFileSync(path.join(repo, "broken.ts"), "export function broken( {\n", "utf8");
   fs.writeFileSync(path.join(repo, "notes.txt"), "not source\n", "utf8");
   fs.writeFileSync(path.join(repo, "large.ts"), Buffer.alloc(1024 * 1024 + 1, "x"));
+  fs.writeFileSync(path.join(repo, "doc.md"), [
+    "# Documentation Title",
+    "Some intro text.",
+    "## Section One",
+    "Content of section 1.",
+    "| col1 | col2 |",
+    "| --- | --- |",
+    "| val1 | val2 |",
+    "## Section Two",
+    "Content of section 2.",
+    "### Subsection A",
+    "Nested text.",
+  ].join("\n"), "utf8");
+  fs.writeFileSync(path.join(repo, "config.json"), JSON.stringify({
+    name: "fixture-app",
+    version: "1.0.0",
+    scripts: {
+      build: "tsc",
+      test: "node --test",
+    },
+  }, null, 2), "utf8");
+  fs.writeFileSync(path.join(repo, "settings.toml"), [
+    "[server]",
+    "port = 8080",
+    "host = \"127.0.0.1\"",
+    "",
+    "[[plugins]]",
+    "name = \"logger\"",
+  ].join("\n"), "utf8");
+  fs.writeFileSync(path.join(repo, "pipeline.yml"), [
+    "name: CI Pipeline",
+    "on: push",
+    "jobs:",
+    "  build:",
+    "    runs-on: ubuntu-latest",
+  ].join("\n"), "utf8");
+  fs.writeFileSync(path.join(repo, "script.sh"), [
+    "#!/usr/bin/env bash",
+    "APP_ENV=\"test\"",
+    "function run_build() {",
+    "  echo \"building\"",
+    "}",
+  ].join("\n"), "utf8");
   execFileSync("git", ["add", "."], { cwd: repo, windowsHide: true });
   execFileSync("git", ["commit", "-qm", "fixture"], { cwd: repo, windowsHide: true });
   return repo;
@@ -274,6 +317,81 @@ test("Edge Cases: escaping absolute paths, 0-match query filtering, and empty sy
     cleanRepo(repo);
   }
 });
+
+test("Waymark structured discovery extracts symbols for Markdown, JSON, TOML, YAML, and Bash", async () => {
+  const repo = setupRepo();
+  try {
+    // 1. Markdown
+    const md = await discoverSymbolsInFile(repo, "doc.md");
+    assert.equal(md.language, "markdown");
+    assert.ok(md.symbols.some((s) => s.name === "# Documentation Title" && s.kind === "section"));
+    assert.ok(md.symbols.some((s) => s.name === "## Section One" && s.kind === "section" && s.start.line === 3));
+    assert.ok(md.symbols.some((s) => s.kind === "table"));
+
+    // 2. JSON
+    const json = await discoverSymbolsInFile(repo, "config.json");
+    assert.equal(json.language, "json");
+    assert.ok(json.symbols.some((s) => s.name === "name" && s.kind === "config_block"));
+    assert.ok(json.symbols.some((s) => s.name === "scripts.build" && s.kind === "config_block"));
+    assert.ok(json.symbols.some((s) => s.name === "scripts.test" && s.kind === "config_block"));
+
+    // 3. TOML
+    const toml = await discoverSymbolsInFile(repo, "settings.toml");
+    assert.equal(toml.language, "toml");
+    assert.ok(toml.symbols.some((s) => s.name === "[server]" && s.kind === "config_block"));
+    assert.ok(toml.symbols.some((s) => s.name === "[[plugins]]" && s.kind === "config_block"));
+    assert.ok(toml.symbols.some((s) => s.name === "server.port"));
+
+    // 4. YAML
+    const yaml = await discoverSymbolsInFile(repo, "pipeline.yml");
+    assert.equal(yaml.language, "yaml");
+    assert.ok(yaml.symbols.some((s) => s.name === "name" && s.kind === "config_block"));
+    assert.ok(yaml.symbols.some((s) => s.name === "jobs.build" && s.kind === "config_block"));
+
+    // 5. Bash
+    const bash = await discoverSymbolsInFile(repo, "script.sh");
+    assert.equal(bash.language, "bash");
+    assert.ok(bash.symbols.some((s) => s.name === "APP_ENV" && s.kind === "variable"));
+    assert.ok(bash.symbols.some((s) => s.name === "run_build" && s.kind === "function"));
+  } finally {
+    cleanRepo(repo);
+  }
+});
+
+test("waymark_ask outline mode returns structured coordinate map without reading file content", async () => {
+  const repo = setupRepo();
+  try {
+    const server = new McpServer();
+    const raw = await server.handleMessage(JSON.stringify({
+      jsonrpc: "2.0",
+      id: 10,
+      method: "tools/call",
+      params: { name: "waymark_ask", arguments: { path: "doc.md", outline: true, root: repo } },
+    }));
+    assert.ok(raw);
+    const resp = JSON.parse(raw);
+    const result = JSON.parse(resp.result.content[0].text);
+    assert.equal(result.ok, true);
+    assert.equal(result.language, "markdown");
+    assert.ok(result.symbols.length >= 3);
+
+    // Plain text format
+    const plainRaw = await server.handleMessage(JSON.stringify({
+      jsonrpc: "2.0",
+      id: 11,
+      method: "tools/call",
+      params: { name: "waymark_ask", arguments: { path: "doc.md", outline: true, plain: true, root: repo } },
+    }));
+    assert.ok(plainRaw);
+    const plainResp = JSON.parse(plainRaw);
+    const plainText = plainResp.result.content[0].text;
+    assert.match(plainText, /\[symbols: doc\.md\]/);
+    assert.match(plainText, /## Section One: section L3/);
+  } finally {
+    cleanRepo(repo);
+  }
+});
+
 
 
 

@@ -22,7 +22,7 @@ const VALUE_FLAGS = new Set([
 ]);
 
 const BOOLEAN_FLAGS = new Set([
-  "timing", "b", "json", "j", "plain", "p", "auto-resolve", "if-exists", "force", "daemon", "d", "exclude-tests", "dev", "dry-run", "live", "all",
+  "timing", "b", "json", "j", "plain", "p", "auto-resolve", "if-exists", "force", "daemon", "d", "exclude-tests", "dev", "dry-run", "live", "all", "outline",
 ]);
 
 function parseArgs(args: readonly string[]): ParsedArgs {
@@ -284,8 +284,9 @@ async function runCommand(command: string, rawArgs: readonly string[]): Promise<
     }
     const rawPath = parsed.values.get("path");
     const rawFacet = parsed.values.get("facet");
+    const isOutline = parsed.values.has("outline");
     const posText = parsed.positionals.join(" ").trim();
-    if (rawPath && !posText && !rawFacet) {
+    if ((rawPath && !posText && !rawFacet) || (isOutline && rawPath)) {
       const { discoverSymbolsInFile } = await import("./astExtractor.js");
       return { value: await discoverSymbolsInFile(root, rawPath, parsed.values.get("language"), parsed.values.get("query")) };
     }

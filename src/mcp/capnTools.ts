@@ -56,6 +56,10 @@ export const waymarkAskTool: McpToolHandler = {
           type: "string",
           description: "Repository-relative or absolute source file path. If provided alone or without question, performs file AST extraction.",
         },
+        outline: {
+          type: "boolean",
+          description: "Optional. When true, returns the structural AST coordinate map outline of the specified path without reading full file content.",
+        },
         subsystem: {
           type: "string",
           description: "Unsupported: all discovery currently covers the selected repository root; omit this value.",
@@ -172,8 +176,8 @@ export const waymarkAskTool: McpToolHandler = {
         return jsonResult(res);
       }
 
-      // 3. File AST outline discovery (Mode A) when path provided without question
-      if (rawPath && !question && !facet) {
+      // 3. File AST outline discovery (Mode A) when path provided without question or outline requested
+      if ((rawPath && !question && !facet) || (args.outline === true && rawPath)) {
         const res = await discoverSymbolsInFile(root, rawPath, undefined, rawQuery || undefined);
         if (plain) {
           return {
@@ -595,7 +599,7 @@ export const discoverSymbolsTool: McpToolHandler = {
         },
         language: {
           type: "string",
-          enum: ["typescript", "python"],
+          enum: ["typescript", "javascript", "python", "json", "toml", "yaml", "bash", "markdown"],
           description: "Optional source language when the file extension is not sufficient.",
         },
         plain: {

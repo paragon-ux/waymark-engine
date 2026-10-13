@@ -70,12 +70,14 @@
     "prepublishOnly": "npm run verify"
   },
   "devDependencies": {
+    "@types/markdown-it": "^14.2.0",
     "@types/node": "^22.15.0",
     "typescript": "^5.8.3"
   },
   "dependencies": {
     "@paragon-ux/capn-hook": "^1.1.0",
     "@paragon-ux/codedb-core": "^1.1.0",
+    "markdown-it": "^15.0.2",
     "tree-sitter-wasms": "^0.1.13",
     "web-tree-sitter": "0.24.0"
   }

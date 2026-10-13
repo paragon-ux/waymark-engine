@@ -352,6 +352,18 @@ export async function ask(
       retryable: false,
     };
   }
+  if (options?.outline && options?.path) {
+    const { discoverSymbolsInFile } = await import("./astExtractor.js");
+    const symbolsResult = await discoverSymbolsInFile(root, options.path, undefined, question || undefined);
+    return {
+      waymark: 1,
+      kind: "ask",
+      status: "hit",
+      provider: "codedb",
+      confidence: "exact",
+      result: symbolsResult,
+    } as AskResult;
+  }
   if (profile === "none") return { waymark: 1, kind: "ask", provider: "none", status: "miss", matches: [] };
 
   return await routeDiscovery({

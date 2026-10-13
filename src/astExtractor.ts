@@ -1,4 +1,5 @@
 import Parser from "web-tree-sitter";
+import MarkdownIt from "markdown-it";
 import path from "node:path";
 import fs from "node:fs";
 import { createRequire } from "node:module";
@@ -7,7 +8,16 @@ import { WaymarkError } from "./types.js";
 
 const require = createRequire(import.meta.url);
 
-export type StructuredLanguage = "typescript" | "javascript" | "python";
+export type StructuredLanguage =
+  | "typescript"
+  | "javascript"
+  | "python"
+  | "json"
+  | "toml"
+  | "yaml"
+  | "bash"
+  | "markdown";
+
 export type StructuredSymbolKind =
   | "class"
   | "function"
@@ -19,7 +29,11 @@ export type StructuredSymbolKind =
   | "trait"
   | "import"
   | "constant"
-  | "variable";
+  | "variable"
+  | "section"
+  | "heading"
+  | "config_block"
+  | "table";
 
 export interface StructuredSymbolPosition {
   line: number;
@@ -59,12 +73,28 @@ const STRUCTURED_EXTENSIONS: Record<string, StructuredLanguage> = {
   ".mjs": "javascript",
   ".cjs": "javascript",
   ".py": "python",
+  ".json": "json",
+  ".jsonc": "json",
+  ".json5": "json",
+  ".toml": "toml",
+  ".yaml": "yaml",
+  ".yml": "yaml",
+  ".sh": "bash",
+  ".bash": "bash",
+  ".zsh": "bash",
+  ".md": "markdown",
+  ".markdown": "markdown",
+  ".mdx": "markdown",
 };
 
-const STRUCTURED_LANGUAGE_WASM: Record<StructuredLanguage, string> = {
+const STRUCTURED_LANGUAGE_WASM: Partial<Record<StructuredLanguage, string>> = {
   typescript: "tree-sitter-typescript.wasm",
   javascript: "tree-sitter-javascript.wasm",
   python: "tree-sitter-python.wasm",
+  json: "tree-sitter-json.wasm",
+  toml: "tree-sitter-toml.wasm",
+  yaml: "tree-sitter-yaml.wasm",
+  bash: "tree-sitter-bash.wasm",
 };
 
 let parserInitialized = false;
@@ -110,7 +140,7 @@ function resolveStructuredLanguage(storedPath: string, requestedLanguage?: strin
   const detected = STRUCTURED_EXTENSIONS[path.extname(storedPath).toLowerCase()];
   const requested = requestedLanguage?.trim().toLowerCase() as StructuredLanguage | undefined;
 
-  if (requested && !STRUCTURED_LANGUAGE_WASM[requested]) {
+  if (requested && !STRUCTURED_LANGUAGE_WASM[requested] && requested !== "markdown") {
     throw new WaymarkError("UNSUPPORTED_LANGUAGE", `Unsupported discovery language: ${requested}`, 2);
   }
   if (requested && detected && requested !== detected) {
@@ -170,6 +200,220 @@ function collectStructuredSymbols(rootNode: any): StructuredSymbol[] {
     for (const child of node.children) walk(child, nextClass);
   }
 
+  walk(rootNode);
+  return symbols;
+}
+
+function extractMarkdownSymbols(text: string): StructuredSymbol[] {
+  const md = new MarkdownIt({ html: true });
+  const tokens = md.parse(text, {});
+  const totalLines = text.split(/\r?\n/).length;
+
+  interface HeadingItem {
+    title: string;
+    level: number;
+    startLine: number;
+  }
+
+  const headings: HeadingItem[] = [];
+
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i];
+    if (token?.type === "heading_open") {
+      const level = parseInt(token.tag.slice(1), 10) || 1;
+      const inlineToken = tokens[i + 1];
+      const title = inlineToken?.content?.trim() || "";
+      const startLine = token.map ? token.map[0] + 1 : 1;
+      headings.push({ title, level, startLine });
+    }
+  }
+
+  const symbols: StructuredSymbol[] = [];
+
+  for (let i = 0; i < headings.length; i++) {
+    const current = headings[i]!;
+    const nextEqualOrHigher = headings.slice(i + 1).find((h) => h.level <= current.level);
+    const endLine = nextEqualOrHigher ? Math.max(current.startLine, nextEqualOrHigher.startLine - 1) : totalLines;
+
+    symbols.push({
+      name: `${"#".repeat(current.level)} ${current.title}`,
+      kind: "section",
+      start: { line: current.startLine, column: 0 },
+      end: { line: endLine, column: 0 },
+    });
+  }
+
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i];
+    if (token?.type === "table_open" && token.map) {
+      const startLine = token.map[0] + 1;
+      const endLine = token.map[1];
+      symbols.push({
+        name: `Table (L${startLine}-L${endLine})`,
+        kind: "table",
+        start: { line: startLine, column: 0 },
+        end: { line: endLine, column: 0 },
+      });
+    }
+  }
+
+  return symbols;
+}
+
+function collectJsonSymbols(rootNode: any): StructuredSymbol[] {
+  const symbols: StructuredSymbol[] = [];
+  const rootObj = rootNode.namedChildren.find((c: any) => c.type === "object");
+  if (rootObj) {
+    for (const pair of rootObj.namedChildren) {
+      if (pair.type === "pair") {
+        const keyNode = pair.childForFieldName("key");
+        const valNode = pair.childForFieldName("value");
+        const rawKey = keyNode ? keyNode.text.replace(/^"|"$/g, "") : "<unknown>";
+        symbols.push({
+          name: rawKey,
+          kind: "config_block",
+          start: { line: pair.startPosition.row + 1, column: pair.startPosition.column },
+          end: { line: pair.endPosition.row + 1, column: pair.endPosition.column },
+        });
+        if (valNode?.type === "object" && valNode.namedChildren.length <= 50) {
+          for (const subPair of valNode.namedChildren) {
+            if (subPair.type === "pair") {
+              const subKeyNode = subPair.childForFieldName("key");
+              const subKey = subKeyNode ? subKeyNode.text.replace(/^"|"$/g, "") : "<unknown>";
+              symbols.push({
+                name: `${rawKey}.${subKey}`,
+                kind: "config_block",
+                start: { line: subPair.startPosition.row + 1, column: subPair.startPosition.column },
+                end: { line: subPair.endPosition.row + 1, column: subPair.endPosition.column },
+              });
+            }
+          }
+        }
+      }
+    }
+  }
+  return symbols;
+}
+
+function collectTomlSymbols(rootNode: any): StructuredSymbol[] {
+  const symbols: StructuredSymbol[] = [];
+  for (const child of rootNode.namedChildren) {
+    if (child.type === "table") {
+      const headerNode = child.namedChildren.find((n: any) => n.type.includes("header") || n.type === "bare_key" || n.type === "dotted_key");
+      const tableName = headerNode ? headerNode.text.replace(/^\[|\]$/g, "").trim() : child.namedChildren[0]?.text || "table";
+      symbols.push({
+        name: `[${tableName}]`,
+        kind: "config_block",
+        start: { line: child.startPosition.row + 1, column: child.startPosition.column },
+        end: { line: child.endPosition.row + 1, column: child.endPosition.column },
+      });
+      for (const inner of child.namedChildren) {
+        if (inner.type === "pair") {
+          const keyNode = inner.childForFieldName("key") || inner.namedChildren[0];
+          if (keyNode) {
+            symbols.push({
+              name: `${tableName}.${keyNode.text.trim()}`,
+              kind: "config_block",
+              start: { line: inner.startPosition.row + 1, column: inner.startPosition.column },
+              end: { line: inner.endPosition.row + 1, column: inner.endPosition.column },
+            });
+          }
+        }
+      }
+    } else if (child.type === "table_array_element") {
+      const headerNode = child.namedChildren[0];
+      const name = headerNode ? headerNode.text.replace(/^\[\[|\]\]$/g, "").trim() : "array";
+      symbols.push({
+        name: `[[${name}]]`,
+        kind: "config_block",
+        start: { line: child.startPosition.row + 1, column: child.startPosition.column },
+        end: { line: child.endPosition.row + 1, column: child.endPosition.column },
+      });
+    } else if (child.type === "pair") {
+      const keyNode = child.childForFieldName("key") || child.namedChildren[0];
+      symbols.push({
+        name: keyNode ? keyNode.text.trim() : "<key>",
+        kind: "constant",
+        start: { line: child.startPosition.row + 1, column: child.startPosition.column },
+        end: { line: child.endPosition.row + 1, column: child.endPosition.column },
+      });
+    }
+  }
+  return symbols;
+}
+
+function findYamlBlockMapping(node: any): any {
+  if (node.type === "block_mapping") return node;
+  for (const child of node.namedChildren) {
+    const res = findYamlBlockMapping(child);
+    if (res) return res;
+  }
+  return null;
+}
+
+function collectYamlSymbols(rootNode: any): StructuredSymbol[] {
+  const symbols: StructuredSymbol[] = [];
+  const rootMapping = findYamlBlockMapping(rootNode);
+  if (rootMapping) {
+    for (const child of rootMapping.namedChildren) {
+      if (child.type === "block_mapping_pair") {
+        const keyNode = child.childForFieldName("key");
+        const valNode = child.childForFieldName("value");
+        const keyName = keyNode ? keyNode.text.trim() : "<key>";
+        symbols.push({
+          name: keyName,
+          kind: "config_block",
+          start: { line: child.startPosition.row + 1, column: child.startPosition.column },
+          end: { line: child.endPosition.row + 1, column: child.endPosition.column },
+        });
+        const subMapping = valNode ? findYamlBlockMapping(valNode) : null;
+        if (subMapping && subMapping.namedChildren.length <= 50) {
+          for (const subChild of subMapping.namedChildren) {
+            if (subChild.type === "block_mapping_pair") {
+              const subKeyNode = subChild.childForFieldName("key");
+              const subKeyName = subKeyNode ? subKeyNode.text.trim() : "<key>";
+              symbols.push({
+                name: `${keyName}.${subKeyName}`,
+                kind: "config_block",
+                start: { line: subChild.startPosition.row + 1, column: subChild.startPosition.column },
+                end: { line: subChild.endPosition.row + 1, column: subChild.endPosition.column },
+              });
+            }
+          }
+        }
+      }
+    }
+  }
+  return symbols;
+}
+
+function collectBashSymbols(rootNode: any): StructuredSymbol[] {
+  const symbols: StructuredSymbol[] = [];
+  function walk(node: any): void {
+    if (node.type === "function_definition") {
+      const nameNode = node.childForFieldName("name");
+      symbols.push({
+        name: nameNode ? nameNode.text : "<function>",
+        kind: "function",
+        start: { line: node.startPosition.row + 1, column: node.startPosition.column },
+        end: { line: node.endPosition.row + 1, column: node.endPosition.column },
+      });
+    } else if (node.type === "variable_assignment") {
+      const nameNode = node.childForFieldName("name");
+      const name = nameNode ? nameNode.text : node.text.split("=")[0];
+      if (name && name.trim()) {
+        symbols.push({
+          name: name.trim(),
+          kind: "variable",
+          start: { line: node.startPosition.row + 1, column: node.startPosition.column },
+          end: { line: node.endPosition.row + 1, column: node.endPosition.column },
+        });
+      }
+    }
+    for (const child of node.namedChildren) {
+      walk(child);
+    }
+  }
   walk(rootNode);
   return symbols;
 }
@@ -308,37 +552,60 @@ export async function discoverSymbolsInFile(
       throw err;
     }
 
-    let grammar: unknown | null;
-    try {
-      grammar = await getLanguageForWasm(STRUCTURED_LANGUAGE_WASM[language]);
-    } catch {
-      throw new WaymarkError("PARSER_UNAVAILABLE", `Waymark grammar is unavailable for ${language}`, 2);
-    }
-    if (!grammar) throw new WaymarkError("PARSER_UNAVAILABLE", `Waymark grammar is unavailable for ${language}`, 2);
-
-    const parser = new Parser();
-    let tree: any;
-    try {
-      parser.setLanguage(grammar as any);
-      tree = parser.parse(file.text);
-      if (tree.rootNode.hasError) {
-        throw new WaymarkError("PARSE_ERROR", `Malformed ${language} source: ${storedPath}`, 2);
-      }
+    if (language === "markdown") {
       result = {
         ok: true,
         path: storedPath,
         language,
-        symbols: collectStructuredSymbols(tree.rootNode),
+        symbols: extractMarkdownSymbols(file.text),
       };
-    } catch (err) {
-      if (err instanceof WaymarkError) throw err;
-      throw new WaymarkError("PARSE_ERROR", `Unable to parse ${language} source: ${storedPath}`, 2);
-    } finally {
-      if (tree) {
-        try {
-          tree.delete();
-        } catch {
-          // ignore
+    } else {
+      let grammar: unknown | null;
+      try {
+        const wasmName = STRUCTURED_LANGUAGE_WASM[language];
+        if (!wasmName) throw new Error(`No wasm configured for ${language}`);
+        grammar = await getLanguageForWasm(wasmName);
+      } catch {
+        throw new WaymarkError("PARSER_UNAVAILABLE", `Waymark grammar is unavailable for ${language}`, 2);
+      }
+      if (!grammar) throw new WaymarkError("PARSER_UNAVAILABLE", `Waymark grammar is unavailable for ${language}`, 2);
+
+      const parser = new Parser();
+      let tree: any;
+      try {
+        parser.setLanguage(grammar as any);
+        tree = parser.parse(file.text);
+        if (tree.rootNode.hasError) {
+          throw new WaymarkError("PARSE_ERROR", `Malformed ${language} source: ${storedPath}`, 2);
+        }
+        let symbols: StructuredSymbol[];
+        if (language === "json") {
+          symbols = collectJsonSymbols(tree.rootNode);
+        } else if (language === "toml") {
+          symbols = collectTomlSymbols(tree.rootNode);
+        } else if (language === "yaml") {
+          symbols = collectYamlSymbols(tree.rootNode);
+        } else if (language === "bash") {
+          symbols = collectBashSymbols(tree.rootNode);
+        } else {
+          symbols = collectStructuredSymbols(tree.rootNode);
+        }
+        result = {
+          ok: true,
+          path: storedPath,
+          language,
+          symbols,
+        };
+      } catch (err) {
+        if (err instanceof WaymarkError) throw err;
+        throw new WaymarkError("PARSE_ERROR", `Unable to parse ${language} source: ${storedPath}`, 2);
+      } finally {
+        if (tree) {
+          try {
+            tree.delete();
+          } catch {
+            // ignore
+          }
         }
       }
     }

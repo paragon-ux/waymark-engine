@@ -96,6 +96,8 @@ function setupRepo(): string {
     "  echo \"building\"",
     "}",
   ].join("\n"), "utf8");
+  fs.writeFileSync(path.join(repo, "empty.md"), "", "utf8");
+  fs.writeFileSync(path.join(repo, "empty.json"), "{}", "utf8");
   execFileSync("git", ["add", "."], { cwd: repo, windowsHide: true });
   execFileSync("git", ["commit", "-qm", "fixture"], { cwd: repo, windowsHide: true });
   return repo;
@@ -387,6 +389,59 @@ test("waymark_ask outline mode returns structured coordinate map without reading
     const plainText = plainResp.result.content[0].text;
     assert.match(plainText, /\[symbols: doc\.md\]/);
     assert.match(plainText, /## Section One: section L3/);
+
+    // MCP question used as query filter in outline mode
+    const filteredRaw = await server.handleMessage(JSON.stringify({
+      jsonrpc: "2.0",
+      id: 12,
+      method: "tools/call",
+      params: { name: "waymark_ask", arguments: { path: "doc.md", outline: true, question: "Section Two", root: repo } },
+    }));
+    assert.ok(filteredRaw);
+    const filteredResp = JSON.parse(filteredRaw);
+    const filteredResult = JSON.parse(filteredResp.result.content[0].text);
+    assert.equal(filteredResult.symbols.length, 1);
+    assert.equal(filteredResult.symbols[0].name, "## Section Two");
+  } finally {
+    cleanRepo(repo);
+  }
+});
+
+test("Library ask() and CLI ask --outline support plain text and query filtering cleanly", async () => {
+  const repo = setupRepo();
+  try {
+    const { ask } = await import("../src/capnAdapter.js");
+    const { renderPlainText } = await import("../src/renderPlainText.js");
+
+    // 1. Library ask with outline: true produces clean plain text via renderPlainText
+    const libRes = await ask(repo, "none", "", "", { path: "doc.md", outline: true });
+    assert.equal(libRes.status, "hit");
+    const plainLib = renderPlainText(libRes);
+    assert.match(plainLib, /\[symbols: doc\.md\]/);
+    assert.ok(!plainLib.includes("[object Object]"));
+
+    // 2. 0-byte file handling
+    const emptyMd = await discoverSymbolsInFile(repo, "empty.md");
+    assert.equal(emptyMd.symbols.length, 0);
+
+    const emptyJson = await discoverSymbolsInFile(repo, "empty.json");
+    assert.equal(emptyJson.symbols.length, 0);
+
+    // 3. CLI ask with positional query and --outline --plain
+    const cli = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../src/cli.js");
+    const cliOutput = execFileSync(process.execPath, [cli, "ask", "build", "--path", "config.json", "--outline", "--plain"], {
+      cwd: repo,
+      windowsHide: true,
+      encoding: "utf8",
+    });
+    assert.match(cliOutput, /scripts\.build: config_block/);
+    assert.ok(!cliOutput.includes("version: config_block"));
+
+    // 4. Markdown line-order invariant (table should appear between section one and section two)
+    const mdRes = await discoverSymbolsInFile(repo, "doc.md");
+    for (let i = 1; i < mdRes.symbols.length; i++) {
+      assert.ok(mdRes.symbols[i]!.start.line >= mdRes.symbols[i - 1]!.start.line, "Symbols must be strictly ordered by line");
+    }
   } finally {
     cleanRepo(repo);
   }

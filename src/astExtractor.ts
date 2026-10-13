@@ -204,8 +204,16 @@ function collectStructuredSymbols(rootNode: any): StructuredSymbol[] {
   return symbols;
 }
 
+let mdParserInstance: InstanceType<typeof MarkdownIt> | null = null;
+function getMarkdownParser(): InstanceType<typeof MarkdownIt> {
+  if (!mdParserInstance) {
+    mdParserInstance = new MarkdownIt({ html: true });
+  }
+  return mdParserInstance;
+}
+
 function extractMarkdownSymbols(text: string): StructuredSymbol[] {
-  const md = new MarkdownIt({ html: true });
+  const md = getMarkdownParser();
   const tokens = md.parse(text, {});
   const totalLines = text.split(/\r?\n/).length;
 
@@ -228,18 +236,26 @@ function extractMarkdownSymbols(text: string): StructuredSymbol[] {
     }
   }
 
+  const endLines: number[] = new Array(headings.length).fill(totalLines);
+  const stack: { level: number; index: number }[] = [];
+  for (let i = 0; i < headings.length; i++) {
+    const current = headings[i]!;
+    while (stack.length > 0 && stack[stack.length - 1]!.level >= current.level) {
+      const top = stack.pop()!;
+      endLines[top.index] = Math.max(headings[top.index]!.startLine, current.startLine - 1);
+    }
+    stack.push({ level: current.level, index: i });
+  }
+
   const symbols: StructuredSymbol[] = [];
 
   for (let i = 0; i < headings.length; i++) {
     const current = headings[i]!;
-    const nextEqualOrHigher = headings.slice(i + 1).find((h) => h.level <= current.level);
-    const endLine = nextEqualOrHigher ? Math.max(current.startLine, nextEqualOrHigher.startLine - 1) : totalLines;
-
     symbols.push({
       name: `${"#".repeat(current.level)} ${current.title}`,
       kind: "section",
       start: { line: current.startLine, column: 0 },
-      end: { line: endLine, column: 0 },
+      end: { line: endLines[i] ?? totalLines, column: 0 },
     });
   }
 
@@ -257,6 +273,7 @@ function extractMarkdownSymbols(text: string): StructuredSymbol[] {
     }
   }
 
+  symbols.sort((a, b) => a.start.line - b.start.line);
   return symbols;
 }
 
@@ -342,10 +359,11 @@ function collectTomlSymbols(rootNode: any): StructuredSymbol[] {
   return symbols;
 }
 
-function findYamlBlockMapping(node: any): any {
+function findYamlBlockMapping(node: any, depth = 0): any {
+  if (!node || depth > 20) return null;
   if (node.type === "block_mapping") return node;
   for (const child of node.namedChildren) {
-    const res = findYamlBlockMapping(child);
+    const res = findYamlBlockMapping(child, depth + 1);
     if (res) return res;
   }
   return null;
@@ -389,32 +407,28 @@ function collectYamlSymbols(rootNode: any): StructuredSymbol[] {
 
 function collectBashSymbols(rootNode: any): StructuredSymbol[] {
   const symbols: StructuredSymbol[] = [];
-  function walk(node: any): void {
-    if (node.type === "function_definition") {
-      const nameNode = node.childForFieldName("name");
+  for (const child of rootNode.namedChildren) {
+    if (child.type === "function_definition") {
+      const nameNode = child.childForFieldName("name");
       symbols.push({
         name: nameNode ? nameNode.text : "<function>",
         kind: "function",
-        start: { line: node.startPosition.row + 1, column: node.startPosition.column },
-        end: { line: node.endPosition.row + 1, column: node.endPosition.column },
+        start: { line: child.startPosition.row + 1, column: child.startPosition.column },
+        end: { line: child.endPosition.row + 1, column: child.endPosition.column },
       });
-    } else if (node.type === "variable_assignment") {
-      const nameNode = node.childForFieldName("name");
-      const name = nameNode ? nameNode.text : node.text.split("=")[0];
+    } else if (child.type === "variable_assignment") {
+      const nameNode = child.childForFieldName("name");
+      const name = nameNode ? nameNode.text : child.text.split("=")[0];
       if (name && name.trim()) {
         symbols.push({
           name: name.trim(),
           kind: "variable",
-          start: { line: node.startPosition.row + 1, column: node.startPosition.column },
-          end: { line: node.endPosition.row + 1, column: node.endPosition.column },
+          start: { line: child.startPosition.row + 1, column: child.startPosition.column },
+          end: { line: child.endPosition.row + 1, column: child.endPosition.column },
         });
       }
     }
-    for (const child of node.namedChildren) {
-      walk(child);
-    }
   }
-  walk(rootNode);
   return symbols;
 }
 
@@ -606,6 +620,11 @@ export async function discoverSymbolsInFile(
           } catch {
             // ignore
           }
+        }
+        try {
+          parser.delete();
+        } catch {
+          // ignore
         }
       }
     }

@@ -117,6 +117,9 @@ export function renderPlainText(value: unknown): string {
       const timingStr = record.timings ? `\n[timing] ${formatTimings(record.timings as Record<string, number>)}` : "";
       return `${graphStr}${timingStr}`;
     }
+    if (record.result && typeof record.result === "object" && "symbols" in (record.result as any) && "path" in (record.result as any)) {
+      return renderPlainText(record.result);
+    }
     if (provider === "codedb" || provider === "literal-path") {
       detail = String(record.result ?? "");
     } else if (provider === "fuzzy-lexical") {

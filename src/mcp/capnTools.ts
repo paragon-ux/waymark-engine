@@ -178,7 +178,8 @@ export const waymarkAskTool: McpToolHandler = {
 
       // 3. File AST outline discovery (Mode A) when path provided without question or outline requested
       if ((rawPath && !question && !facet) || (args.outline === true && rawPath)) {
-        const res = await discoverSymbolsInFile(root, rawPath, undefined, rawQuery || undefined);
+        const queryToUse = rawQuery || question || undefined;
+        const res = await discoverSymbolsInFile(root, rawPath, undefined, queryToUse);
         if (plain) {
           return {
             content: [{ type: "text", text: renderPlainText(res) }],

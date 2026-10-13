@@ -287,8 +287,9 @@ async function runCommand(command: string, rawArgs: readonly string[]): Promise<
     const isOutline = parsed.values.has("outline");
     const posText = parsed.positionals.join(" ").trim();
     if ((rawPath && !posText && !rawFacet) || (isOutline && rawPath)) {
+      const queryToUse = parsed.values.get("query") ?? parsed.values.get("symbol") ?? (posText || undefined);
       const { discoverSymbolsInFile } = await import("./astExtractor.js");
-      return { value: await discoverSymbolsInFile(root, rawPath, parsed.values.get("language"), parsed.values.get("query")) };
+      return { value: await discoverSymbolsInFile(root, rawPath, parsed.values.get("language"), queryToUse) };
     }
     if (rawFacet === "status") {
       const { getSemanticMapStatus } = await import("./semanticMap.js");

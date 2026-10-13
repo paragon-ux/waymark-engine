@@ -5,9 +5,10 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { discoverSymbolsInFile } from "../src/astExtractor.js";
+import { discoverSymbolsInFile, SUPPORTED_STRUCTURED_LANGUAGES } from "../src/astExtractor.js";
 import { anchorForRange, normalizeRange } from "../src/paths.js";
 import { McpServer } from "../src/mcp/server.js";
+import type { AskMissResult } from "../src/types.js";
 
 
 function setupRepo(): string {
@@ -53,6 +54,51 @@ function setupRepo(): string {
   fs.writeFileSync(path.join(repo, "broken.ts"), "export function broken( {\n", "utf8");
   fs.writeFileSync(path.join(repo, "notes.txt"), "not source\n", "utf8");
   fs.writeFileSync(path.join(repo, "large.ts"), Buffer.alloc(1024 * 1024 + 1, "x"));
+  fs.writeFileSync(path.join(repo, "doc.md"), [
+    "# Documentation Title",
+    "Some intro text.",
+    "## Section One",
+    "Content of section 1.",
+    "| col1 | col2 |",
+    "| --- | --- |",
+    "| val1 | val2 |",
+    "## Section Two",
+    "Content of section 2.",
+    "### Subsection A",
+    "Nested text.",
+  ].join("\n"), "utf8");
+  fs.writeFileSync(path.join(repo, "config.json"), JSON.stringify({
+    name: "fixture-app",
+    version: "1.0.0",
+    scripts: {
+      build: "tsc",
+      test: "node --test",
+    },
+  }, null, 2), "utf8");
+  fs.writeFileSync(path.join(repo, "settings.toml"), [
+    "[server]",
+    "port = 8080",
+    "host = \"127.0.0.1\"",
+    "",
+    "[[plugins]]",
+    "name = \"logger\"",
+  ].join("\n"), "utf8");
+  fs.writeFileSync(path.join(repo, "pipeline.yml"), [
+    "name: CI Pipeline",
+    "on: push",
+    "jobs:",
+    "  build:",
+    "    runs-on: ubuntu-latest",
+  ].join("\n"), "utf8");
+  fs.writeFileSync(path.join(repo, "script.sh"), [
+    "#!/usr/bin/env bash",
+    "APP_ENV=\"test\"",
+    "function run_build() {",
+    "  echo \"building\"",
+    "}",
+  ].join("\n"), "utf8");
+  fs.writeFileSync(path.join(repo, "empty.md"), "", "utf8");
+  fs.writeFileSync(path.join(repo, "empty.json"), "{}", "utf8");
   execFileSync("git", ["add", "."], { cwd: repo, windowsHide: true });
   execFileSync("git", ["commit", "-qm", "fixture"], { cwd: repo, windowsHide: true });
   return repo;
@@ -274,6 +320,433 @@ test("Edge Cases: escaping absolute paths, 0-match query filtering, and empty sy
     cleanRepo(repo);
   }
 });
+
+test("Waymark structured discovery extracts symbols for Markdown, JSON, TOML, YAML, and Bash", async () => {
+  const repo = setupRepo();
+  try {
+    // 1. Markdown
+    const md = await discoverSymbolsInFile(repo, "doc.md");
+    assert.equal(md.language, "markdown");
+    assert.ok(md.symbols.some((s) => s.name === "# Documentation Title" && s.kind === "section"));
+    assert.ok(md.symbols.some((s) => s.name === "## Section One" && s.kind === "section" && s.start.line === 3));
+    assert.ok(md.symbols.some((s) => s.kind === "table"));
+
+    // 2. JSON
+    const json = await discoverSymbolsInFile(repo, "config.json");
+    assert.equal(json.language, "json");
+    assert.ok(json.symbols.some((s) => s.name === "name" && s.kind === "config_block"));
+    assert.ok(json.symbols.some((s) => s.name === "scripts.build" && s.kind === "config_block"));
+    assert.ok(json.symbols.some((s) => s.name === "scripts.test" && s.kind === "config_block"));
+
+    // 3. TOML
+    const toml = await discoverSymbolsInFile(repo, "settings.toml");
+    assert.equal(toml.language, "toml");
+    assert.ok(toml.symbols.some((s) => s.name === "[server]" && s.kind === "config_block"));
+    assert.ok(toml.symbols.some((s) => s.name === "[[plugins]]" && s.kind === "config_block"));
+    assert.ok(toml.symbols.some((s) => s.name === "server.port"));
+
+    // 4. YAML
+    const yaml = await discoverSymbolsInFile(repo, "pipeline.yml");
+    assert.equal(yaml.language, "yaml");
+    assert.ok(yaml.symbols.some((s) => s.name === "name" && s.kind === "config_block"));
+    assert.ok(yaml.symbols.some((s) => s.name === "jobs.build" && s.kind === "config_block"));
+
+    // 5. Bash
+    const bash = await discoverSymbolsInFile(repo, "script.sh");
+    assert.equal(bash.language, "bash");
+    assert.ok(bash.symbols.some((s) => s.name === "APP_ENV" && s.kind === "variable"));
+    assert.ok(bash.symbols.some((s) => s.name === "run_build" && s.kind === "function"));
+  } finally {
+    cleanRepo(repo);
+  }
+});
+
+test("waymark_ask outline mode returns structured coordinate map without reading file content", async () => {
+  const repo = setupRepo();
+  try {
+    const server = new McpServer();
+    const raw = await server.handleMessage(JSON.stringify({
+      jsonrpc: "2.0",
+      id: 10,
+      method: "tools/call",
+      params: { name: "waymark_ask", arguments: { path: "doc.md", outline: true, root: repo } },
+    }));
+    assert.ok(raw);
+    const resp = JSON.parse(raw);
+    const result = JSON.parse(resp.result.content[0].text);
+    assert.equal(result.ok, true);
+    assert.equal(result.language, "markdown");
+    assert.ok(result.symbols.length >= 3);
+
+    // Plain text format
+    const plainRaw = await server.handleMessage(JSON.stringify({
+      jsonrpc: "2.0",
+      id: 11,
+      method: "tools/call",
+      params: { name: "waymark_ask", arguments: { path: "doc.md", outline: true, plain: true, root: repo } },
+    }));
+    assert.ok(plainRaw);
+    const plainResp = JSON.parse(plainRaw);
+    const plainText = plainResp.result.content[0].text;
+    assert.match(plainText, /\[symbols: doc\.md\]/);
+    assert.match(plainText, /## Section One: section L3/);
+
+    // MCP question used as query filter in outline mode
+    const filteredRaw = await server.handleMessage(JSON.stringify({
+      jsonrpc: "2.0",
+      id: 12,
+      method: "tools/call",
+      params: { name: "waymark_ask", arguments: { path: "doc.md", outline: true, question: "Section Two", root: repo } },
+    }));
+    assert.ok(filteredRaw);
+    const filteredResp = JSON.parse(filteredRaw);
+    const filteredResult = JSON.parse(filteredResp.result.content[0].text);
+    assert.equal(filteredResult.symbols.length, 1);
+    assert.equal(filteredResult.symbols[0].name, "## Section Two");
+  } finally {
+    cleanRepo(repo);
+  }
+});
+
+test("Library ask() and CLI ask --outline support plain text and query filtering cleanly", async () => {
+  const repo = setupRepo();
+  try {
+    const { ask } = await import("../src/capnAdapter.js");
+    const { renderPlainText } = await import("../src/renderPlainText.js");
+
+    // 1. Library ask with outline: true produces clean plain text via renderPlainText
+    const libRes = await ask(repo, "none", "", "", { path: "doc.md", outline: true });
+    assert.equal(libRes.status, "hit");
+    const plainLib = renderPlainText(libRes);
+    assert.match(plainLib, /\[symbols: doc\.md\]/);
+    assert.ok(!plainLib.includes("[object Object]"));
+
+    // 2. 0-byte file handling
+    const emptyMd = await discoverSymbolsInFile(repo, "empty.md");
+    assert.equal(emptyMd.symbols.length, 0);
+
+    const emptyJson = await discoverSymbolsInFile(repo, "empty.json");
+    assert.equal(emptyJson.symbols.length, 0);
+
+    // 3. CLI ask with positional query and --outline --plain
+    const cli = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../src/cli.js");
+    const cliOutput = execFileSync(process.execPath, [cli, "ask", "build", "--path", "config.json", "--outline", "--plain"], {
+      cwd: repo,
+      windowsHide: true,
+      encoding: "utf8",
+    });
+    assert.match(cliOutput, /scripts\.build: config_block/);
+    assert.ok(!cliOutput.includes("version: config_block"));
+
+    // 4. Markdown line-order invariant (table should appear between section one and section two)
+    const mdRes = await discoverSymbolsInFile(repo, "doc.md");
+    for (let i = 1; i < mdRes.symbols.length; i++) {
+      assert.ok(mdRes.symbols[i]!.start.line >= mdRes.symbols[i - 1]!.start.line, "Symbols must be strictly ordered by line");
+    }
+  } finally {
+    cleanRepo(repo);
+  }
+});
+
+test("JSONC/JSON5 clean rejection: rejects dialect extensions cleanly with UNSUPPORTED_LANGUAGE", async () => {
+  const repo = setupRepo();
+  try {
+    fs.writeFileSync(path.join(repo, "sample.jsonc"), "{\n // comment\n \"name\": \"app\"\n}\n", "utf8");
+    fs.writeFileSync(path.join(repo, "sample.json5"), "{\n unquoted: \"value\"\n}\n", "utf8");
+
+    await assert.rejects(
+      () => discoverSymbolsInFile(repo, "sample.jsonc"),
+      (err: any) => err.code === "UNSUPPORTED_LANGUAGE"
+    );
+    await assert.rejects(
+      () => discoverSymbolsInFile(repo, "sample.json5"),
+      (err: any) => err.code === "UNSUPPORTED_LANGUAGE"
+    );
+  } finally {
+    cleanRepo(repo);
+  }
+});
+
+test("JSON: decodes escaped and unicode property keys for accurate symbol querying", async () => {
+  const repo = setupRepo();
+  try {
+    const jsonContent = [
+      "{",
+      '  "build\\u005fscript": "tsc",',
+      '  "caf\\u00e9": "coffee",',
+      '  "key\\"escaped": true,',
+      '  "nested": {',
+      '    "item\\u005fid": 42',
+      "  }",
+      "}",
+    ].join("\n");
+    fs.writeFileSync(path.join(repo, "escaped.json"), jsonContent, "utf8");
+
+    const res = await discoverSymbolsInFile(repo, "escaped.json");
+    const names = res.symbols.map((s) => s.name);
+    assert.ok(names.includes("build_script"), "Key \\u005f must decode to underscore");
+    assert.ok(names.includes("café"), "Unicode \\u00e9 must decode to é");
+    assert.ok(names.includes('key"escaped'));
+    assert.ok(names.includes("nested.item_id"));
+
+    // Query filtering matches decoded name
+    const filtered = await discoverSymbolsInFile(repo, "escaped.json", undefined, "build_script");
+    assert.equal(filtered.symbols.length, 1);
+    assert.equal(filtered.symbols[0]!.name, "build_script");
+  } finally {
+    cleanRepo(repo);
+  }
+});
+
+test("TOML: array-of-tables [[plugins]] emits headers and nested pairs with distinct coordinates and decoded headers", async () => {
+  const repo = setupRepo();
+  try {
+    const tomlContent = [
+      '["server.main"]',
+      "port = 8080",
+      "",
+      "[[plugins]]",
+      'name = "logger"',
+      'level = "info"',
+      "",
+      "[[plugins]]",
+      'name = "metrics"',
+      "port = 9090",
+    ].join("\n");
+    fs.writeFileSync(path.join(repo, "plugins.toml"), tomlContent, "utf8");
+
+    const res = await discoverSymbolsInFile(repo, "plugins.toml");
+    const names = res.symbols.map((s) => s.name);
+    assert.ok(names.includes("[server.main]"));
+    assert.ok(names.includes("server.main.port"));
+    assert.ok(names.includes("[[plugins]]"));
+    assert.ok(names.includes("plugins.name"));
+    assert.ok(names.includes("plugins.level"));
+    assert.ok(names.includes("plugins.port"));
+
+    // Verify multiple entries have distinct coordinates
+    const pluginNameSymbols = res.symbols.filter((s) => s.name === "plugins.name");
+    assert.equal(pluginNameSymbols.length, 2);
+    assert.equal(pluginNameSymbols[0]!.start.line, 5);
+    assert.equal(pluginNameSymbols[1]!.start.line, 9);
+
+    // Filter queries
+    const filteredLevel = await discoverSymbolsInFile(repo, "plugins.toml", undefined, "plugins.level");
+    assert.equal(filteredLevel.symbols.length, 1);
+    assert.equal(filteredLevel.symbols[0]!.start.line, 6);
+
+    const filteredNames = await discoverSymbolsInFile(repo, "plugins.toml", undefined, "plugins.name");
+    assert.equal(filteredNames.symbols.length, 2);
+    assert.equal(filteredNames.symbols[0]!.start.line, 5);
+    assert.equal(filteredNames.symbols[1]!.start.line, 9);
+  } finally {
+    cleanRepo(repo);
+  }
+});
+
+test("YAML: handles root sequence, multi-document files, flow mapping, and scalars cleanly", async () => {
+  const repo = setupRepo();
+  try {
+    // 1. Root sequence of mappings
+    const seqContent = [
+      "- name: service-auth",
+      "  port: 8081",
+      "- name: service-billing",
+      "  port: 8082",
+    ].join("\n");
+    fs.writeFileSync(path.join(repo, "services.yml"), seqContent, "utf8");
+
+    const seqRes = await discoverSymbolsInFile(repo, "services.yml");
+    const seqNames = seqRes.symbols.map((s) => s.name);
+    assert.ok(seqNames.includes("[0]"));
+    assert.ok(seqNames.includes("[0].name"));
+    assert.ok(seqNames.includes("[0].port"));
+    assert.ok(seqNames.includes("[1]"));
+    assert.ok(seqNames.includes("[1].name"));
+    assert.ok(seqNames.includes("[1].port"));
+
+    const nameOccurrences = seqRes.symbols.filter((s) => s.name.endsWith(".name"));
+    assert.equal(nameOccurrences.length, 2);
+    assert.equal(nameOccurrences[0]!.start.line, 1);
+    assert.equal(nameOccurrences[1]!.start.line, 3);
+
+    // 2. Multi-document YAML
+    const multiDoc = [
+      "---",
+      "kind: Deployment",
+      "metadata:",
+      "  name: web-app",
+      "---",
+      "kind: Service",
+      "metadata:",
+      "  name: web-svc",
+    ].join("\n");
+    fs.writeFileSync(path.join(repo, "k8s.yml"), multiDoc, "utf8");
+
+    const multiRes = await discoverSymbolsInFile(repo, "k8s.yml");
+    const multiNames = multiRes.symbols.map((s) => s.name);
+    assert.ok(multiNames.includes("doc[0].kind"));
+    assert.ok(multiNames.includes("doc[0].metadata.name"));
+    assert.ok(multiNames.includes("doc[1].kind"));
+    assert.ok(multiNames.includes("doc[1].metadata.name"));
+
+    // 3. Flow mapping
+    const flowDoc = "{ host: 'localhost', port: 3000 }\n";
+    fs.writeFileSync(path.join(repo, "flow.yml"), flowDoc, "utf8");
+    const flowRes = await discoverSymbolsInFile(repo, "flow.yml");
+    assert.ok(flowRes.symbols.some((s) => s.name === "host"));
+    assert.ok(flowRes.symbols.some((s) => s.name === "port"));
+
+    // 4. Root scalar does not crash
+    fs.writeFileSync(path.join(repo, "scalar.yml"), "just-a-scalar-string\n", "utf8");
+    const scalarRes = await discoverSymbolsInFile(repo, "scalar.yml");
+    assert.equal(scalarRes.symbols.length, 0);
+  } finally {
+    cleanRepo(repo);
+  }
+});
+
+test("Outline status economics: returns hit on matching symbols and clean miss on 0 symbols or filtered misses across library, MCP, and CLI", async () => {
+  const repo = setupRepo();
+  try {
+    const { ask } = await import("../src/capnAdapter.js");
+    const server = new McpServer();
+
+    // 1. Library: Hit on existing file with symbols
+    const hitRes = await ask(repo, "none", "", "", { path: "sample.ts", outline: true });
+    assert.equal(hitRes.status, "hit");
+    assert.equal(hitRes.confidence, "exact");
+
+    // 2. Library: Miss on filter query returning 0 symbols
+    const filterMissRes = (await ask(repo, "none", "", "nonExistentSymbolName", { path: "sample.ts", outline: true })) as AskMissResult;
+    assert.equal(filterMissRes.status, "miss");
+    assert.equal(filterMissRes.missCode, "SYMBOL_NOT_FOUND");
+    assert.match(filterMissRes.reason, /No matching symbols found/);
+
+    // 3. Library: Miss on empty file with 0 symbols
+    const emptyRes = (await ask(repo, "none", "", "", { path: "empty.md", outline: true })) as AskMissResult;
+    assert.equal(emptyRes.status, "miss");
+    assert.equal(emptyRes.missCode, "SYMBOL_NOT_FOUND");
+
+    // 4. MCP: Hit on existing file returns symbols payload
+    const mcpHitRaw = await server.handleMessage(JSON.stringify({
+      jsonrpc: "2.0",
+      id: 20,
+      method: "tools/call",
+      params: { name: "waymark_ask", arguments: { path: "sample.ts", outline: true, root: repo } },
+    }));
+    const mcpHit = JSON.parse(JSON.parse(mcpHitRaw ?? "{}").result.content[0].text);
+    assert.equal(mcpHit.ok, true);
+    assert.ok(mcpHit.symbols.length > 0);
+
+    // 5. MCP: Miss on non-matching query returns missCode: SYMBOL_NOT_FOUND
+    const mcpMissRaw = await server.handleMessage(JSON.stringify({
+      jsonrpc: "2.0",
+      id: 21,
+      method: "tools/call",
+      params: { name: "waymark_ask", arguments: { path: "sample.ts", outline: true, question: "nonExistentFooBar", root: repo } },
+    }));
+    const mcpMiss = JSON.parse(JSON.parse(mcpMissRaw ?? "{}").result.content[0].text);
+    assert.equal(mcpMiss.status, "miss");
+    assert.equal(mcpMiss.missCode, "SYMBOL_NOT_FOUND");
+
+    // 6. CLI: Miss on non-matching query renders [miss] output
+    const cli = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../src/cli.js");
+    const cliMissOutput = execFileSync(process.execPath, [cli, "ask", "nonExistentZzz", "--path", "sample.ts", "--outline", "--plain"], {
+      cwd: repo,
+      windowsHide: true,
+      encoding: "utf8",
+    });
+    assert.match(cliMissOutput, /\[miss\] No matching symbols found/);
+  } finally {
+    cleanRepo(repo);
+  }
+});
+
+test("CLI: --help output documents --outline, --path, and all supported languages from canonical source", () => {
+  const cli = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../src/cli.js");
+  const helpOutput = execFileSync(process.execPath, [cli, "--help"], {
+    cwd: process.cwd(),
+    windowsHide: true,
+    encoding: "utf8",
+  });
+
+  assert.match(helpOutput, /--outline/);
+  assert.match(helpOutput, /--path/);
+  for (const lang of SUPPORTED_STRUCTURED_LANGUAGES) {
+    assert.match(helpOutput, new RegExp(lang, "i"), `CLI --help must document supported language: ${lang}`);
+  }
+});
+
+test("Snapshot tests: full symbol-list snapshots for Markdown, JSON, TOML, YAML, and Bash fixtures", async () => {
+  const repo = setupRepo();
+  try {
+    // 1. Markdown full snapshot
+    const md = await discoverSymbolsInFile(repo, "doc.md");
+    assert.deepEqual(
+      md.symbols.map((s) => ({ name: s.name, kind: s.kind, line: s.start.line })),
+      [
+        { name: "# Documentation Title", kind: "section", line: 1 },
+        { name: "## Section One", kind: "section", line: 3 },
+        { name: "Table (L5-L7)", kind: "table", line: 5 },
+        { name: "## Section Two", kind: "section", line: 8 },
+        { name: "### Subsection A", kind: "section", line: 10 },
+      ]
+    );
+
+    // 2. JSON full snapshot
+    const json = await discoverSymbolsInFile(repo, "config.json");
+    assert.deepEqual(
+      json.symbols.map((s) => ({ name: s.name, kind: s.kind, line: s.start.line })),
+      [
+        { name: "name", kind: "config_block", line: 2 },
+        { name: "version", kind: "config_block", line: 3 },
+        { name: "scripts", kind: "config_block", line: 4 },
+        { name: "scripts.build", kind: "config_block", line: 5 },
+        { name: "scripts.test", kind: "config_block", line: 6 },
+      ]
+    );
+
+    // 3. TOML full snapshot
+    const toml = await discoverSymbolsInFile(repo, "settings.toml");
+    assert.deepEqual(
+      toml.symbols.map((s) => ({ name: s.name, kind: s.kind, line: s.start.line })),
+      [
+        { name: "[server]", kind: "config_block", line: 1 },
+        { name: "server.port", kind: "config_block", line: 2 },
+        { name: "server.host", kind: "config_block", line: 3 },
+        { name: "[[plugins]]", kind: "config_block", line: 5 },
+        { name: "plugins.name", kind: "config_block", line: 6 },
+      ]
+    );
+
+    // 4. YAML full snapshot
+    const yaml = await discoverSymbolsInFile(repo, "pipeline.yml");
+    assert.deepEqual(
+      yaml.symbols.map((s) => ({ name: s.name, kind: s.kind, line: s.start.line })),
+      [
+        { name: "name", kind: "config_block", line: 1 },
+        { name: "on", kind: "config_block", line: 2 },
+        { name: "jobs", kind: "config_block", line: 3 },
+        { name: "jobs.build", kind: "config_block", line: 4 },
+        { name: "jobs.build.runs-on", kind: "config_block", line: 5 },
+      ]
+    );
+
+    // 5. Bash full snapshot
+    const bash = await discoverSymbolsInFile(repo, "script.sh");
+    assert.deepEqual(
+      bash.symbols.map((s) => ({ name: s.name, kind: s.kind, line: s.start.line })),
+      [
+        { name: "APP_ENV", kind: "variable", line: 2 },
+        { name: "run_build", kind: "function", line: 3 },
+      ]
+    );
+  } finally {
+    cleanRepo(repo);
+  }
+});
+
 
 
 

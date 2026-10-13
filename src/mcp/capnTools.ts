@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { repoRoot } from "../paths.js";
 import { ask, publish, unchart, bust, prune, listEntries, context, initCapn } from "../capnAdapter.js";
-import { discoverSymbolsInFile } from "../astExtractor.js";
+import { discoverSymbolsInFile, SUPPORTED_STRUCTURED_LANGUAGES } from "../astExtractor.js";
 import { tryDaemonPing, getDaemonAddress } from "../daemon.js";
 import { renderPlainText } from "../renderPlainText.js";
 import { AdapterProfile, DiscoveryTier, WaymarkError } from "../types.js";
@@ -55,6 +55,15 @@ export const waymarkAskTool: McpToolHandler = {
         path: {
           type: "string",
           description: "Repository-relative or absolute source file path. If provided alone or without question, performs file AST extraction.",
+        },
+        outline: {
+          type: "boolean",
+          description: "Optional. When true, returns the structural AST coordinate map outline of the specified path. Note: with outline: true, 'question' or 'query' filters symbol names rather than initiating semantic QA.",
+        },
+        language: {
+          type: "string",
+          enum: [...SUPPORTED_STRUCTURED_LANGUAGES],
+          description: "Optional source language override when file extension is not sufficient.",
         },
         subsystem: {
           type: "string",
@@ -172,9 +181,28 @@ export const waymarkAskTool: McpToolHandler = {
         return jsonResult(res);
       }
 
-      // 3. File AST outline discovery (Mode A) when path provided without question
-      if (rawPath && !question && !facet) {
-        const res = await discoverSymbolsInFile(root, rawPath, undefined, rawQuery || undefined);
+      // 3. File AST outline discovery (Mode A) when path provided without question or outline requested
+      if ((rawPath && !question && !facet) || (args.outline === true && rawPath)) {
+        const queryToUse = rawQuery || question || undefined;
+        const requestedLang = typeof args.language === "string" ? args.language.trim() : undefined;
+        if (args.outline === true) {
+          const res = await ask(root, resolveProfile(args), resolveExecutable(args), queryToUse ?? "", {
+            path: rawPath,
+            outline: true,
+            language: requestedLang,
+          });
+          if (plain) {
+            return {
+              content: [{ type: "text", text: renderPlainText(res) }],
+              isError: false,
+            };
+          }
+          if (res.status === "hit") {
+            return jsonResult(res.result);
+          }
+          return jsonResult(res);
+        }
+        const res = await discoverSymbolsInFile(root, rawPath, requestedLang, queryToUse);
         if (plain) {
           return {
             content: [{ type: "text", text: renderPlainText(res) }],
@@ -595,7 +623,7 @@ export const discoverSymbolsTool: McpToolHandler = {
         },
         language: {
           type: "string",
-          enum: ["typescript", "python"],
+          enum: [...SUPPORTED_STRUCTURED_LANGUAGES],
           description: "Optional source language when the file extension is not sufficient.",
         },
         plain: {

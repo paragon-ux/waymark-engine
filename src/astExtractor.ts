@@ -1,13 +1,27 @@
 import Parser from "web-tree-sitter";
+import MarkdownIt from "markdown-it";
 import path from "node:path";
 import fs from "node:fs";
 import { createRequire } from "node:module";
+import { fileURLToPath } from "node:url";
 import { normalizeRelativePath, readFileText } from "./paths.js";
 import { WaymarkError } from "./types.js";
 
 const require = createRequire(import.meta.url);
 
-export type StructuredLanguage = "typescript" | "javascript" | "python";
+export const SUPPORTED_STRUCTURED_LANGUAGES = [
+  "typescript",
+  "javascript",
+  "python",
+  "json",
+  "toml",
+  "yaml",
+  "bash",
+  "markdown",
+] as const;
+
+export type StructuredLanguage = (typeof SUPPORTED_STRUCTURED_LANGUAGES)[number];
+
 export type StructuredSymbolKind =
   | "class"
   | "function"
@@ -19,7 +33,11 @@ export type StructuredSymbolKind =
   | "trait"
   | "import"
   | "constant"
-  | "variable";
+  | "variable"
+  | "section"
+  | "heading"
+  | "config_block"
+  | "table";
 
 export interface StructuredSymbolPosition {
   line: number;
@@ -59,19 +77,57 @@ const STRUCTURED_EXTENSIONS: Record<string, StructuredLanguage> = {
   ".mjs": "javascript",
   ".cjs": "javascript",
   ".py": "python",
+  ".json": "json",
+  ".toml": "toml",
+  ".yaml": "yaml",
+  ".yml": "yaml",
+  ".sh": "bash",
+  ".bash": "bash",
+  ".zsh": "bash",
+  ".md": "markdown",
+  ".markdown": "markdown",
+  ".mdx": "markdown",
 };
 
-const STRUCTURED_LANGUAGE_WASM: Record<StructuredLanguage, string> = {
+const STRUCTURED_LANGUAGE_WASM: Partial<Record<StructuredLanguage, string>> = {
   typescript: "tree-sitter-typescript.wasm",
   javascript: "tree-sitter-javascript.wasm",
   python: "tree-sitter-python.wasm",
+  json: "tree-sitter-json.wasm",
+  toml: "tree-sitter-toml.wasm",
+  yaml: "tree-sitter-yaml.wasm",
+  bash: "tree-sitter-bash.wasm",
 };
 
 let parserInitialized = false;
+let patchVerified = false;
 const loadedLanguages: Map<string, unknown> = new Map();
+
+function ensureWebTreeSitterPatched(): void {
+  if (patchVerified) return;
+  patchVerified = true;
+  try {
+    const treeSitterPath = require.resolve("web-tree-sitter");
+    const code = fs.readFileSync(treeSitterPath, "utf8");
+    if (!code.includes('wasmImports["_Znwm"]')) {
+      try {
+        const patchScript = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../scripts/patch-web-tree-sitter.cjs");
+        if (fs.existsSync(patchScript)) {
+          const { patchWebTreeSitter } = require(patchScript);
+          patchWebTreeSitter(false);
+        }
+      } catch {
+        console.warn("[waymark] Warning: web-tree-sitter C++ scanner patch was not applied (e.g. pnpm or --ignore-scripts). Run 'node scripts/patch-web-tree-sitter.cjs' to enable YAML parsing.");
+      }
+    }
+  } catch {
+    // ignore
+  }
+}
 
 export async function initParser(): Promise<void> {
   if (!parserInitialized) {
+    ensureWebTreeSitterPatched();
     await Parser.init();
     parserInitialized = true;
   }
@@ -84,11 +140,41 @@ function resolveWasmPath(wasmName: string): string | null {
     const candidate = path.join(outDir, wasmName);
     if (fs.existsSync(candidate)) return candidate;
   } catch {
-    // fallback to relative search
+    // fallback to directory walk
   }
+
+  // Walk up ancestor directories to handle hoisted or virtual node_modules
+  try {
+    let currentDir = path.dirname(fileURLToPath(import.meta.url));
+    for (let i = 0; i < 6; i++) {
+      const candidate = path.join(currentDir, "node_modules", "tree-sitter-wasms", "out", wasmName);
+      if (fs.existsSync(candidate)) return candidate;
+      const parent = path.dirname(currentDir);
+      if (parent === currentDir) break;
+      currentDir = parent;
+    }
+  } catch {
+    // ignore
+  }
+
   const fallback = path.resolve(process.cwd(), "node_modules", "tree-sitter-wasms", "out", wasmName);
   if (fs.existsSync(fallback)) return fallback;
   return null;
+}
+
+function decodePropertyKey(text: string): string {
+  const trimmed = text.trim();
+  if (trimmed.startsWith('"') && trimmed.endsWith('"')) {
+    try {
+      return JSON.parse(trimmed);
+    } catch {
+      return trimmed.slice(1, -1);
+    }
+  }
+  if (trimmed.startsWith("'") && trimmed.endsWith("'")) {
+    return trimmed.slice(1, -1).replace(/''/g, "'");
+  }
+  return trimmed;
 }
 
 async function getLanguageForWasm(wasmName: string): Promise<unknown | null> {
@@ -110,7 +196,7 @@ function resolveStructuredLanguage(storedPath: string, requestedLanguage?: strin
   const detected = STRUCTURED_EXTENSIONS[path.extname(storedPath).toLowerCase()];
   const requested = requestedLanguage?.trim().toLowerCase() as StructuredLanguage | undefined;
 
-  if (requested && !STRUCTURED_LANGUAGE_WASM[requested]) {
+  if (requested && !STRUCTURED_LANGUAGE_WASM[requested] && requested !== "markdown") {
     throw new WaymarkError("UNSUPPORTED_LANGUAGE", `Unsupported discovery language: ${requested}`, 2);
   }
   if (requested && detected && requested !== detected) {
@@ -171,6 +257,266 @@ function collectStructuredSymbols(rootNode: any): StructuredSymbol[] {
   }
 
   walk(rootNode);
+  return symbols;
+}
+
+let mdParserInstance: InstanceType<typeof MarkdownIt> | null = null;
+function getMarkdownParser(): InstanceType<typeof MarkdownIt> {
+  if (!mdParserInstance) {
+    mdParserInstance = new MarkdownIt({ html: true });
+  }
+  return mdParserInstance;
+}
+
+function extractMarkdownSymbols(text: string): StructuredSymbol[] {
+  const md = getMarkdownParser();
+  const tokens = md.parse(text, {});
+  const totalLines = text.split(/\r?\n/).length;
+
+  interface HeadingItem {
+    title: string;
+    level: number;
+    startLine: number;
+  }
+
+  const headings: HeadingItem[] = [];
+
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i];
+    if (token?.type === "heading_open") {
+      const level = parseInt(token.tag.slice(1), 10) || 1;
+      const inlineToken = tokens[i + 1];
+      const title = inlineToken?.content?.trim() || "";
+      const startLine = token.map ? token.map[0] + 1 : 1;
+      headings.push({ title, level, startLine });
+    }
+  }
+
+  const endLines: number[] = new Array(headings.length).fill(totalLines);
+  const stack: { level: number; index: number }[] = [];
+  for (let i = 0; i < headings.length; i++) {
+    const current = headings[i]!;
+    while (stack.length > 0 && stack[stack.length - 1]!.level >= current.level) {
+      const top = stack.pop()!;
+      endLines[top.index] = Math.max(headings[top.index]!.startLine, current.startLine - 1);
+    }
+    stack.push({ level: current.level, index: i });
+  }
+
+  const symbols: StructuredSymbol[] = [];
+
+  for (let i = 0; i < headings.length; i++) {
+    const current = headings[i]!;
+    symbols.push({
+      name: `${"#".repeat(current.level)} ${current.title}`,
+      kind: "section",
+      start: { line: current.startLine, column: 0 },
+      end: { line: endLines[i] ?? totalLines, column: 0 },
+    });
+  }
+
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i];
+    if (token?.type === "table_open" && token.map) {
+      const startLine = token.map[0] + 1;
+      const endLine = token.map[1];
+      symbols.push({
+        name: `Table (L${startLine}-L${endLine})`,
+        kind: "table",
+        start: { line: startLine, column: 0 },
+        end: { line: endLine, column: 0 },
+      });
+    }
+  }
+
+  symbols.sort((a, b) => a.start.line - b.start.line);
+  return symbols;
+}
+
+function collectJsonSymbols(rootNode: any): StructuredSymbol[] {
+  const symbols: StructuredSymbol[] = [];
+  const rootObj = rootNode.namedChildren.find((c: any) => c.type === "object");
+  if (rootObj) {
+    for (const pair of rootObj.namedChildren) {
+      if (pair.type === "pair") {
+        const keyNode = pair.childForFieldName("key");
+        const valNode = pair.childForFieldName("value");
+        const rawKey = keyNode ? decodePropertyKey(keyNode.text) : "<unknown>";
+        symbols.push({
+          name: rawKey,
+          kind: "config_block",
+          start: { line: pair.startPosition.row + 1, column: pair.startPosition.column },
+          end: { line: pair.endPosition.row + 1, column: pair.endPosition.column },
+        });
+        if (valNode?.type === "object" && valNode.namedChildren.length <= 50) {
+          for (const subPair of valNode.namedChildren) {
+            if (subPair.type === "pair") {
+              const subKeyNode = subPair.childForFieldName("key");
+              const subKey = subKeyNode ? decodePropertyKey(subKeyNode.text) : "<unknown>";
+              symbols.push({
+                name: `${rawKey}.${subKey}`,
+                kind: "config_block",
+                start: { line: subPair.startPosition.row + 1, column: subPair.startPosition.column },
+                end: { line: subPair.endPosition.row + 1, column: subPair.endPosition.column },
+              });
+            }
+          }
+        }
+      }
+    }
+  }
+  return symbols;
+}
+
+function extractTomlPairs(containerNode: any, tableName: string, symbols: StructuredSymbol[]): void {
+  for (const inner of containerNode.namedChildren) {
+    if (inner.type === "pair") {
+      const keyNode = inner.childForFieldName("key") || inner.namedChildren[0];
+      if (keyNode) {
+        const keyName = decodePropertyKey(keyNode.text);
+        symbols.push({
+          name: `${tableName}.${keyName}`,
+          kind: "config_block",
+          start: { line: inner.startPosition.row + 1, column: inner.startPosition.column },
+          end: { line: inner.endPosition.row + 1, column: inner.endPosition.column },
+        });
+      }
+    }
+  }
+}
+
+function collectTomlSymbols(rootNode: any): StructuredSymbol[] {
+  const symbols: StructuredSymbol[] = [];
+  for (const child of rootNode.namedChildren) {
+    if (child.type === "table") {
+      const headerNode = child.namedChildren.find((n: any) => n.type.includes("header") || n.type === "bare_key" || n.type === "dotted_key" || n.type === "quoted_key");
+      const rawHeader = headerNode ? headerNode.text.replace(/^\[|\]$/g, "").trim() : child.namedChildren[0]?.text || "table";
+      const tableName = decodePropertyKey(rawHeader);
+      symbols.push({
+        name: `[${tableName}]`,
+        kind: "config_block",
+        start: { line: child.startPosition.row + 1, column: child.startPosition.column },
+        end: { line: child.endPosition.row + 1, column: child.endPosition.column },
+      });
+      extractTomlPairs(child, tableName, symbols);
+    } else if (child.type === "table_array_element") {
+      const headerNode = child.namedChildren[0];
+      const rawHeader = headerNode ? headerNode.text.replace(/^\[\[|\]\]$/g, "").trim() : "array";
+      const name = decodePropertyKey(rawHeader);
+      symbols.push({
+        name: `[[${name}]]`,
+        kind: "config_block",
+        start: { line: child.startPosition.row + 1, column: child.startPosition.column },
+        end: { line: child.endPosition.row + 1, column: child.endPosition.column },
+      });
+      extractTomlPairs(child, name, symbols);
+    } else if (child.type === "pair") {
+      const keyNode = child.childForFieldName("key") || child.namedChildren[0];
+      symbols.push({
+        name: keyNode ? decodePropertyKey(keyNode.text) : "<key>",
+        kind: "constant",
+        start: { line: child.startPosition.row + 1, column: child.startPosition.column },
+        end: { line: child.endPosition.row + 1, column: child.endPosition.column },
+      });
+    }
+  }
+  return symbols;
+}
+
+function collectYamlMappingPairs(mappingNode: any, prefix: string, symbols: StructuredSymbol[], depth = 0): void {
+  if (depth > 5) return;
+  for (const child of mappingNode.namedChildren) {
+    if (child.type === "block_mapping_pair" || child.type === "flow_pair") {
+      const keyNode = child.childForFieldName("key");
+      const valNode = child.childForFieldName("value");
+      const rawKey = keyNode ? decodePropertyKey(keyNode.text) : "<key>";
+      const fullName = prefix ? `${prefix}.${rawKey}` : rawKey;
+      symbols.push({
+        name: fullName,
+        kind: "config_block",
+        start: { line: child.startPosition.row + 1, column: child.startPosition.column },
+        end: { line: child.endPosition.row + 1, column: child.endPosition.column },
+      });
+      if (valNode && depth < 2) {
+        const subMapping = valNode.type === "block_mapping" || valNode.type === "flow_mapping"
+          ? valNode
+          : valNode.namedChildren?.find((n: any) => n.type === "block_mapping" || n.type === "flow_mapping");
+        if (subMapping && subMapping.namedChildren.length <= 50) {
+          collectYamlMappingPairs(subMapping, fullName, symbols, depth + 1);
+        }
+      }
+    }
+  }
+}
+
+function collectYamlSequenceItems(seqNode: any, prefix: string, symbols: StructuredSymbol[]): void {
+  let idx = 0;
+  for (const item of seqNode.namedChildren) {
+    if (item.type === "block_sequence_item" || item.type === "flow_sequence_item") {
+      const itemPrefix = prefix ? `${prefix}[${idx}]` : `[${idx}]`;
+      symbols.push({
+        name: itemPrefix,
+        kind: "config_block",
+        start: { line: item.startPosition.row + 1, column: item.startPosition.column },
+        end: { line: item.endPosition.row + 1, column: item.endPosition.column },
+      });
+      const innerBlock = item.namedChildren.find((n: any) => n.type === "block_node" || n.type === "block_mapping" || n.type === "flow_mapping");
+      const innerMapping = innerBlock?.type === "block_mapping" || innerBlock?.type === "flow_mapping"
+        ? innerBlock
+        : innerBlock?.namedChildren?.find((n: any) => n.type === "block_mapping" || n.type === "flow_mapping");
+      if (innerMapping) {
+        collectYamlMappingPairs(innerMapping, itemPrefix, symbols, 1);
+      }
+      idx++;
+    }
+  }
+}
+
+function collectYamlSymbols(rootNode: any): StructuredSymbol[] {
+  const symbols: StructuredSymbol[] = [];
+  const documents = rootNode.namedChildren.filter((n: any) => n.type === "document");
+  const isMultiDoc = documents.length > 1;
+
+  documents.forEach((docNode: any, docIdx: number) => {
+    const docPrefix = isMultiDoc ? `doc[${docIdx}]` : "";
+    const blockNode = docNode.namedChildren.find((n: any) => n.type === "block_node" || n.type === "flow_node");
+    const rootShape = blockNode ? blockNode.namedChildren[0] || blockNode : docNode.namedChildren[0];
+    if (!rootShape) return;
+
+    if (rootShape.type === "block_mapping" || rootShape.type === "flow_mapping") {
+      collectYamlMappingPairs(rootShape, docPrefix, symbols);
+    } else if (rootShape.type === "block_sequence" || rootShape.type === "flow_sequence") {
+      collectYamlSequenceItems(rootShape, docPrefix, symbols);
+    }
+  });
+
+  return symbols;
+}
+
+function collectBashSymbols(rootNode: any): StructuredSymbol[] {
+  const symbols: StructuredSymbol[] = [];
+  for (const child of rootNode.namedChildren) {
+    if (child.type === "function_definition") {
+      const nameNode = child.childForFieldName("name");
+      symbols.push({
+        name: nameNode ? nameNode.text : "<function>",
+        kind: "function",
+        start: { line: child.startPosition.row + 1, column: child.startPosition.column },
+        end: { line: child.endPosition.row + 1, column: child.endPosition.column },
+      });
+    } else if (child.type === "variable_assignment") {
+      const nameNode = child.childForFieldName("name");
+      const name = nameNode ? nameNode.text : child.text.split("=")[0];
+      if (name && name.trim()) {
+        symbols.push({
+          name: name.trim(),
+          kind: "variable",
+          start: { line: child.startPosition.row + 1, column: child.startPosition.column },
+          end: { line: child.endPosition.row + 1, column: child.endPosition.column },
+        });
+      }
+    }
+  }
   return symbols;
 }
 
@@ -308,35 +654,65 @@ export async function discoverSymbolsInFile(
       throw err;
     }
 
-    let grammar: unknown | null;
-    try {
-      grammar = await getLanguageForWasm(STRUCTURED_LANGUAGE_WASM[language]);
-    } catch {
-      throw new WaymarkError("PARSER_UNAVAILABLE", `Waymark grammar is unavailable for ${language}`, 2);
-    }
-    if (!grammar) throw new WaymarkError("PARSER_UNAVAILABLE", `Waymark grammar is unavailable for ${language}`, 2);
-
-    const parser = new Parser();
-    let tree: any;
-    try {
-      parser.setLanguage(grammar as any);
-      tree = parser.parse(file.text);
-      if (tree.rootNode.hasError) {
-        throw new WaymarkError("PARSE_ERROR", `Malformed ${language} source: ${storedPath}`, 2);
-      }
+    if (language === "markdown") {
       result = {
         ok: true,
         path: storedPath,
         language,
-        symbols: collectStructuredSymbols(tree.rootNode),
+        symbols: extractMarkdownSymbols(file.text),
       };
-    } catch (err) {
-      if (err instanceof WaymarkError) throw err;
-      throw new WaymarkError("PARSE_ERROR", `Unable to parse ${language} source: ${storedPath}`, 2);
-    } finally {
-      if (tree) {
+    } else {
+      let grammar: unknown | null;
+      try {
+        const wasmName = STRUCTURED_LANGUAGE_WASM[language];
+        if (!wasmName) throw new Error(`No wasm configured for ${language}`);
+        grammar = await getLanguageForWasm(wasmName);
+      } catch (err) {
+        const detail = err instanceof Error ? err.message : String(err);
+        throw new WaymarkError("PARSER_UNAVAILABLE", `Waymark grammar is unavailable for ${language}: ${detail}`, 2);
+      }
+      if (!grammar) throw new WaymarkError("PARSER_UNAVAILABLE", `Waymark grammar is unavailable for ${language}`, 2);
+
+      const parser = new Parser();
+      let tree: any;
+      try {
+        parser.setLanguage(grammar as any);
+        tree = parser.parse(file.text);
+        if (tree.rootNode.hasError) {
+          throw new WaymarkError("PARSE_ERROR", `Malformed ${language} source: ${storedPath}`, 2);
+        }
+        let symbols: StructuredSymbol[];
+        if (language === "json") {
+          symbols = collectJsonSymbols(tree.rootNode);
+        } else if (language === "toml") {
+          symbols = collectTomlSymbols(tree.rootNode);
+        } else if (language === "yaml") {
+          symbols = collectYamlSymbols(tree.rootNode);
+        } else if (language === "bash") {
+          symbols = collectBashSymbols(tree.rootNode);
+        } else {
+          symbols = collectStructuredSymbols(tree.rootNode);
+        }
+        result = {
+          ok: true,
+          path: storedPath,
+          language,
+          symbols,
+        };
+      } catch (err) {
+        if (err instanceof WaymarkError) throw err;
+        const detail = err instanceof Error ? err.message : String(err);
+        throw new WaymarkError("PARSE_ERROR", `Unable to parse ${language} source: ${storedPath}: ${detail}`, 2);
+      } finally {
+        if (tree) {
+          try {
+            tree.delete();
+          } catch {
+            // ignore
+          }
+        }
         try {
-          tree.delete();
+          parser.delete();
         } catch {
           // ignore
         }

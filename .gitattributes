@@ -1,6 +1,2 @@
-* text=auto
-*.md text eol=lf
-*.json text eol=lf
-*.ts text eol=lf
-*.mjs text eol=lf
-*.cmd text eol=crlf
+* text=auto eol=lf
+*.wasm binary

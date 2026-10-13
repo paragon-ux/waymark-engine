@@ -352,6 +352,31 @@ export async function ask(
       retryable: false,
     };
   }
+  if (options?.outline && options?.path) {
+    const { discoverSymbolsInFile } = await import("./astExtractor.js");
+    const symbolsResult = await discoverSymbolsInFile(root, options.path, options.language, question || undefined);
+    if (symbolsResult.symbols.length === 0) {
+      return {
+        waymark: 1,
+        kind: "ask",
+        status: "miss",
+        provider: "codedb",
+        missCode: "SYMBOL_NOT_FOUND",
+        reason: question
+          ? `No matching symbols found in ${options.path} for "${question}".`
+          : `No outlineable symbols found in ${options.path}.`,
+        matches: [],
+      } as AskResult;
+    }
+    return {
+      waymark: 1,
+      kind: "ask",
+      status: "hit",
+      provider: "codedb",
+      confidence: "exact",
+      result: symbolsResult,
+    } as AskResult;
+  }
   if (profile === "none") return { waymark: 1, kind: "ask", provider: "none", status: "miss", matches: [] };
 
   return await routeDiscovery({

@@ -245,6 +245,8 @@ export interface AskOptions {
   dev?: boolean;
   facet?: string;
   path?: string;
+  outline?: boolean;
+  language?: string;
   subsystem?: string;
 }
 

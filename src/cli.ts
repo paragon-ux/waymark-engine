@@ -8,6 +8,7 @@ import { AdapterProfile, WaymarkError, DiscoveryTier } from "./types.js";
 import { repoRoot } from "./paths.js";
 import { ask as capnAsk, initCapn, publish, unchart, bust, prune, listEntries, context } from "./capnAdapter.js";
 import { renderPlainText } from "./renderPlainText.js";
+import { SUPPORTED_STRUCTURED_LANGUAGES } from "./astExtractor.js";
 
 interface ParsedArgs {
   positionals: string[];
@@ -22,7 +23,7 @@ const VALUE_FLAGS = new Set([
 ]);
 
 const BOOLEAN_FLAGS = new Set([
-  "timing", "b", "json", "j", "plain", "p", "auto-resolve", "if-exists", "force", "daemon", "d", "exclude-tests", "dev", "dry-run", "live", "all",
+  "timing", "b", "json", "j", "plain", "p", "auto-resolve", "if-exists", "force", "daemon", "d", "exclude-tests", "dev", "dry-run", "live", "all", "outline",
 ]);
 
 function parseArgs(args: readonly string[]): ParsedArgs {
@@ -164,7 +165,7 @@ async function runCommand(command: string, rawArgs: readonly string[]): Promise<
       value: [
         "Waymark discovery engine (symbolic + semantic routing)",
         "  init [--capn-executable <path>] (initialize lexical Capn store)",
-        "  discover-symbols [--path <file>] [--query <q>] [--language typescript|python] [--plain]",
+        `  discover-symbols [--path <file>] [--query <q>] [--language <${SUPPORTED_STRUCTURED_LANGUAGES.join("|")}>] [--plain]`,
         "  symbols <symbol1> [symbol2 ...] [--plain] (batch query symbol definitions across repo)",
         "  ask <question> [--symbols a,b] [--facet <f>] [--tier auto|ast|path|fuzzy|capn] [--timing] [--json|--plain]",
         "  memory <chart|bootstrap|bust|prune|list|unchart|init|status|context|heal|export> [options]",
@@ -181,6 +182,10 @@ async function runCommand(command: string, rawArgs: readonly string[]): Promise<
         "  waymark-bust | waymark-prune | waymark-list | waymark-context | waymark-mcp | waymark-daemon | waymark-repl",
         "",
         "Options for ask:",
+        "  --outline            Emit structural AST coordinate outline of --path (question/query filters symbol names)",
+        "  --path <file>        Repository-relative or absolute file path to inspect or outline",
+        `  --language <lang>    Source language override (${SUPPORTED_STRUCTURED_LANGUAGES.join("|")})`,
+        "  --query <q>          Filter outline symbols by substring (with --outline, bypasses semantic QA)",
         "  --facet <facet>      Scope query to architectural facet (lifecycle|data_state|boundaries|invariants|failure|status)",
         "  -t, --tier <tier>    Force discovery tier: auto | ast | path | fuzzy | capn",
         "  -b, --timing         Collect high-resolution tier execution timings",
@@ -284,10 +289,27 @@ async function runCommand(command: string, rawArgs: readonly string[]): Promise<
     }
     const rawPath = parsed.values.get("path");
     const rawFacet = parsed.values.get("facet");
+    const isOutline = parsed.values.has("outline");
     const posText = parsed.positionals.join(" ").trim();
-    if (rawPath && !posText && !rawFacet) {
+    if ((rawPath && !posText && !rawFacet) || (isOutline && rawPath)) {
+      const queryToUse = parsed.values.get("query") ?? parsed.values.get("symbol") ?? (posText || undefined);
+      const requestedLang = parsed.values.get("language");
+      if (isOutline) {
+        const { ask } = await import("./capnAdapter.js");
+        const profile = (parsed.values.get("profile") as AdapterProfile) ?? "none";
+        const executable = parsed.values.get("capn-executable") ?? "";
+        const res = await ask(root, profile, executable, queryToUse ?? "", { path: rawPath, outline: true, language: requestedLang });
+        if (parsed.values.has("plain")) {
+          const { renderPlainText } = await import("./renderPlainText.js");
+          return { value: renderPlainText(res) };
+        }
+        if (res.status === "hit") {
+          return { value: res.result };
+        }
+        return { value: res };
+      }
       const { discoverSymbolsInFile } = await import("./astExtractor.js");
-      return { value: await discoverSymbolsInFile(root, rawPath, parsed.values.get("language"), parsed.values.get("query")) };
+      return { value: await discoverSymbolsInFile(root, rawPath, requestedLang, queryToUse) };
     }
     if (rawFacet === "status") {
       const { getSemanticMapStatus } = await import("./semanticMap.js");

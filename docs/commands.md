@@ -31,7 +31,7 @@ waymark ask [options] [question]
 | :--- | :--- | :--- | :--- |
 | `--outline` | | `boolean` | Emit structural AST coordinate outline of `--path` (question/query filters symbol names). |
 | `--path <file>` | | `string` | Extract structured AST outline or inspect a single file. |
-| `--language <lang>` | | `string` | Source language override (`typescript`, `javascript`, `python`, `json`, `toml`, `yaml`, `bash`, `markdown`). |
+| `--language <lang>` | | `string` | Source language override (`typescript`, `javascript`, `python`, `json`, `toml`, `yaml`, `bash`, `markdown`, `csharp`, `scala`, `lua`, `zig`, `elixir`, `solidity`, `rust`, `go`, `java`, `c`, `cpp`, `ruby`, `swift`, `kotlin`, `php`). |
 | `--query <q>` | | `string` | Filter outline symbols by substring (with `--outline`, bypasses semantic QA). |
 | `--depth <n>` | | `1..5` | Bounded BFS call graph traversal depth (default: 1). |
 | `--direction <d>` | | `string` | Traversal directionality (`callers`, `callees`, or `both`, default: `both`). |

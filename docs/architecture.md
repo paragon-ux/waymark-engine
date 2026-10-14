@@ -104,9 +104,23 @@ Waymark Engine combines three extraction layers with explicit fail-closed bounda
 | **TOML** | `.toml` | Native Tree-Sitter (`tree-sitter-toml.wasm`) | Table headers, array-of-tables (`[[plugins]]`), and nested key-value coordinates |
 | **YAML** | `.yaml`, `.yml` | Native Tree-Sitter (`tree-sitter-yaml.wasm`) | Multi-document streams, flow mappings, and scalar structures with recursion guard |
 | **Bash** | `.sh`, `.bash`, `.zsh` | Native Tree-Sitter (`tree-sitter-bash.wasm`) | Shell functions, exported routines, and script blocks |
-| **Rust, Go, Java, Ruby, Swift, Kotlin** | `.rs`, `.go`, `.java`, `.rb`, `.swift`, `.kt` | Polyglot `codedb outline` Fallback (`@paragon-ux/codedb-core`) | Line-level structural outlines (functions, methods, structs, classes, traits, interfaces) |
-| **C / C++ / PHP** | `.c`, `.h`, `.cpp`, `.hpp`, `.cc`, `.cxx`, `.php` | Polyglot `codedb outline` Fallback (`@paragon-ux/codedb-core`) | Partial structural outline (class/struct/qualified definitions) |
-| **Unsupported & Dialect Extensions** | `.cs`, `.scala`, `.sql`, `.jsonc`, `.json5`, etc. | Fail-Closed Guard | Rejects single-file AST extraction with `UNSUPPORTED_LANGUAGE` (never returns a silent `0 symbols` false positive) |
+| **C#** | `.cs` | Native Tree-Sitter (`tree-sitter-c_sharp.wasm`) | Exact line + column spans for classes, interfaces, structs, enums, records, methods, constructors, and properties |
+| **Scala** | `.scala` | Native Tree-Sitter (`tree-sitter-scala.wasm`) | Exact line + column spans for classes, objects, traits, and methods |
+| **Lua** | `.lua` | Native Tree-Sitter (`tree-sitter-lua.wasm`) | Exact line + column spans for global, local, and table/method functions |
+| **Zig** | `.zig` | Native Tree-Sitter (`tree-sitter-zig.wasm`) | Exact line + column spans for functions, methods, structs, and enums |
+| **Elixir** | `.ex`, `.exs` | Native Tree-Sitter (`tree-sitter-elixir.wasm`) | Exact line + column spans for modules (`defmodule`), functions (`def`/`defp`), and protocols |
+| **Solidity** | `.sol` | Native Tree-Sitter (`tree-sitter-solidity.wasm`) | Exact line + column spans for contracts, interfaces, structs, enums, constructors, functions, and modifiers |
+| **Rust** | `.rs` | Native Tree-Sitter (`tree-sitter-rust.wasm`) | Exact line + column spans for structs, enums, traits, impl methods, functions, and type aliases |
+| **Go** | `.go` | Native Tree-Sitter (`tree-sitter-go.wasm`) | Exact line + column spans for structs, interfaces, methods, functions, and types |
+| **Java** | `.java` | Native Tree-Sitter (`tree-sitter-java.wasm`) | Exact line + column spans for classes, interfaces, records, enums, constructors, and methods |
+| **C** | `.c`, `.h` | Native Tree-Sitter (`tree-sitter-c.wasm`) | Exact line + column spans for functions, structs, and enums |
+| **C++** | `.cpp`, `.hpp`, `.cc`, `.cxx` | Native Tree-Sitter (`tree-sitter-cpp.wasm`) | Exact line + column spans for classes, structs, enums, methods, constructors, and functions |
+| **Ruby** | `.rb` | Native Tree-Sitter (`tree-sitter-ruby.wasm`) | Exact line + column spans for classes, modules, instance methods, and singleton methods |
+| **Swift** | `.swift` | Native Tree-Sitter (`tree-sitter-swift.wasm`) | Exact line + column spans for classes, structs, enums, protocols, constructors, methods, and functions |
+| **Kotlin** | `.kt` | Native Tree-Sitter (`tree-sitter-kotlin.wasm`) | Exact line + column spans for classes, interfaces, objects, enums, methods, and properties |
+| **PHP** | `.php` | Native Tree-Sitter (`tree-sitter-php.wasm`) | Exact line + column spans for classes, interfaces, traits, enums, methods, and functions |
+| **Polyglot Fallback Guard** | `.rs`, `.go`, `.java`, `.c`, `.cpp`, `.rb`, `.swift`, `.kt`, `.php` | Polyglot `codedb outline` Fallback (`@paragon-ux/codedb-core`) | Fail-safe secondary outline if WASM grammar is unavailable in host environment |
+| **Unsupported & Dialect Extensions** | `.dart`, `.sql`, `.jsonc`, `.json5`, etc. | Fail-Closed Guard | Rejects single-file AST extraction with `UNSUPPORTED_LANGUAGE` (never returns a silent `0 symbols` false positive; Dart ABI 15 fail-closed) |
 
 ### 2. Repo-Wide Call Graph & Symbol Search (`waymark ask "<symbol>"` / `waymark_ask(query | symbols)`)
 - **Indexed by `@paragon-ux/codedb-core`**: `.ts`, `.tsx`, `.js`, `.jsx`, `.py`, `.rs`, `.go`, `.java`, `.rb`, `.swift`, `.kt` (plus partial `.c`/`.cpp`/`.php`).

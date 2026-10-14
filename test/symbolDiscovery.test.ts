@@ -50,7 +50,8 @@ function setupRepo(): string {
     "export function loadModuleSpec(): ModuleSpec { return { name: 'core' }; }",
     "",
   ].join("\n"), "utf8");
-  fs.writeFileSync(path.join(repo, "unsupported.cs"), "class Program { static void Main() {} }\n", "utf8");
+  fs.writeFileSync(path.join(repo, "sample.cs"), "class Program { static void Main() {} }\n", "utf8");
+  fs.writeFileSync(path.join(repo, "unsupported.dart"), "void main() {}\n", "utf8");
   fs.writeFileSync(path.join(repo, "broken.ts"), "export function broken( {\n", "utf8");
   fs.writeFileSync(path.join(repo, "notes.txt"), "not source\n", "utf8");
   fs.writeFileSync(path.join(repo, "large.ts"), Buffer.alloc(1024 * 1024 + 1, "x"));
@@ -176,9 +177,16 @@ test("Waymark structured discovery supports Python, JavaScript (.mjs/.js), TypeS
       "loadModuleSpec:function",
     ]);
 
+    const cs = await discoverSymbolsInFile(repo, "sample.cs");
+    assert.equal(cs.language, "csharp");
+    assert.deepEqual(cs.symbols.map((s) => `${s.name}:${s.kind}`), [
+      "Program:class",
+      "Main:method",
+    ]);
+
     await assert.rejects(() => discoverSymbolsInFile(repo, "../sample.ts"), (error: any) => error.code === "INVALID_PATH");
     await assert.rejects(() => discoverSymbolsInFile(repo, "notes.txt"), (error: any) => error.code === "UNSUPPORTED_LANGUAGE");
-    await assert.rejects(() => discoverSymbolsInFile(repo, "unsupported.cs"), (error: any) => error.code === "UNSUPPORTED_LANGUAGE");
+    await assert.rejects(() => discoverSymbolsInFile(repo, "unsupported.dart"), (error: any) => error.code === "UNSUPPORTED_LANGUAGE");
     await assert.rejects(() => discoverSymbolsInFile(repo, "broken.ts"), (error: any) => error.code === "PARSE_ERROR");
     await assert.rejects(() => discoverSymbolsInFile(repo, "large.ts"), (error: any) => error.code === "FILE_TOO_LARGE");
   } finally {
@@ -742,6 +750,361 @@ test("Snapshot tests: full symbol-list snapshots for Markdown, JSON, TOML, YAML,
         { name: "run_build", kind: "function", line: 3 },
       ]
     );
+  } finally {
+    cleanRepo(repo);
+  }
+});
+
+test("Waymark structured discovery: Tier 1 in-process AST extraction across 15 modern & upgraded languages (Groups 1 and 2)", async () => {
+  const repo = setupRepo();
+  try {
+    // Group 1: Modern Languages
+    // 1. C# (.cs)
+    fs.writeFileSync(path.join(repo, "Service.cs"), [
+      "namespace Enterprise {",
+      "  interface IService {}",
+      "  class Service : IService {",
+      "    public int Count { get; set; }",
+      "    public Service() {}",
+      "    public void Execute() {}",
+      "  }",
+      "  record Data(int X);",
+      "  enum Status { Ready }",
+      "  struct Point { int X; }",
+      "}",
+    ].join("\n"), "utf8");
+    const cs = await discoverSymbolsInFile(repo, "Service.cs");
+    assert.equal(cs.language, "csharp");
+    assert.deepEqual(cs.symbols.map((s) => `${s.name}:${s.kind}`), [
+      "IService:interface",
+      "Service:class",
+      "Count:property",
+      "Service:constructor",
+      "Execute:method",
+      "Data:record",
+      "Status:enum",
+      "Point:struct",
+    ]);
+
+    // 2. Scala (.scala)
+    fs.writeFileSync(path.join(repo, "sample.scala"), [
+      "trait BaseTrait {}",
+      "class BaseClass {",
+      "  def run(): Unit = {}",
+      "}",
+      "object BaseObj {",
+      "  def main(): Unit = {}",
+      "}",
+    ].join("\n"), "utf8");
+    const scala = await discoverSymbolsInFile(repo, "sample.scala");
+    assert.equal(scala.language, "scala");
+    assert.deepEqual(scala.symbols.map((s) => `${s.name}:${s.kind}`), [
+      "BaseTrait:trait",
+      "BaseClass:class",
+      "run:method",
+      "BaseObj:class",
+      "main:method",
+    ]);
+
+    // 3. Lua (.lua)
+    fs.writeFileSync(path.join(repo, "sample.lua"), [
+      "function topFunc() end",
+      "local function localFunc() end",
+      "function MyObj:method() end",
+    ].join("\n"), "utf8");
+    const lua = await discoverSymbolsInFile(repo, "sample.lua");
+    assert.equal(lua.language, "lua");
+    assert.deepEqual(lua.symbols.map((s) => `${s.name}:${s.kind}`), [
+      "topFunc:function",
+      "localFunc:function",
+      "MyObj:method:function",
+    ]);
+
+    // 4. Zig (.zig)
+    fs.writeFileSync(path.join(repo, "sample.zig"), [
+      "pub const Point = struct {",
+      "  fn init() Point { return .{}; }",
+      "};",
+      "pub const Color = enum { Red, Blue };",
+      "pub fn calculate() void {}",
+    ].join("\n"), "utf8");
+    const zig = await discoverSymbolsInFile(repo, "sample.zig");
+    assert.equal(zig.language, "zig");
+    assert.deepEqual(zig.symbols.map((s) => `${s.name}:${s.kind}`), [
+      "Point:struct",
+      "init:method",
+      "Color:enum",
+      "calculate:function",
+    ]);
+
+    // 5. Elixir (.ex & .exs)
+    fs.writeFileSync(path.join(repo, "sample.ex"), [
+      "defmodule Greeter do",
+      "  def hello(name) do",
+      "    name",
+      "  end",
+      "  defp secret() do",
+      "    42",
+      "  end",
+      "end",
+    ].join("\n"), "utf8");
+    const elixir = await discoverSymbolsInFile(repo, "sample.ex");
+    assert.equal(elixir.language, "elixir");
+    assert.deepEqual(elixir.symbols.map((s) => `${s.name}:${s.kind}`), [
+      "Greeter:class",
+      "hello:method",
+      "secret:method",
+    ]);
+
+    fs.writeFileSync(path.join(repo, "script.exs"), [
+      "defmodule ScriptTask do",
+      "  def run() do",
+      "    :ok",
+      "  end",
+      "end",
+    ].join("\n"), "utf8");
+    const elixirScript = await discoverSymbolsInFile(repo, "script.exs");
+    assert.equal(elixirScript.language, "elixir");
+    assert.deepEqual(elixirScript.symbols.map((s) => `${s.name}:${s.kind}`), [
+      "ScriptTask:class",
+      "run:method",
+    ]);
+
+    // 6. Solidity (.sol)
+    fs.writeFileSync(path.join(repo, "sample.sol"), [
+      "contract Token {",
+      "  constructor() {}",
+      "  function transfer() public {}",
+      "  modifier checkOwner() {}",
+      "}",
+      "interface IERC20 {}",
+      "struct User { address a; }",
+      "enum State { Active }",
+    ].join("\n"), "utf8");
+    const solidity = await discoverSymbolsInFile(repo, "sample.sol");
+    assert.equal(solidity.language, "solidity");
+    assert.deepEqual(solidity.symbols.map((s) => `${s.name}:${s.kind}`), [
+      "Token:contract",
+      "constructor:constructor",
+      "transfer:method",
+      "checkOwner:method",
+      "IERC20:interface",
+      "User:struct",
+      "State:enum",
+    ]);
+
+    // Group 2: Upgraded Languages (In-Process WASM)
+    // 7. Rust (.rs)
+    fs.writeFileSync(path.join(repo, "sample.rs"), [
+      "struct Vector;",
+      "enum Color { Red }",
+      "trait Drawable { fn draw(&self); }",
+      "impl Drawable for Vector {",
+      "  fn draw(&self) {}",
+      "}",
+      "fn compute() {}",
+      "type Distance = f64;",
+    ].join("\n"), "utf8");
+    const rust = await discoverSymbolsInFile(repo, "sample.rs");
+    assert.equal(rust.language, "rust");
+    assert.deepEqual(rust.symbols.map((s) => `${s.name}:${s.kind}`), [
+      "Vector:struct",
+      "Color:enum",
+      "Drawable:trait",
+      "draw:method",
+      "compute:function",
+      "Distance:type",
+    ]);
+
+    // 8. Go (.go)
+    fs.writeFileSync(path.join(repo, "sample.go"), [
+      "package main",
+      "type Handler interface {",
+      "  Handle()",
+      "}",
+      "type Config struct {",
+      "  Port int",
+      "}",
+      "type Status int",
+      "func (c *Config) Validate() bool { return true }",
+      "func NewConfig() *Config { return &Config{} }",
+    ].join("\n"), "utf8");
+    const go = await discoverSymbolsInFile(repo, "sample.go");
+    assert.equal(go.language, "go");
+    assert.deepEqual(go.symbols.map((s) => `${s.name}:${s.kind}`), [
+      "Handler:interface",
+      "Config:struct",
+      "Status:type",
+      "Validate:method",
+      "NewConfig:function",
+    ]);
+
+    // 9. Java (.java)
+    fs.writeFileSync(path.join(repo, "sample.java"), [
+      "public class Manager {",
+      "  public Manager() {}",
+      "  public void process() {}",
+      "}",
+      "public interface Worker {}",
+      "public record Job(String name) {}",
+      "public enum Level { HIGH }",
+    ].join("\n"), "utf8");
+    const java = await discoverSymbolsInFile(repo, "sample.java");
+    assert.equal(java.language, "java");
+    assert.deepEqual(java.symbols.map((s) => `${s.name}:${s.kind}`), [
+      "Manager:class",
+      "Manager:constructor",
+      "process:method",
+      "Worker:interface",
+      "Job:record",
+      "Level:enum",
+    ]);
+
+    // 10. C (.c, .h)
+    fs.writeFileSync(path.join(repo, "sample.c"), [
+      "struct Node { int val; };",
+      "enum Day { MON };",
+      "int add(int a, int b) { return a + b; }",
+    ].join("\n"), "utf8");
+    const c = await discoverSymbolsInFile(repo, "sample.c");
+    assert.equal(c.language, "c");
+    assert.deepEqual(c.symbols.map((s) => `${s.name}:${s.kind}`), [
+      "Node:struct",
+      "Day:enum",
+      "add:function",
+    ]);
+
+    fs.writeFileSync(path.join(repo, "header.h"), [
+      "struct Header { int id; };",
+      "int get_id(void) { return 0; }",
+    ].join("\n"), "utf8");
+    const h = await discoverSymbolsInFile(repo, "header.h");
+    assert.equal(h.language, "c");
+    assert.deepEqual(h.symbols.map((s) => `${s.name}:${s.kind}`), [
+      "Header:struct",
+      "get_id:function",
+    ]);
+
+    // 11. C++ (.cpp, .hpp, .cc, .cxx)
+    fs.writeFileSync(path.join(repo, "sample.cpp"), [
+      "class Engine {",
+      "public:",
+      "  Engine();",
+      "  void start();",
+      "};",
+      "struct Option {};",
+      "enum Mode { AUTO };",
+      "void run() {}",
+    ].join("\n"), "utf8");
+    const cpp = await discoverSymbolsInFile(repo, "sample.cpp");
+    assert.equal(cpp.language, "cpp");
+    assert.deepEqual(cpp.symbols.map((s) => `${s.name}:${s.kind}`), [
+      "Engine:class",
+      "Engine:constructor",
+      "start:method",
+      "Option:struct",
+      "Mode:enum",
+      "run:function",
+    ]);
+
+    fs.writeFileSync(path.join(repo, "engine.hpp"), "class Loader { public: Loader(); };\n", "utf8");
+    const hpp = await discoverSymbolsInFile(repo, "engine.hpp");
+    assert.equal(hpp.language, "cpp");
+    assert.equal(hpp.symbols[0]?.name, "Loader");
+
+    fs.writeFileSync(path.join(repo, "worker.cc"), "void execute() {}\n", "utf8");
+    const cc = await discoverSymbolsInFile(repo, "worker.cc");
+    assert.equal(cc.language, "cpp");
+    assert.equal(cc.symbols[0]?.name, "execute");
+
+    fs.writeFileSync(path.join(repo, "driver.cxx"), "void drive() {}\n", "utf8");
+    const cxx = await discoverSymbolsInFile(repo, "driver.cxx");
+    assert.equal(cxx.language, "cpp");
+    assert.equal(cxx.symbols[0]?.name, "drive");
+
+    // 12. Ruby (.rb)
+    fs.writeFileSync(path.join(repo, "sample.rb"), [
+      "module Tooling",
+      "  class Parser",
+      "    def parse",
+      "    end",
+      "    def self.version",
+      "    end",
+      "  end",
+      "end",
+    ].join("\n"), "utf8");
+    const ruby = await discoverSymbolsInFile(repo, "sample.rb");
+    assert.equal(ruby.language, "ruby");
+    assert.deepEqual(ruby.symbols.map((s) => `${s.name}:${s.kind}`), [
+      "Tooling:class",
+      "Parser:class",
+      "parse:method",
+      "version:method",
+    ]);
+
+    // 13. Swift (.swift)
+    fs.writeFileSync(path.join(repo, "sample.swift"), [
+      "class App {",
+      "  init() {}",
+      "  func launch() {}",
+      "}",
+      "protocol Launchable {}",
+      "struct Point {}",
+      "enum Direction {}",
+    ].join("\n"), "utf8");
+    const swift = await discoverSymbolsInFile(repo, "sample.swift");
+    assert.equal(swift.language, "swift");
+    assert.deepEqual(swift.symbols.map((s) => `${s.name}:${s.kind}`), [
+      "App:class",
+      "init:constructor",
+      "launch:method",
+      "Launchable:interface",
+      "Point:struct",
+      "Direction:enum",
+    ]);
+
+    // 14. Kotlin (.kt)
+    fs.writeFileSync(path.join(repo, "sample.kt"), [
+      "class Controller {",
+      "  val name = \"demo\"",
+      "  fun handle() {}",
+      "}",
+      "interface Service {}",
+      "object Singleton {}",
+      "enum class State { IDLE }",
+    ].join("\n"), "utf8");
+    const kotlin = await discoverSymbolsInFile(repo, "sample.kt");
+    assert.equal(kotlin.language, "kotlin");
+    assert.deepEqual(kotlin.symbols.map((s) => `${s.name}:${s.kind}`), [
+      "Controller:class",
+      "name:property",
+      "handle:method",
+      "Service:interface",
+      "Singleton:class",
+      "State:enum",
+    ]);
+
+    // 15. PHP (.php)
+    fs.writeFileSync(path.join(repo, "sample.php"), [
+      "<?php",
+      "class Server {",
+      "  public function serve() {}",
+      "}",
+      "interface Handler {}",
+      "trait Logging {}",
+      "enum Stage { case DEV; }",
+      "function start() {}",
+    ].join("\n"), "utf8");
+    const php = await discoverSymbolsInFile(repo, "sample.php");
+    assert.equal(php.language, "php");
+    assert.deepEqual(php.symbols.map((s) => `${s.name}:${s.kind}`), [
+      "Server:class",
+      "serve:method",
+      "Handler:interface",
+      "Logging:trait",
+      "Stage:enum",
+      "start:function",
+    ]);
   } finally {
     cleanRepo(repo);
   }

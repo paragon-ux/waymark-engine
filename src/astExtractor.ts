@@ -18,6 +18,21 @@ export const SUPPORTED_STRUCTURED_LANGUAGES = [
   "yaml",
   "bash",
   "markdown",
+  "csharp",
+  "scala",
+  "lua",
+  "zig",
+  "elixir",
+  "solidity",
+  "rust",
+  "go",
+  "java",
+  "c",
+  "cpp",
+  "ruby",
+  "swift",
+  "kotlin",
+  "php",
 ] as const;
 
 export type StructuredLanguage = (typeof SUPPORTED_STRUCTURED_LANGUAGES)[number];
@@ -31,6 +46,10 @@ export type StructuredSymbolKind =
   | "struct"
   | "enum"
   | "trait"
+  | "record"
+  | "constructor"
+  | "property"
+  | "contract"
   | "import"
   | "constant"
   | "variable"
@@ -87,6 +106,26 @@ const STRUCTURED_EXTENSIONS: Record<string, StructuredLanguage> = {
   ".md": "markdown",
   ".markdown": "markdown",
   ".mdx": "markdown",
+  ".cs": "csharp",
+  ".scala": "scala",
+  ".lua": "lua",
+  ".zig": "zig",
+  ".ex": "elixir",
+  ".exs": "elixir",
+  ".sol": "solidity",
+  ".rs": "rust",
+  ".go": "go",
+  ".java": "java",
+  ".c": "c",
+  ".h": "c",
+  ".cpp": "cpp",
+  ".hpp": "cpp",
+  ".cc": "cpp",
+  ".cxx": "cpp",
+  ".rb": "ruby",
+  ".swift": "swift",
+  ".kt": "kotlin",
+  ".php": "php",
 };
 
 const STRUCTURED_LANGUAGE_WASM: Partial<Record<StructuredLanguage, string>> = {
@@ -97,6 +136,21 @@ const STRUCTURED_LANGUAGE_WASM: Partial<Record<StructuredLanguage, string>> = {
   toml: "tree-sitter-toml.wasm",
   yaml: "tree-sitter-yaml.wasm",
   bash: "tree-sitter-bash.wasm",
+  csharp: "tree-sitter-c_sharp.wasm",
+  scala: "tree-sitter-scala.wasm",
+  lua: "tree-sitter-lua.wasm",
+  zig: "tree-sitter-zig.wasm",
+  elixir: "tree-sitter-elixir.wasm",
+  solidity: "tree-sitter-solidity.wasm",
+  rust: "tree-sitter-rust.wasm",
+  go: "tree-sitter-go.wasm",
+  java: "tree-sitter-java.wasm",
+  c: "tree-sitter-c.wasm",
+  cpp: "tree-sitter-cpp.wasm",
+  ruby: "tree-sitter-ruby.wasm",
+  swift: "tree-sitter-swift.wasm",
+  kotlin: "tree-sitter-kotlin.wasm",
+  php: "tree-sitter-php.wasm",
 };
 
 let parserInitialized = false;
@@ -221,30 +275,200 @@ function structuredSymbol(
   };
 }
 
-function collectStructuredSymbols(rootNode: any): StructuredSymbol[] {
+function extractDeclaratorName(node: any): string | null {
+  if (!node) return null;
+  if (node.type === "identifier" || node.type === "field_identifier" || node.type === "type_identifier") {
+    return node.text;
+  }
+  const nameNode = node.childForFieldName("declarator") || node.childForFieldName("name");
+  if (nameNode) return extractDeclaratorName(nameNode);
+  for (const c of node.namedChildren) {
+    const res = extractDeclaratorName(c);
+    if (res) return res;
+  }
+  return null;
+}
+
+function extractElixirCall(node: any): { kind: StructuredSymbolKind; name: string } | null {
+  const target = node.childForFieldName("target") || node.namedChildren[0];
+  if (!target || target.type !== "identifier") return null;
+  const verb = target.text;
+  const args = node.childForFieldName("arguments") || node.namedChildren[1];
+  if (!args) return null;
+
+  if (verb === "defmodule") {
+    const alias = args.namedChildren.find((c: any) => c.type === "alias" || c.type === "identifier");
+    return alias ? { kind: "class", name: alias.text } : null;
+  }
+  if (verb === "defprotocol") {
+    const alias = args.namedChildren.find((c: any) => c.type === "alias" || c.type === "identifier");
+    return alias ? { kind: "interface", name: alias.text } : null;
+  }
+  if (verb === "defimpl") {
+    const alias = args.namedChildren.find((c: any) => c.type === "alias" || c.type === "identifier");
+    return alias ? { kind: "class", name: alias.text } : null;
+  }
+  if (["def", "defp", "defmacro", "defmacrop"].includes(verb)) {
+    const inner = args.namedChildren[0];
+    if (inner?.type === "call") {
+      const fnName = inner.namedChildren[0]?.text;
+      return fnName ? { kind: "function", name: fnName } : null;
+    }
+    if (inner?.type === "identifier") {
+      return { kind: "function", name: inner.text };
+    }
+  }
+  return null;
+}
+
+function collectStructuredSymbols(rootNode: any, language?: StructuredLanguage): StructuredSymbol[] {
   const symbols: StructuredSymbol[] = [];
 
   function walk(node: any, currentClass: string | null = null): void {
     let nextClass = currentClass;
 
-    if (node.type === "class_declaration" || node.type === "class_definition") {
-      const name = node.childForFieldName("name")?.text;
+    if (node.type === "call" && (language === "elixir" || !language)) {
+      const elx = extractElixirCall(node);
+      if (elx) {
+        const kind: StructuredSymbolKind = currentClass && elx.kind === "function" ? "method" : elx.kind;
+        symbols.push(structuredSymbol(node, kind, elx.name));
+        if (["class", "interface"].includes(elx.kind)) nextClass = elx.name;
+      }
+    } else if (node.type === "class_declaration" || node.type === "class_definition" || node.type === "class") {
+      let kind: StructuredSymbolKind = "class";
+      const nodeText: string = node.text || "";
+      if (language === "swift" || (!language && (nodeText.startsWith("struct ") || nodeText.startsWith("enum ")))) {
+        if (nodeText.startsWith("struct")) kind = "struct";
+        else if (nodeText.startsWith("enum")) kind = "enum";
+      } else if (language === "kotlin" || (!language && (nodeText.includes("interface ") || nodeText.includes("enum ")))) {
+        if (nodeText.includes("interface")) kind = "interface";
+        else if (nodeText.includes("enum")) kind = "enum";
+      }
+      const name = node.childForFieldName("name")?.text ||
+        node.namedChildren.find((c: any) => c.type === "type_identifier" || c.type === "identifier")?.text;
+      if (name) {
+        symbols.push(structuredSymbol(node, kind, name));
+        nextClass = name;
+      }
+    } else if (node.type === "interface_declaration" || node.type === "protocol_declaration") {
+      const name = node.childForFieldName("name")?.text ||
+        node.namedChildren.find((c: any) => c.type === "type_identifier" || c.type === "identifier")?.text;
+      if (name) {
+        symbols.push(structuredSymbol(node, "interface", name));
+        nextClass = name;
+      }
+    } else if (node.type === "trait_definition" || node.type === "trait_item" || node.type === "trait_declaration") {
+      const name = node.childForFieldName("name")?.text ||
+        node.namedChildren.find((c: any) => c.type === "type_identifier" || c.type === "identifier")?.text;
+      if (name) {
+        symbols.push(structuredSymbol(node, "trait", name));
+        nextClass = name;
+      }
+    } else if (node.type === "impl_item") {
+      const typeNode = node.childForFieldName("type");
+      if (typeNode) nextClass = typeNode.text;
+    } else if (node.type === "struct_declaration" || node.type === "struct_item" || node.type === "struct_specifier") {
+      const name = node.childForFieldName("name")?.text ||
+        node.namedChildren.find((c: any) => c.type === "type_identifier" || c.type === "identifier")?.text;
+      if (name) {
+        symbols.push(structuredSymbol(node, "struct", name));
+        nextClass = name;
+      }
+    } else if (node.type === "class_specifier") {
+      const name = node.childForFieldName("name")?.text ||
+        node.namedChildren.find((c: any) => c.type === "type_identifier" || c.type === "identifier")?.text;
       if (name) {
         symbols.push(structuredSymbol(node, "class", name));
         nextClass = name;
       }
-    } else if (node.type === "interface_declaration") {
+    } else if (node.type === "enum_declaration" || node.type === "enum_item" || node.type === "enum_specifier") {
+      const name = node.childForFieldName("name")?.text ||
+        node.namedChildren.find((c: any) => c.type === "type_identifier" || c.type === "identifier")?.text;
+      if (name) symbols.push(structuredSymbol(node, "enum", name));
+    } else if (node.type === "record_declaration") {
+      const name = node.childForFieldName("name")?.text ||
+        node.namedChildren.find((c: any) => c.type === "type_identifier" || c.type === "identifier")?.text;
+      if (name) {
+        symbols.push(structuredSymbol(node, "record", name));
+        nextClass = name;
+      }
+    } else if (node.type === "contract_declaration") {
       const name = node.childForFieldName("name")?.text;
-      if (name) symbols.push(structuredSymbol(node, "interface", name));
-    } else if (node.type === "type_alias_declaration") {
+      if (name) {
+        symbols.push(structuredSymbol(node, "contract", name));
+        nextClass = name;
+      }
+    } else if (node.type === "module" || node.type === "object_declaration" || node.type === "object_definition") {
+      const name = node.childForFieldName("name")?.text ||
+        node.namedChildren.find((c: any) => c.type === "type_identifier" || c.type === "identifier")?.text;
+      if (name) {
+        symbols.push(structuredSymbol(node, "class", name));
+        nextClass = name;
+      }
+    } else if (node.type === "constructor_declaration") {
+      const name = node.childForFieldName("name")?.text || currentClass || "constructor";
+      symbols.push(structuredSymbol(node, "constructor", name));
+    } else if (node.type === "init_declaration") {
+      symbols.push(structuredSymbol(node, "constructor", "init"));
+    } else if (node.type === "constructor_definition") {
+      symbols.push(structuredSymbol(node, "constructor", "constructor"));
+    } else if (node.type === "property_declaration") {
+      const name = node.childForFieldName("name")?.text ||
+        node.namedChildren.find((c: any) => c.type === "identifier" || c.type === "variable_declaration")?.text;
+      if (name) symbols.push(structuredSymbol(node, "property", name));
+    } else if (node.type === "variable_declaration" && (language === "zig" || !language)) {
+      const id = node.namedChildren.find((c: any) => c.type === "identifier");
+      const hasStruct = node.namedChildren.some((c: any) => c.type === "struct_declaration");
+      const hasEnum = node.namedChildren.some((c: any) => c.type === "enum_declaration");
+      if (id && hasStruct) {
+        symbols.push(structuredSymbol(node, "struct", id.text));
+        nextClass = id.text;
+      } else if (id && hasEnum) {
+        symbols.push(structuredSymbol(node, "enum", id.text));
+      }
+    } else if (node.type === "type_spec" && (language === "go" || !language)) {
+      const name = node.childForFieldName("name")?.text;
+      const typeChild = node.childForFieldName("type");
+      if (name && typeChild) {
+        let kind: StructuredSymbolKind = "type";
+        if (typeChild.type === "struct_type") kind = "struct";
+        else if (typeChild.type === "interface_type") kind = "interface";
+        symbols.push(structuredSymbol(node, kind, name));
+        if (kind === "struct" || kind === "interface") nextClass = name;
+      }
+    } else if (node.type === "type_item" || node.type === "type_alias_declaration") {
       const name = node.childForFieldName("name")?.text;
       if (name) symbols.push(structuredSymbol(node, "type", name));
-    } else if (node.type === "method_definition") {
+    } else if (
+      node.type === "method_declaration" ||
+      node.type === "method_definition" ||
+      node.type === "method" ||
+      node.type === "singleton_method"
+    ) {
+      const name = node.childForFieldName("name")?.text || extractDeclaratorName(node);
+      if (name) symbols.push(structuredSymbol(node, "method", name));
+    } else if (
+      node.type === "function_declaration" ||
+      node.type === "function_definition" ||
+      node.type === "function_item" ||
+      node.type === "local_function_definition_statement" ||
+      node.type === "function_definition_statement"
+    ) {
+      const name = node.childForFieldName("name")?.text ||
+        extractDeclaratorName(node) ||
+        node.namedChildren.find((c: any) => c.type === "simple_identifier" || c.type === "identifier")?.text;
+      if (name) symbols.push(structuredSymbol(node, currentClass ? "method" : "function", name));
+    } else if (node.type === "modifier_definition") {
       const name = node.childForFieldName("name")?.text;
       if (name) symbols.push(structuredSymbol(node, "method", name));
-    } else if (node.type === "function_declaration" || node.type === "function_definition") {
-      const name = node.childForFieldName("name")?.text;
-      if (name) symbols.push(structuredSymbol(node, currentClass ? "method" : "function", name));
+    } else if (node.type === "declaration" || node.type === "field_declaration") {
+      const fnDecl = node.namedChildren.find((c: any) => c.type === "function_declarator");
+      if (fnDecl) {
+        const name = extractDeclaratorName(fnDecl);
+        if (name) {
+          symbols.push(structuredSymbol(node, name === currentClass ? "constructor" : "method", name));
+        }
+      }
     } else if (node.type === "variable_declarator") {
       const name = node.childForFieldName("name")?.text;
       const value = node.childForFieldName("value");
@@ -668,10 +892,36 @@ export async function discoverSymbolsInFile(
         if (!wasmName) throw new Error(`No wasm configured for ${language}`);
         grammar = await getLanguageForWasm(wasmName);
       } catch (err) {
+        if (CODEDB_OUTLINE_EXTENSIONS.has(ext)) {
+          try {
+            result = await discoverSymbolsViaCodedbOutline(repoRoot, storedPath);
+            if (query && query.trim()) {
+              const q = query.trim().toLowerCase();
+              result.symbols = result.symbols.filter((s) => s.name.toLowerCase().includes(q));
+            }
+            return result;
+          } catch {
+            // fall through to PARSER_UNAVAILABLE
+          }
+        }
         const detail = err instanceof Error ? err.message : String(err);
         throw new WaymarkError("PARSER_UNAVAILABLE", `Waymark grammar is unavailable for ${language}: ${detail}`, 2);
       }
-      if (!grammar) throw new WaymarkError("PARSER_UNAVAILABLE", `Waymark grammar is unavailable for ${language}`, 2);
+      if (!grammar) {
+        if (CODEDB_OUTLINE_EXTENSIONS.has(ext)) {
+          try {
+            result = await discoverSymbolsViaCodedbOutline(repoRoot, storedPath);
+            if (query && query.trim()) {
+              const q = query.trim().toLowerCase();
+              result.symbols = result.symbols.filter((s) => s.name.toLowerCase().includes(q));
+            }
+            return result;
+          } catch {
+            // fall through
+          }
+        }
+        throw new WaymarkError("PARSER_UNAVAILABLE", `Waymark grammar is unavailable for ${language}`, 2);
+      }
 
       const parser = new Parser();
       let tree: any;
@@ -691,7 +941,7 @@ export async function discoverSymbolsInFile(
         } else if (language === "bash") {
           symbols = collectBashSymbols(tree.rootNode);
         } else {
-          symbols = collectStructuredSymbols(tree.rootNode);
+          symbols = collectStructuredSymbols(tree.rootNode, language);
         }
         result = {
           ok: true,

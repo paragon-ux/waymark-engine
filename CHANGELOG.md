@@ -4,6 +4,38 @@ All notable changes to `waymark-engine` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.0] - 2026-10-14
+
+### Changed (Breaking Architecture Milestone)
+- **Tier 1 Native In-Process WASM AST Engine (`src/astExtractor.ts`)**: Migrated single-file structural outline extraction from child-process `codedb outline` execution to sub-millisecond in-process `web-tree-sitter` WASM evaluation across 9 major compiled and scripting languages:
+  - Rust (`.rs` via `tree-sitter-rust.wasm`)
+  - Go (`.go` via `tree-sitter-go.wasm`)
+  - Java (`.java` via `tree-sitter-java.wasm`)
+  - C (`.c`, `.h` via `tree-sitter-c.wasm`)
+  - C++ (`.cpp`, `.hpp`, `.cc`, `.cxx` via `tree-sitter-cpp.wasm`)
+  - Ruby (`.rb` via `tree-sitter-ruby.wasm`)
+  - Swift (`.swift` via `tree-sitter-swift.wasm`)
+  - Kotlin (`.kt` via `tree-sitter-kotlin.wasm`)
+  - PHP (`.php` via `tree-sitter-php.wasm`)
+  - *Zero Child Process Overhead*: Single-file outline queries (`waymark ask --outline --path <file>`) now resolve in `<3ms` with exact line and column coordinates, reserving `codedb` child-process invocation strictly for multi-hop repo-wide call graphs (`waymark ask "<symbol>"`).
+  - *Fail-Safe Secondary Guard*: Retains `codedb outline` fallback if an in-process WASM grammar fails to load in a host environment.
+
+### Added
+- **Modern Systems & Enterprise Language Support (`src/astExtractor.ts`)**:
+  - **C# (`.cs` via `tree-sitter-c_sharp.wasm`)**: Full .NET single-file intelligence extracting classes, records, interfaces, structs, enums, methods, constructors, properties, and namespaces.
+  - **Scala (`.scala` via `tree-sitter-scala.wasm`)**: Extracts classes, objects, traits, and method definitions.
+  - **Lua (`.lua` via `tree-sitter-lua.wasm`)**: Extracts global, local, and table/method functions.
+  - **Zig (`.zig` via `tree-sitter-zig.wasm`)**: Extracts functions (`fn_proto`/`fn_decl`), structs, and enums.
+  - **Elixir (`.ex`, `.exs` via `tree-sitter-elixir.wasm`)**: Extracts modules (`defmodule`/`defimpl`), functions (`def`/`defp`), and protocols (`defprotocol`).
+  - **Solidity (`.sol` via `tree-sitter-solidity.wasm`)**: Extracts smart contracts, interfaces, libraries, constructors, functions, and modifiers.
+- **Expanded Symbol Taxonomy (`src/types.ts`, `src/astExtractor.ts`)**: Added `record`, `constructor`, `property`, and `contract` symbol kinds to represent rich object-oriented and smart-contract constructs accurately.
+
+### Fixed
+- **Dart ABI Incompatibility Isolation (`src/astExtractor.ts`, `test/symbolDiscovery.test.ts`)**: Detected and cleanly isolated Tree-sitter ABI version 15 incompatibility in `tree-sitter-dart.wasm` with `web-tree-sitter@0.24.0` (range 13–14), failing closed with typed `UNSUPPORTED_LANGUAGE` rather than crashing the Node runtime.
+- **Windows CRLF Test Fixture Warning Suppression (`test/symbolDiscovery.test.ts`)**: Enforced `git config core.safecrlf false` across all temporary test repositories, eliminating noisy line-ending conversion notices on Windows.
+
+---
+
 ## [2.8.0] - 2026-10-14
 
 ### Added

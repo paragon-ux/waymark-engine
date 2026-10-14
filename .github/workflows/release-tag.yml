@@ -59,7 +59,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: 22.x
           registry-url: https://registry.npmjs.org
           cache: npm
       - name: Ensure npm supports trusted publishing
@@ -97,6 +97,7 @@ jobs:
           fi
       - name: Publish to npm (OIDC Trusted Publishing or NPM_TOKEN)
         env:
+          NODE_OPTIONS: "--max-old-space-size=4096"
           NPM_TOKEN_SECRET: ${{ secrets.NPM_TOKEN }}
           CODEDB_ALLOW_TEMP: "1"
         run: |

@@ -4,6 +4,25 @@ All notable changes to `waymark-engine` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.8.0] - 2026-10-14
+
+### Added
+- **Grammar Dispatcher Router (`src/astExtractor.ts`)**: Implemented a multi-engine structured discovery router with dedicated parsers for programming languages, structured configuration formats, shell scripts, and documentation files.
+- **Native Markdown AST Extraction via `markdown-it` (`src/astExtractor.ts`)**: Supported `.md`, `.markdown`, and `.mdx` single-file outline extraction using a monotonic AST stack to emit section, heading, and code block coordinates without raw whole-file reads.
+- **Expanded Tree-Sitter WASM Grammars (`src/astExtractor.ts`)**: Added bundled WASM support for JSON (`.json`), TOML (`.toml`), YAML (`.yaml`, `.yml`), and Bash (`.sh`, `.bash`, `.zsh`).
+  - *JSON*: Decodes escaped and unicode property keys for high-fidelity coordinate matching.
+  - *TOML*: Emits distinct coordinates for array-of-tables (`[[plugins]]`) headers and nested key-value pairs.
+  - *YAML*: Handles multi-document streams, flow mappings, and scalar structures with a recursion depth guard.
+  - *Bash*: Extracts functions, exported routines, and command structures.
+- **Cross-Platform Tree-Sitter WASM Patch (`scripts/patch-web-tree-sitter.cjs`)**: Added automated postinstall patching for `web-tree-sitter` allocator symbols (`_Znwm`, `_ZdlPv`) to resolve cross-platform C++ scanner panics on Windows, macOS, and Linux.
+- **Outline Query Mode in CLI & MCP (`src/cli.ts`, `src/mcp/capnTools.ts`, `src/renderPlainText.ts`)**: Added `--outline` flag and MCP tool support to discover file structural outlines with optional query filtering and plain-text table rendering.
+
+### Fixed
+- **Dialect Boundary Clean Rejection (`src/astExtractor.ts`, `test/symbolDiscovery.test.ts`)**: Rejects unsupported dialects such as JSONC and JSON5 cleanly with typed `UNSUPPORTED_LANGUAGE` rather than misinterpreting comment syntax or failing silently.
+- **Parser Cleanup & Resource Safety (`src/astExtractor.ts`)**: Explicitly invokes `parser.delete()` and tree deletion in discovery error/completion lifecycle to prevent WASM heap leaks during long-running agent workflows.
+
+---
+
 ## [2.7.3] - 2026-10-12
 
 ### Added

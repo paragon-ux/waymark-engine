@@ -92,16 +92,21 @@ Rather than returning an empty response or hallucinating an answer, the Discover
 
 Waymark Engine combines three extraction layers with explicit fail-closed boundaries so agents always know what is structurally indexed vs. lexically recalled:
 
-### 1. Single-File AST Outlines (`waymark ask --path <file>` / `waymark_ask(path)`)
+### 1. Single-File AST Outlines (`waymark ask --outline --path <file>` / `waymark_ask(path, outline=true)`)
 
-| Language | File Extensions | Extraction Engine | Fidelity & Symbols Extracted |
+| Language / Format | File Extensions | Extraction Engine | Fidelity & Symbols Extracted |
 | :--- | :--- | :--- | :--- |
 | **TypeScript** | `.ts`, `.tsx`, `.mts`, `.cts` | Native Tree-Sitter (`tree-sitter-typescript.wasm`) | Exact line + column spans for classes, methods, functions (including arrow functions), interfaces, and type aliases |
 | **JavaScript** | `.js`, `.jsx`, `.mjs`, `.cjs` | Native Tree-Sitter (`tree-sitter-javascript.wasm`) | Exact line + column spans for classes, methods, functions, and arrow/function expressions (filters out local variable noise) |
 | **Python** | `.py` | Native Tree-Sitter (`tree-sitter-python.wasm`) | Exact line + column spans for classes, methods, and functions |
+| **Markdown** | `.md`, `.markdown`, `.mdx` | Native `markdown-it` AST Parser | Monotonic stack extraction of sections, headings, and code blocks with exact line/column spans |
+| **JSON** | `.json` | Native Tree-Sitter (`tree-sitter-json.wasm`) | Object properties, escaped & unicode key decoding, exact value coordinates |
+| **TOML** | `.toml` | Native Tree-Sitter (`tree-sitter-toml.wasm`) | Table headers, array-of-tables (`[[plugins]]`), and nested key-value coordinates |
+| **YAML** | `.yaml`, `.yml` | Native Tree-Sitter (`tree-sitter-yaml.wasm`) | Multi-document streams, flow mappings, and scalar structures with recursion guard |
+| **Bash** | `.sh`, `.bash`, `.zsh` | Native Tree-Sitter (`tree-sitter-bash.wasm`) | Shell functions, exported routines, and script blocks |
 | **Rust, Go, Java, Ruby, Swift, Kotlin** | `.rs`, `.go`, `.java`, `.rb`, `.swift`, `.kt` | Polyglot `codedb outline` Fallback (`@paragon-ux/codedb-core`) | Line-level structural outlines (functions, methods, structs, classes, traits, interfaces) |
 | **C / C++ / PHP** | `.c`, `.h`, `.cpp`, `.hpp`, `.cc`, `.cxx`, `.php` | Polyglot `codedb outline` Fallback (`@paragon-ux/codedb-core`) | Partial structural outline (class/struct/qualified definitions) |
-| **Unsupported Extensions** | `.cs`, `.scala`, `.sql`, `.md`, `.json`, etc. | Fail-Closed Guard | Rejects single-file AST extraction with `UNSUPPORTED_LANGUAGE` (never returns a silent `0 symbols` false positive) |
+| **Unsupported & Dialect Extensions** | `.cs`, `.scala`, `.sql`, `.jsonc`, `.json5`, etc. | Fail-Closed Guard | Rejects single-file AST extraction with `UNSUPPORTED_LANGUAGE` (never returns a silent `0 symbols` false positive) |
 
 ### 2. Repo-Wide Call Graph & Symbol Search (`waymark ask "<symbol>"` / `waymark_ask(query | symbols)`)
 - **Indexed by `@paragon-ux/codedb-core`**: `.ts`, `.tsx`, `.js`, `.jsx`, `.py`, `.rs`, `.go`, `.java`, `.rb`, `.swift`, `.kt` (plus partial `.c`/`.cpp`/`.php`).

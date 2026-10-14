@@ -88,10 +88,11 @@ On Windows, `WAYMARK_CODEDB_EXECUTABLE` must name a native executable. `.cmd` an
 
 ### Language Support & Tier Fallbacks
 
-- **Single-File AST Outlines (`waymark ask --path <file>`)**:
-  - **In-Process `web-tree-sitter` (Exact line + column spans)**: TypeScript (`.ts`, `.tsx`, `.mts`, `.cts`), JavaScript (`.js`, `.jsx`, `.mjs`, `.cjs`), and Python (`.py`).
+- **Single-File AST Outlines (`waymark ask --outline --path <file>`)**:
+  - **In-Process `web-tree-sitter` (Exact line + column spans)**: TypeScript (`.ts`, `.tsx`, `.mts`, `.cts`), JavaScript (`.js`, `.jsx`, `.mjs`, `.cjs`), Python (`.py`), JSON (`.json`), TOML (`.toml`), YAML (`.yaml`, `.yml`), and Bash (`.sh`, `.bash`, `.zsh`).
+  - **Native Markdown Parser (`markdown-it`)**: Markdown (`.md`, `.markdown`, `.mdx`) document structure (sections, headings, code blocks).
   - **Polyglot `codedb outline` Fallback**: Rust (`.rs`), Go (`.go`), Java (`.java`), Ruby (`.rb`), Swift (`.swift`), Kotlin (`.kt`), and partial C/C++/PHP (`.c`, `.h`, `.cpp`, `.hpp`, `.cc`, `.cxx`, `.php`).
-  - **Fail-Closed Boundary**: Unsupported extensions (e.g. `.cs`, `.scala`, `.md`, `.txt`) fail closed with `UNSUPPORTED_LANGUAGE`.
+  - **Fail-Closed Boundary**: Unsupported extensions (e.g. `.cs`, `.scala`, `.sql`) and dialect extensions (`.jsonc`, `.json5`) fail closed with `UNSUPPORTED_LANGUAGE`.
 - **Repo-Wide Call Graph & Symbol Search (`waymark ask "<symbol>"`)**:
   - Indexed via `@paragon-ux/codedb-core` across `.ts`, `.tsx`, `.js`, `.jsx`, `.py`, `.rs`, `.go`, `.java`, `.rb`, `.swift`, `.kt` (plus partial `.c`/`.cpp`/`.php`). Note: `.mjs`, `.cjs`, `.mts`, and `.cts` are supported via Single-File Tree-Sitter AST (`--path`) and Tiers 2–4.
 - **Language-Agnostic Tiers (Tiers 2, 3, and 4)**:

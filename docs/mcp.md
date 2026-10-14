@@ -61,6 +61,7 @@ Consolidates all discovery operations into a unified query interface:
   "name": "waymark_ask",
   "arguments": {
     "path": "src/types.ts",
+    "outline": true,
     "plain": true
   }
 }

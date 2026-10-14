@@ -29,16 +29,20 @@ waymark ask [options] [question]
 
 | Flag | Shorthand | Type | Description |
 | :--- | :--- | :--- | :--- |
+| `--outline` | | `boolean` | Emit structural AST coordinate outline of `--path` (question/query filters symbol names). |
+| `--path <file>` | | `string` | Extract structured AST outline or inspect a single file. |
+| `--language <lang>` | | `string` | Source language override (`typescript`, `javascript`, `python`, `json`, `toml`, `yaml`, `bash`, `markdown`). |
+| `--query <q>` | | `string` | Filter outline symbols by substring (with `--outline`, bypasses semantic QA). |
 | `--depth <n>` | | `1..5` | Bounded BFS call graph traversal depth (default: 1). |
 | `--direction <d>` | | `string` | Traversal directionality (`callers`, `callees`, or `both`, default: `both`). |
 | `--exclude-tests` | | `boolean` | Suppress test files (`tests/`, `*_test.*`, `*.spec.*`) from call graphs for 94% token savings. |
-| `--path <file>` | | `string` | Extract structured tree-sitter AST outline for a single file. |
 | `--symbols <list>` | | `string` | Comma-separated list of symbols to inspect concurrently across the codebase. |
 | `--facet <facet>` | | `string` | Scope query to an architectural domain (`lifecycle`, `data_state`, `boundaries`, `invariants`, `failure`, or `status`). |
 | `--plain` | `-p` | `boolean` | Emit token-minimal plain text formatted for LLM context injection (~16-38 tokens). |
 | `--tier <tier>` | `-t` | `string` | Force a specific discovery tier (`auto`, `ast`, `path`, `fuzzy`, `capn`) or bypass junction fallthrough. |
 | `--timing` | `-b` | `boolean` | Surface high-resolution sub-millisecond per-tier execution timings. |
 | `--daemon` | `-d` | `boolean` | Route query through the resident in-memory background daemon IPC. |
+| `--auto-resolve` | | `boolean` | Collapse junction responses to top recommendation. |
 | `--dev` | | `boolean` | Enable Dev Mode with per-tier timing breakdown and runtime invariant assertions. |
 
 ### Examples
@@ -50,8 +54,11 @@ waymark ask "verifyHop" --depth 2 --direction callers --exclude-tests
 # Concurrent multi-symbol batch query
 waymark ask --symbols User,Service,ApiWorker
 
-# Single-file structured Tree-Sitter AST outline
-waymark ask --path src/types.ts
+# Single-file structural AST coordinate outline
+waymark ask --outline --path src/types.ts
+
+# Markdown document outline filtered by section query
+waymark ask --outline --path README.md --query "Language"
 
 # Architectural consensus query scoped to invariants
 waymark ask --facet invariants "path normalization rules"

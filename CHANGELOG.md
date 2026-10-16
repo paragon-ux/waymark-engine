@@ -6,16 +6,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (Breaking)
+- **Memory Store Moved to `.waymark/memory` (`src/stateDir.ts`, `src/capnAdapter.ts`, `src/semanticMap.ts`)**: `.capn/` is upstream capn's folder, and `@paragon-ux/capn-hook` is a different implementation that shared its name. In repositories where upstream capn also ran, the two read and wrote each other's store. Waymark no longer reads or writes `.capn/`. `memoryStoreDir(root)` is the single store location. Existing stores are not moved; run `waymark memory migrate` to copy them.
+- **Tier 4 Requires capn Store-Dir Support (`src/capnAdapter.ts`)**: Every capn invocation now passes `--root <repo> --store-dir <repo>/.waymark/memory` before the subcommand. A capn without those flags, including the bundled `@paragon-ux/capn-hook` 1.1.1, prints usage and exits before it touches disk; Waymark reports `CAPN_STORE_DIR_UNSUPPORTED` (exit code 2). Tier 4 stays off until the fork ships the flags (contract in `docs/memory-store.md`). Tiers 1–3 are unaffected.
+- **Path Cache Always in `.waymark/` (`src/discoveryRouter.ts`)**: `paths.v2.cache` used to go to `.capn/` whenever that folder existed.
+- **Daemon PID Record Always in the OS Temp Directory (`src/daemon.ts`)**: `daemon.pid` used to go to `.capn/` whenever that folder existed. It is still informational only and never used to choose a process to kill (F-01).
+
 ### Changed
 - **Lazy Per-Root MCP Warm-Up (`src/mcp/server.ts`)**: The stdio server no longer warms the resident daemon at startup or checks for `.git`/`.capn` markers. Each `tools/call` starts a background warm-up for the repository it targets (`root` argument, else the server root, resolved to the Git top level), memoized per repository. The call itself never waits; it takes the cold path. At most two repositories stay warm (`WAYMARK_MCP_WARM_MAX_ROOTS`); the least recently used daemon is stopped. `close()` stops every warm daemon, including one whose warm-up finishes after stdin closes. `shouldWarmResidentDaemon` and `startResidentDaemon` are removed.
 - **Warm-Up Budget (`src/discoveryRouter.ts`)**: New `collectRepoPathsBounded` walks the tree asynchronously with the `collectRepoPaths` skip rules and path order, and gives up past a file cap (`WAYMARK_MCP_WARM_MAX_FILES`, default 50,000) or time cap (`WAYMARK_MCP_WARM_TIMEOUT_MS`, default 10,000). An over-budget repository is never warmed and is not re-walked during the session. A complete walk seeds the daemon's prefix trie, so the synchronous walk no longer runs during warm-up.
 - **`WaymarkDaemon.start()` (`src/daemon.ts`)**: Accepts `{ paths, signal }` and resolves `true` only when it started serving; it resolves `false` when another daemon already answers for the root or the signal aborts before it listens. `stop()` only removes the registry entry and PID file the instance wrote, and it removes its process signal listeners.
 
 ### Added
+- **`waymark memory migrate [--from .capn]` (`src/capnAdapter.ts`, `src/cli.ts`)**: Explicit, copy-only import of a store that an earlier `waymark init` created. The source is never moved, modified, or deleted. It refuses non-lexical sources (`MIGRATE_SOURCE_NOT_LEXICAL`), sources holding files that are not capn entries (`MIGRATE_SOURCE_INVALID`), and a destination that already holds entries (`MIGRATE_DESTINATION_NOT_EMPTY`).
+- **`.waymark/.gitignore` (`src/stateDir.ts`)**: Written with `*` whenever Waymark creates `.waymark/`, so its state never shows up as untracked. An existing file is kept.
+- **Script Entries for `WAYMARK_CAPN_EXECUTABLE` (`src/capnAdapter.ts`)**: A `.js`/`.mjs`/`.cjs` path, such as a local capn-hook checkout's `dist/capn.js`, runs with the current Node.
+- **Library Exports (`src/index.ts`)**: `memoryStoreDir`, `stateDir`, `ensureStateDir`, `capnStoreArgs`, `migrateMemoryStore`.
 - **`WAYMARK_MCP_WARM=0`**: Disables warm-up. `WAYMARK_DISABLE_RESIDENT=1` and `McpServer({ enableDaemon: false })` also disable it. `McpServer({ warmup })` sets the budget programmatically; warm-up is on under `runStdio()` and off for direct `handleMessage()` use.
 - **`--root <path>` (`src/mcp/capnIndex.ts`)**: Sets the default tool root for hosts that cannot set a working directory. `waymark mcp --root` now moves the working directory too, so tool calls without `root` use it.
 
+### Fixed
+- **Init Exit Code (`src/cli.ts`)**: `waymark init` and `waymark memory init` exited 0 when initialization failed.
+- **Hidden Auto-Init Failure (`src/capnAdapter.ts`)**: `publish()` threw `CAPN_STORE_UNINITIALIZED` when its automatic init failed. It now returns the init error.
+- **MCP Multi-Symbol Queries Ran capn as codedb (`src/mcp/capnTools.ts`)**: `waymark_ask` with `symbols` passed `capn_executable` / `WAYMARK_CAPN_EXECUTABLE` to codedb, so setting either broke multi-symbol queries (`spawn EFTYPE`).
+
 ### Tests
+- `test/stateDir.test.ts`: a foreign `.capn` store stays byte-identical across init, chart, ask, list, context, bust, prune, unchart, migrate, path cache, and telemetry; `.capn` is never created; the bundled fork is either honored or refused before it touches disk; migrate is copy-only and fails closed; `.waymark/.gitignore` is written once.
+- `test/capnContractHarness.ts`: test-only executable spec of the store-dir contract. It runs the bundled fork with the contract applied in memory (never modifying `node_modules`), and capn-backed suites use it until the bundled fork accepts `--store-dir`.
+- Removed the unused `test/capnHarness.mjs`.
 - `test/mcpStdioStartup.test.ts`: no indexing at startup, tool call answered while its root's warm-up never finishes, late warm-up stopped after EOF, `--root`, per-root memoization, file budget, opt-out, root cap and `close()`.
 - `test/discoveryRouter.test.ts`: bounded walk matches `collectRepoPaths` and stops on file, time, and abort limits.
 

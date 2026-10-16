@@ -15,13 +15,10 @@ import {
 } from "../src/semanticMap.js";
 import { WaymarkError } from "../src/types.js";
 import { ask, publish } from "../src/capnAdapter.js";
+import { memoryStoreDir } from "../src/stateDir.js";
+import { initMemoryStoreSync, useCapnStoreContract } from "./capnContract.js";
 
-const require = createRequire(import.meta.url);
-
-function forkEntry(): string {
-  const pkg = require.resolve("@paragon-ux/capn-hook/package.json");
-  return path.join(path.dirname(pkg), "dist", "capn.js");
-}
+useCapnStoreContract();
 
 function setupTestRepo(): string {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), "waymark-semantic-map-"));
@@ -65,7 +62,7 @@ function setupTestRepo(): string {
   execFileSync("git", ["config", "user.name", "test"], { cwd: repo });
   execFileSync("git", ["add", "-A"], { cwd: repo });
   execFileSync("git", ["commit", "-q", "-m", "initial commit"], { cwd: repo });
-  execFileSync(process.execPath, [forkEntry(), "init"], { cwd: repo });
+  initMemoryStoreSync(repo);
   return repo;
 }
 
@@ -129,7 +126,7 @@ test("backing-file containment holds through status, bootstrap, publisher, CLI, 
   fs.writeFileSync(path.join(outside, "secret.ts"), "export const secret = true;\n");
   fs.symlinkSync(outside, link, process.platform === "win32" ? "junction" : "dir");
   try {
-    fs.writeFileSync(path.join(repo, ".capn", "entries", "escaped.md"), [
+    fs.writeFileSync(path.join(memoryStoreDir(repo), "entries", "escaped.md"), [
       "---", "id: escaped", "files:", '  "src/external/secret.ts": true', "---",
       "# [FACET:LIFECYCLE] external source", "Untrusted outside evidence.", "",
     ].join("\n"));
@@ -188,18 +185,19 @@ test("Bootstrap returns evidence-backed drafts and never publishes unverified fa
   assert.equal(postStatus.status, "empty");
   assert.equal(postStatus.completion, "0/5");
   assert.equal(postStatus.missing.length, 5);
-  assert.equal(fs.readdirSync(path.join(repo, ".capn", "entries")).filter((file) => file.endsWith(".md")).length, 0);
+  assert.equal(fs.readdirSync(path.join(memoryStoreDir(repo), "entries")).filter((file) => file.endsWith(".md")).length, 0);
 
   const plainText = renderSemanticMapStatus(postStatus);
   assert.match(plainText, /\[semantic-map: 0\/5 facets active \(0%\)\]/);
 });
 
-test("minimal repository bootstrap adds no map facts or Capn store", async () => {
+test("minimal repository bootstrap adds no map facts or memory store", async () => {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), "waymark-empty-map-"));
   try {
     const result = await bootstrapSemanticMap(repo, { dryRun: false });
     assert.equal(result.scaffolded.length, 0);
     assert.equal(result.published, false);
+    assert.equal(fs.existsSync(memoryStoreDir(repo)), false);
     assert.equal(fs.existsSync(path.join(repo, ".capn")), false);
   } finally {
     fs.rmSync(repo, { recursive: true, force: true });

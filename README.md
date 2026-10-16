@@ -39,7 +39,7 @@ Built for AI coding agents: one-shot discovery, zero required background process
        ▼               ▼               ▼             ▼
     Tier 1          Tier 2          Tier 3        Tier 4
  AST Call Graph   Path Router    Fuzzy Matcher  Lexical BM25
-(@paragon/codedb) (PrefixTrie)   (algo.go fzf)  (.capn hook)
+(@paragon/codedb) (PrefixTrie)   (algo.go fzf)  (capn-hook)
        │               │               │             │
        └───────────────┼───────────────┘             │
                        ▼                             ▼
@@ -57,7 +57,7 @@ Requires Node.js 22+.
 # 1. Install globally or as a project dependency
 npm install -g waymark-engine
 
-# 2. Initialize the deterministic lexical store (.capn)
+# 2. Initialize the deterministic lexical store (.waymark/memory)
 waymark memory init
 
 # 3. Query the codebase using Verb 1 (waymark ask)
@@ -96,7 +96,7 @@ On Windows, `WAYMARK_CODEDB_EXECUTABLE` must name a native executable. `.cmd` an
 - **Repo-Wide Call Graph & Symbol Search (`waymark ask "<symbol>"`)**:
   - Indexed via `@paragon-ux/codedb-core` across `.ts`, `.tsx`, `.js`, `.jsx`, `.py`, `.rs`, `.go`, `.java`, `.rb`, `.swift`, `.kt` (plus partial `.c`/`.cpp`/`.php`). Note: `.mjs`, `.cjs`, `.mts`, and `.cts` are supported via Single-File Tree-Sitter AST (`--path`) and Tiers 2–4.
 - **Language-Agnostic Tiers (Tiers 2, 3, and 4)**:
-  - **Tier 2 (`PrefixTrie` Path Router)**, **Tier 3 (`fzf` Fuzzy Matcher)**, and **Tier 4 (`.capn` BM25 Consensus Memory & 5-Facet Semantic Repo Map)** operate across **all** repository files regardless of language.
+  - **Tier 2 (`PrefixTrie` Path Router)**, **Tier 3 (`fzf` Fuzzy Matcher)**, and **Tier 4 (`.waymark/memory` BM25 Consensus Memory & 5-Facet Semantic Repo Map)** operate across **all** repository files regardless of language.
 
 ---
 

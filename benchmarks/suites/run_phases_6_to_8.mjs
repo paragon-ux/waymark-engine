@@ -178,7 +178,7 @@ async function runPhases6to8() {
   // 3. Path lookup (embed.go)
   const perfPath = await benchmarkOp("Literal Path Lookup (embed.go)", "Tier 2", async (isCold) => {
     if (isCold) {
-      const cacheFile = path.join(GRAFANA_ROOT, ".capn", "paths.cache");
+      const cacheFile = path.join(GRAFANA_ROOT, ".waymark", "paths.v2.cache");
       if (fs.existsSync(cacheFile)) fs.unlinkSync(cacheFile);
     }
     return await runWaymark(WAYMARK_ASK, ["embed.go", "--plain"], GRAFANA_ROOT);

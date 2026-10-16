@@ -6,7 +6,7 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { AdapterProfile, WaymarkError, DiscoveryTier } from "./types.js";
 import { repoRoot } from "./paths.js";
-import { ask as capnAsk, initCapn, publish, unchart, bust, prune, listEntries, context } from "./capnAdapter.js";
+import { ask as capnAsk, initCapn, migrateMemoryStore, publish, unchart, bust, prune, listEntries, context } from "./capnAdapter.js";
 import { renderPlainText } from "./renderPlainText.js";
 import { SUPPORTED_STRUCTURED_LANGUAGES } from "./astExtractor.js";
 
@@ -19,7 +19,7 @@ const VALUE_FLAGS = new Set([
   "profile", "path", "language", "capn-executable", "question", "answer", "files",
   "tier", "t", "format", "idle-timeout", "query", "symbol", "symbols", "q", "s",
   "depth", "direction", "manifest", "category", "id", "file", "facet", "action", "subsystem",
-  "root", "session", "port",
+  "root", "session", "port", "from",
 ]);
 
 const BOOLEAN_FLAGS = new Set([
@@ -164,11 +164,12 @@ async function runCommand(command: string, rawArgs: readonly string[]): Promise<
     return {
       value: [
         "Waymark discovery engine (symbolic + semantic routing)",
-        "  init [--capn-executable <path>] (initialize lexical Capn store)",
+        "  init [--capn-executable <path>] (initialize the lexical memory store in .waymark/memory)",
         `  discover-symbols [--path <file>] [--query <q>] [--language <${SUPPORTED_STRUCTURED_LANGUAGES.join("|")}>] [--plain]`,
         "  symbols <symbol1> [symbol2 ...] [--plain] (batch query symbol definitions across repo)",
         "  ask <question> [--symbols a,b] [--facet <f>] [--tier auto|ast|path|fuzzy|capn] [--timing] [--json|--plain]",
-        "  memory <chart|bootstrap|bust|prune|list|unchart|init|status|context|heal|export> [options]",
+        "  memory <chart|bootstrap|bust|prune|list|unchart|init|migrate|status|context|heal|export> [options]",
+        "  memory migrate [--from .capn] (opt-in: copy entries from a store an earlier waymark init made; the source is only read)",
         "  bootstrap [--dry-run] [--subsystem <s>] (subsystem scope is currently unsupported)",
         "  map [status|show|heal|export] (inspect and manage Semantic Repo Map)",
         "  chart --question <q> --answer <a> --files <a,b> [--profile capn-cli|none] [--capn-executable <path>]",
@@ -211,7 +212,8 @@ async function runCommand(command: string, rawArgs: readonly string[]): Promise<
   }
 
   if (command === "init") {
-    return { value: await initCapn(root, resolveCapnExecutable(parsed)) };
+    const res = await initCapn(root, resolveCapnExecutable(parsed));
+    return { value: res, exitCode: res.ok ? 0 : (res.exitCode as number | undefined) ?? 1 };
   }
 
   if (command === "discover-symbols") {
@@ -406,7 +408,13 @@ async function runCommand(command: string, rawArgs: readonly string[]): Promise<
     }
 
     if (action === "init") {
-      return { value: await initCapn(root, executable) };
+      const res = await initCapn(root, executable);
+      return { value: res, exitCode: res.ok ? 0 : (res.exitCode as number | undefined) ?? 1 };
+    }
+
+    if (action === "migrate") {
+      const res = await migrateMemoryStore(root, executable, parsed.values.get("from"));
+      return { value: res, exitCode: res.ok ? 0 : (res.exitCode as number | undefined) ?? 1 };
     }
 
     if (action === "context") {
@@ -456,7 +464,7 @@ async function runCommand(command: string, rawArgs: readonly string[]): Promise<
       return { value: { waymark: 1, ok: true, closed, root: target } };
     }
 
-    throw new WaymarkError("UNKNOWN_COMMAND", `Unknown memory action: ${action}. Use chart, bootstrap, bust, prune, list, unchart, init, context, status, heal, export, evict, or close.`);
+    throw new WaymarkError("UNKNOWN_COMMAND", `Unknown memory action: ${action}. Use chart, bootstrap, bust, prune, list, unchart, init, migrate, context, status, heal, export, evict, or close.`);
   }
 
   if (command === "bootstrap") {

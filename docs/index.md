@@ -29,7 +29,7 @@ When an AI agent needs to locate an implementation or trace a dependency, readin
          ▼               ▼               ▼             ▼
       Tier 1          Tier 2          Tier 3        Tier 4
    AST Call Graph   Path Router    Fuzzy Matcher  Lexical BM25
-  (@paragon/codedb) (PrefixTrie)   (algo.go fzf)  (.capn hook)
+  (@paragon/codedb) (PrefixTrie)   (algo.go fzf)  (capn-hook)
          │               │               │             │
          └───────────────┼───────────────┘             │
                          ▼                             ▼

@@ -5,7 +5,7 @@ Waymark Engine separates code intelligence into two distinct layers for AI agent
    - **Tier 1: AST Structural** — deterministic codedb call graph (`@paragon-ux/codedb-core` v1.1.0, resolved and fail-closed), bounded multi-hop graphs, and single-file tree-sitter AST extraction.
    - **Tier 2: Literal Path Router** — exact and substring path resolution with zero-hallucination fail-closed defense.
    - **Tier 3: Deterministic Fuzzy Matcher** — embedded Junegunn Choi `fzf` (`algo.go`) two-pass scoring.
-2. **Semantic Repo Map & Consensus Ledger (Tier 4)**: Frontloaded 5-facet architectural consensus memory stored in SQLite (`.capn`) and queried via lexical BM25 (`@paragon-ux/capn-hook`). Solves agent context amnesia across sessions.
+2. **Semantic Repo Map & Consensus Ledger (Tier 4)**: Frontloaded 5-facet architectural consensus memory stored in SQLite (`.waymark/memory`) and queried via lexical BM25 (`@paragon-ux/capn-hook`). Solves agent context amnesia across sessions.
 
 When structural and literal tiers miss, the **Discovery Junction** evaluates syntactic candidate signals and emits an inspectable recommendation (`status: "junction"`) with machine-readable continuation instructions. A clean miss is a miss — never a guess.
 
@@ -25,7 +25,7 @@ Invariants:
 - Fuzzy matching is zero-dependency and strictly deterministic.
 - Host CPU responsiveness is protected: `CODEDB_MAX_THREADS` defaults to `max(1, cpus - 1)` so 1 logical core remains free.
 - Tests cover both success and fail-closed paths. `npm run verify` must stay green.
-- `waymark memory bootstrap` returns source excerpts as unverified drafts; it never initializes `.capn` or publishes facts. Verify and explicitly chart claims.
+- `waymark memory bootstrap` returns source excerpts as unverified drafts; it never initializes the memory store or publishes facts. Verify and explicitly chart claims.
 - Subsystem-scoped operations return `UNSUPPORTED_SUBSYSTEM`; omit subsystem to target the selected repository root.
 - Query/session telemetry is not persisted unless `WAYMARK_TELEMETRY=1`; the loopback live viewer also requires opt-in and a per-session access token, validates Host/Origin, and blocks framing.
 - On Windows, `WAYMARK_CODEDB_EXECUTABLE` must name a native `.exe`; `.cmd` and `.bat` shims are rejected rather than run through a shell.

@@ -37,6 +37,7 @@ const DEFAULT_IGNORED_DIRS = new Set([
   "dist",
   "build",
   ".capn",
+  ".waymark",
   ".codedb",
   "coverage",
 ]);

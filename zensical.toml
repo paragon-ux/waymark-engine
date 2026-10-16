@@ -16,6 +16,7 @@ nav = [
   { "CLI & Commands" = "commands.md" },
   { "Empirical Benchmarks" = "benchmarks.md" },
   { "Library API & Integrity" = "library-api.md" },
+  { "Memory Store & State Layout" = "memory-store.md" },
 ]
 
 [project.theme]

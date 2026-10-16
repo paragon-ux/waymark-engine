@@ -36,13 +36,13 @@ export function getDaemonAddress(root: string): string {
   return path.join(os.tmpdir(), `waymark-${hash}.sock`);
 }
 
+/**
+ * Informational PID record, always in the OS temp directory beside the socket
+ * and registry. Never used to choose a process to kill (audit finding F-01).
+ */
 export function getPidFilePath(root: string): string {
   const canonical = canonicalRoot(root);
   const hash = crypto.createHash("sha256").update(canonical).digest("hex").slice(0, 16);
-  const capnDir = path.join(root, ".capn");
-  if (fs.existsSync(capnDir)) {
-    return path.join(capnDir, "daemon.pid");
-  }
   return path.join(os.tmpdir(), `waymark-${hash}.pid`);
 }
 

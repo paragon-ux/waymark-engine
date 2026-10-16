@@ -171,7 +171,8 @@ export const waymarkAskTool: McpToolHandler = {
       const rawSymbols = Array.isArray(args.symbols) ? args.symbols.filter((s): s is string => typeof s === "string" && s.trim().length > 0) : [];
       if (rawSymbols.length > 0) {
         const { queryMultiSymbols } = await import("../codedbAdapter.js");
-        const res = await queryMultiSymbols(root, rawSymbols, resolveExecutable(args));
+        // codedb resolves its own executable; capn_executable / WAYMARK_CAPN_EXECUTABLE name capn.
+        const res = await queryMultiSymbols(root, rawSymbols);
         if (plain) {
           return {
             content: [{ type: "text", text: renderPlainText(res) }],
@@ -908,7 +909,7 @@ export const waymarkDaemonStatusTool: McpToolHandler = {
 export const waymarkInitTool: McpToolHandler = {
   definition: {
     name: "waymark_init",
-    description: "Initialize the repository's deterministic lexical store (.capn) with embedding mode disabled.",
+    description: "Initialize the repository's deterministic lexical memory store (.waymark/memory) with embedding mode disabled.",
     inputSchema: {
       type: "object",
       properties: {

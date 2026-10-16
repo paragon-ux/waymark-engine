@@ -91,7 +91,7 @@ Dispatches consensus memory and lifecycle operations using the **`action`** para
 
 | Action | Example Arguments | Description |
 | :--- | :--- | :--- |
-| **`bootstrap`** | `{"action": "bootstrap", "dry_run": false}` | Collect source excerpts as unverified drafts. It does not initialize `.capn` or publish claims; verify and chart supported conclusions explicitly. |
+| **`bootstrap`** | `{"action": "bootstrap", "dry_run": false}` | Collect source excerpts as unverified drafts. It does not initialize the memory store or publish claims; verify and chart supported conclusions explicitly. |
 | **`status`** | `{"action": "status", "plain": true}` | Inspect Semantic Repo Map completion ratio, active facets, and file drift. |
 | **`chart`** | `{"action": "chart", "facet": "boundaries", "question": "IPC Protocol", "answer": "Named pipes on Windows...", "files": ["src/daemon.ts"]}` | Record architectural knowledge into consensus memory. |
 | **`heal`** | `{"action": "heal"}` | Recollect source-backed unverified drafts; established consensus entries are unchanged. |
@@ -100,7 +100,7 @@ Dispatches consensus memory and lifecycle operations using the **`action`** para
 | **`prune`** | `{"action": "prune"}` | Cleanly remove stale entries whose backing files vanished. |
 | **`list`** | `{"action": "list"}` | List all charted repository consensus memories. |
 | **`unchart`** | `{"action": "unchart", "id": "3a8f1b2c", "if_exists": true}` | Delete a specific memory entry by hex ID. |
-| **`init`** | `{"action": "init"}` | One-time deterministic lexical store initialization (`.capn`). |
+| **`init`** | `{"action": "init"}` | One-time deterministic lexical store initialization (`.waymark/memory`). |
 | **`context`** | `{"action": "context"}` | Retrieve ask-first routing contract and syntax guidelines. |
 
 ---

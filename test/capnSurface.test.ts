@@ -6,28 +6,24 @@ import { execFileSync } from "node:child_process";
 import { createRequire } from "node:module";
 import test from "node:test";
 import { ask, initCapn, publish, unchart, bust, prune, listEntries, context } from "../src/capnAdapter.js";
+import { memoryStoreDir } from "../src/stateDir.js";
+import { initMemoryStoreSync, useCapnStoreContract } from "./capnContract.js";
 
-
-const require = createRequire(import.meta.url);
-
-function forkEntry(): string {
-  const pkg = require.resolve("@paragon-ux/capn-hook/package.json");
-  return path.join(path.dirname(pkg), "dist", "capn.js");
-}
+useCapnStoreContract();
 
 function setupRepo(): string {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), "waymark-capn-surface-"));
   execFileSync("git", ["init", "-q", "-b", "main"], { cwd: repo });
   fs.mkdirSync(path.join(repo, "src"), { recursive: true });
   fs.writeFileSync(path.join(repo, "src", "payments.ts"), "export const webhook = true\n");
-  // Initialize the lexical store with the bundled fork under plain node.
-  execFileSync(process.execPath, [forkEntry(), "init"], { cwd: repo });
+  // Initialize the lexical store in .waymark/memory under plain node.
+  initMemoryStoreSync(repo);
   return repo;
 }
 
 test("full wrapped capn surface: chart -> ask -> list -> bust -> chart -> unchart -> prune -> context", async () => {
   const repo = setupRepo();
-  const exe = ""; // auto-resolution: bundled @paragon-ux/capn-hook, no PATH
+  const exe = ""; // auto-resolution: bundled @paragon-ux/capn-hook (or the contract harness), no PATH
 
   const published = await publish(repo, "capn-cli", exe, "Where are payment webhooks handled?", "They live in src/payments.ts.", ["src/payments.ts"]);
   assert.equal(published.published, true);
@@ -86,7 +82,8 @@ test("initCapn initializes store in deterministic lexical mode", async () => {
   execFileSync("git", ["init", "-q", "-b", "main"], { cwd: repo });
   const result = await initCapn(repo);
   assert.equal(result.ok, true);
-  const cfg = JSON.parse(fs.readFileSync(path.join(repo, ".capn", "config.json"), "utf8"));
+  const cfg = JSON.parse(fs.readFileSync(path.join(memoryStoreDir(repo), "config.json"), "utf8"));
   assert.equal(cfg.embedding, false);
+  assert.equal(fs.existsSync(path.join(repo, ".capn")), false);
 });
 

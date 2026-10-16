@@ -14,7 +14,10 @@ import { canonicalRoot, getDaemonAddress, getPidFilePath, stopDaemon, WaymarkDae
 import { getResidentClient, closeAllResidentClients, normalizeKeyRoot } from "../src/residentCodedb.js";
 import { queryMultiSymbols, fuzzyCandidateCacheSize, pruneFuzzyCandidateCache, queryFuzzyCandidates, assertSupportedCodedbCommand, resolveCodedbCommand, runJson, queryStructural } from "../src/codedbAdapter.js";
 import { logSessionEvent, resolveSessionLogPath, type SessionTelemetryEvent } from "../src/sessionLogger.js";
-import { ask, initCapn, publish, resolveCapnCommand } from "../src/capnAdapter.js";
+import { ask, capnStoreArgs, initCapn, publish, resolveCapnCommand } from "../src/capnAdapter.js";
+import { useCapnStoreContract } from "./capnContract.js";
+
+useCapnStoreContract();
 import { getLiveDashboardHtml, LIVE_OBSERVER_HOST, startLiveReplObserver } from "../src/repl.js";
 import { skipCodedb } from "./codedb.js";
 import { discoverSymbolsInRepo } from "../src/astExtractor.js";
@@ -412,7 +415,7 @@ test("semantic memory accepts topical lexical matches and rejects generic-token 
     await publish(root, "capn-cli", "", "Where is type validation declared?", "The type validation policy constrains how the service handles declared values. Payment webhook retries use a bounded exponential backoff schedule.", ["notes.md"]);
 
     const backend = resolveCapnCommand("");
-    const raw = execFileSync(backend.file, [...backend.prefix, "ask", "Where is TotallyFakeClassDeclared?"], { cwd: root, encoding: "utf8" }).trim();
+    const raw = execFileSync(backend.file, [...backend.prefix, ...capnStoreArgs(root), "ask", "Where is TotallyFakeClassDeclared?"], { cwd: root, encoding: "utf8" }).trim();
     assert.ok(raw.includes("Where is type validation declared?"), "fixture must reproduce a generic-token BM25 result");
 
     const positive = await ask(root, "capn-cli", "", "How do payment webhooks retry?", { tier: "capn", autoResolve: true });

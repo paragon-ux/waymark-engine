@@ -21,7 +21,7 @@ Tier 4 is **NOT a general code search engine or catch-all crutch**. Syntactic an
 The semantic tier is **deterministic by construction**. It forbids non-deterministic vector embeddings, neural re-rankers, or external cloud inference.
 
 ### Invariant Checks (`assertLexicalStore`)
-Before any query executes against Capn memory, `assertLexicalStore(root)` evaluates `.capn/config.json`:
+Before any query executes against Capn memory, `assertLexicalStore(root)` evaluates `.waymark/memory/config.json` (the store `memoryStoreDir(root)` names):
 1. **Store Missing**: Throws `CAPN_STORE_UNINITIALIZED` (exit code 2).
 2. **Embedding Mode**: If `config.embedding !== false`, throws `CAPN_NON_DETERMINISTIC_MODE` (exit code 2), refusing to execute under QMD hybrid mode or download unpinned neural models.
 3. **Lexical Mode**: Only passes when `config.embedding === false` (the default when initialized via `@paragon-ux/capn-hook`).

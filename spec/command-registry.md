@@ -40,7 +40,7 @@ Waymark Engine provides both a unified binary (`waymark <command>`) and explicit
 | `waymark mcp`<br>`waymark-mcp` | **Stable** | [`src/mcp/server.ts`](../src/mcp/server.ts) | None (runs over `stdio`) | Launches the standard Model Context Protocol (MCP) server for IDE and agent integration. |
 | `waymark daemon [start\|stop\|restart\|reload\|status\|list\|ping\|run]`<br>`waymark-daemon [start\|stop\|restart\|reload\|status\|list\|ping]` | **Stable** | [`src/daemon.ts`](../src/daemon.ts) | Subcommand (`start`, `stop`, `restart`, `reload`, `status`, `list`, `ping`, `run`), `[--path <root>]` | Manages background resident codedb server (`serve --stdio`) and IPC socket/pipe bridge for sub-10ms warm query execution. Supports cache reloading via `reload`. |
 | `waymark repl`<br>`waymark-repl` | **Stable** | [`src/repl.ts`](../src/repl.ts) | `[--manifest <file>]`<br>`[--category <cat>]`<br>`[--id <id>]`<br>`[--file <script>]`<br>`[--live]`<br>`[--port <num>]`<br>`[--plain]`<br>`[--dev]` | Interactive diagnostic REPL shell, live PDLt-style telemetry observer and web viewer (`--live [--port <num>]`), hardened test battery runner with live daemon IPC, line drift calculation, and baseline comparison. |
-| `waymark bootstrap`<br>`waymark-bootstrap` | **Stable** | [`spec/semantic-repo-map.md`](./semantic-repo-map.md) | `[--dry-run]` | Collects source-backed, unverified facet drafts. It never initializes `.capn` or publishes claims; explicit charting is required after verification. `--subsystem` is rejected. |
+| `waymark bootstrap`<br>`waymark-bootstrap` | **Stable** | [`spec/semantic-repo-map.md`](./semantic-repo-map.md) | `[--dry-run]` | Collects source-backed, unverified facet drafts. It never initializes the memory store or publishes claims; explicit charting is required after verification. `--subsystem` is rejected. |
 | `waymark map [status\|show\|heal\|export]` | **Stable** | [`spec/semantic-repo-map.md`](./semantic-repo-map.md) | Subcommand (`status`, `show`, `heal`, `export`), `[facet]`, `[--plain]` | Inspects, displays, heals, or exports the repository Semantic Repo Map. |
 | `waymark help` / `-h` / `--help` | **Stable** | [`src/cli.ts`](../src/cli.ts) | None | Outputs brief command options, flags, and environment variable configuration. |
 
@@ -204,7 +204,7 @@ The resident stdio MCP server (`waymark-mcp`) provides two modes of tool exposur
 ### 4.10 `waymark_init`
 - **Identifier**: `waymark_init`
 - **Stability**: **Stable**
-- **Description**: Initialize the repository's deterministic lexical store (`.capn`) with embedding mode disabled.
+- **Description**: Initialize the repository's deterministic lexical store (`.waymark/memory`) with embedding mode disabled.
 - **Input Schema**: `{ "capn_executable"?: string, "root"?: string }`
 
 ### 4.11 `waymark_map_status`
@@ -254,14 +254,14 @@ The resident stdio MCP server (`waymark-mcp`) provides two modes of tool exposur
   }
   ```
 - **Subcommand Behaviors & Output Shapes**:
-  - `bootstrap`: Collects source excerpts into unverified draft facets and does not write to `.capn`. Verify claims and publish explicitly with `chart`.
+  - `bootstrap`: Collects source excerpts into unverified draft facets and does not write to the memory store. Verify claims and publish explicitly with `chart`.
   - `status`: Inspects active facets, health, and anchor drift. Output: `{ ok: true, status: "healthy" | "drifted" | "empty", completion: "N/5", facets: [...], drifted: [...] }` (or compact text when `plain: true`).
   - `chart`: Inserts or updates architectural memory entry. Output: `{ waymark: 1, kind: "chart", published: true, adapter: string, output: string }`.
   - `bust`: Invalidates all memories citing `file`. Output: `{ waymark: 1, kind: "bust", ok: true, file: string }`.
   - `prune`: Removes entries whose backing files vanished. Output: `{ waymark: 1, kind: "prune", ok: true }`.
   - `list`: Lists charted consensus memories. Output: `{ ok: true, output: string }`.
   - `unchart`: Deletes entry by `id`. Output: `{ waymark: 1, kind: "unchart", ok: true, id: string }`.
-  - `init`: Initializes `.capn` lexical store. Output: `{ waymark: 1, kind: "init", ok: true }`.
+  - `init`: Initializes the `.waymark/memory` lexical store. Output: `{ waymark: 1, kind: "init", ok: true }`.
   - `context`: Retrieves charting syntax and contract. Output: `{ ok: true, output: string }`.
   - `heal`: Recollects source-backed unverified drafts and leaves established entries unchanged.
   - `export`: Exports consensus map as markdown or JSON. Output: `{ ok: true, output: string }` or JSON object.

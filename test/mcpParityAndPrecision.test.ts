@@ -3,18 +3,13 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import { createRequire } from "node:module";
 import test from "node:test";
 import { McpServer } from "../src/mcp/server.js";
 import { routeDiscovery } from "../src/discoveryRouter.js";
 import { AskMissResult, FuzzyCandidate } from "../src/types.js";
+import { initMemoryStoreSync, useCapnStoreContract } from "./capnContract.js";
 
-const require = createRequire(import.meta.url);
-
-function forkEntry(): string {
-  const pkg = require.resolve("@paragon-ux/capn-hook/package.json");
-  return path.join(path.dirname(pkg), "dist", "capn.js");
-}
+useCapnStoreContract();
 
 function setupRepo(): string {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), "waymark-mcp-parity-"));
@@ -25,7 +20,7 @@ function setupRepo(): string {
     "export function executeCommand(): string { return 'done'; }\nexport const resultNone = null;\n",
     "utf8"
   );
-  execFileSync(process.execPath, [forkEntry(), "init"], { cwd: repo });
+  initMemoryStoreSync(repo);
   return repo;
 }
 
@@ -521,7 +516,7 @@ test("Bounded Multi-Hop BFS Call Graph: depth, directionality, cycle prevention,
     ].join("\n"),
     "utf8"
   );
-  execFileSync(process.execPath, [forkEntry(), "init"], { cwd: repo });
+  initMemoryStoreSync(repo);
   const server = new McpServer({ root: repo });
 
   // 1. depth: 1 callers

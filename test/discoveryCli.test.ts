@@ -7,6 +7,10 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { McpServer } from "../src/mcp/server.js";
 import { skipCodedb } from "./codedb.js";
+import { memoryStoreDir } from "../src/stateDir.js";
+import { useCapnStoreContract } from "./capnContract.js";
+
+useCapnStoreContract();
 
 const cliPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../src/cli.js");
 
@@ -111,12 +115,15 @@ test("MCP discovery server with canonicalOnly false exposes all tools", async ()
   ]);
 });
 
-test("CLI init creates lexical Capn store with embedding false", () => {
+test("CLI init creates the lexical memory store in .waymark/memory with embedding false", () => {
   const repo = setupRepo();
   const result = runCli(repo, ["init"]);
   assert.equal(result.code, 0, JSON.stringify(result));
   assert.equal(result.value?.ok, true);
-  const cfg = JSON.parse(fs.readFileSync(path.join(repo, ".capn", "config.json"), "utf8"));
+  const cfg = JSON.parse(fs.readFileSync(path.join(memoryStoreDir(repo), "config.json"), "utf8"));
   assert.equal(cfg.embedding, false);
+  assert.equal(fs.existsSync(path.join(repo, ".capn")), false);
+  assert.equal(fs.readFileSync(path.join(repo, ".waymark", ".gitignore"), "utf8"), "*\n");
+  assert.equal(execFileSync("git", ["status", "--porcelain", "--untracked-files=all"], { cwd: repo, encoding: "utf8" }).includes(".waymark"), false);
 });
 

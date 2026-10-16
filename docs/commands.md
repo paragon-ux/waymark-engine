@@ -13,7 +13,7 @@ Waymark Engine provides a unified Two-Verb command surface ensuring 100% parity 
 | `waymark daemon [cmd]` | **Daemon Operations** | Background resident codedb server (`start`, `stop`, `restart`, `reload`, `status`, `list`, `ping`). |
 | `waymark repl` | **Diagnostic REPL** | Interactive diagnostic shell and hardened test battery runner with live browser SSE viewer. |
 | `waymark mcp` | **MCP Server** | Launches standard stdio MCP discovery server. |
-| `waymark init` | **Store Init** | One-time deterministic lexical store initialization (`.capn`). |
+| `waymark init` | **Store Init** | One-time deterministic lexical store initialization (`.waymark/memory`). |
 
 *(Legacy discrete commands `waymark-ask`, `waymark-chart`, `waymark-bootstrap`, `waymark-map`, `waymark-symbols`, `waymark-discover` remain available as aliases).*
 
@@ -76,7 +76,7 @@ waymark memory <action> [options]
 
 | Action | CLI Syntax | Description |
 | :--- | :--- | :--- |
-| **`bootstrap`** | `waymark memory bootstrap [--dry-run]` | Collect source-backed, unverified facet drafts. Bootstrap does not initialize `.capn` or publish claims; verify drafts and chart supported conclusions explicitly. |
+| **`bootstrap`** | `waymark memory bootstrap [--dry-run]` | Collect source-backed, unverified facet drafts. Bootstrap does not initialize the memory store or publish claims; verify drafts and chart supported conclusions explicitly. |
 | **`status`** | `waymark memory status [--plain]` | Inspect Semantic Repo Map completion ratio, active facets, and file drift. |
 | **`chart`** | `waymark memory chart --question <q> --answer <a> --files <f> [--facet <facet>]` | Publish architectural knowledge into consensus SQLite memory. |
 | **`heal`** | `waymark memory heal` | Recollect source-backed drafts; it does not rewrite established consensus entries. |
@@ -85,7 +85,8 @@ waymark memory <action> [options]
 | **`prune`** | `waymark memory prune` | Cleanly remove stale entries whose backing files vanished. |
 | **`list`** | `waymark memory list` | List all charted consensus memory entries. |
 | **`unchart`** | `waymark memory unchart <id> [--if-exists]` | Delete a specific memory entry by hex ID. |
-| **`init`** | `waymark memory init` | Initialize deterministic lexical store (`.capn`). |
+| **`init`** | `waymark memory init` | Initialize deterministic lexical store (`.waymark/memory`). |
+| **`migrate`** | `waymark memory migrate [--from .capn]` | Opt-in, copy-only import of a store that an earlier `waymark init` created in `.capn/`. The source is never modified. See [Memory Store & State Layout](memory-store.md). |
 | **`context`** | `waymark memory context` | Retrieve ask-first routing contract and syntax guidelines. |
 
 ---

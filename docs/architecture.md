@@ -57,7 +57,7 @@ For a single file (`--path <file>`), Waymark invokes native Tree-Sitter grammar 
 
 ## Tier 4: Semantic Repo Map (Consensus Ledger)
 
-- **Core Engine**: `@paragon-ux/capn-hook` (lexical-only fork of capn-hook) and SQLite (`.capn`).
+- **Core Engine**: `@paragon-ux/capn-hook` (lexical-only fork of capn-hook) and SQLite (`.waymark/memory`).
 - **Recall Algorithm**: Pure lexical **BM25** ranking.
 - **Zero-Embedding Invariant**: Refuses vector stores or embedding models (`CAPN_STORE_UNINITIALIZED` and `CAPN_NON_DETERMINISTIC_MODE` fail-closed guards).
 
@@ -129,7 +129,7 @@ Waymark Engine combines three extraction layers with explicit fail-closed bounda
 ### 3. Tiers 2, 3, and 4 (100% Language-Agnostic)
 - **Tier 2 (`PrefixTrie` Path Router)**: Resolves exact and basename paths for **any** file extension in `<1ms`.
 - **Tier 3 (`fzf` Fuzzy Matcher)**: Scores path and token candidates across **all** tracked files.
-- **Tier 4 (`.capn` BM25 Consensus Memory & 5-Facet Semantic Repo Map)**: Charts and recalls verified `<100`-token architectural answers with SHA-256 file drift tracking for **any** language or file type.
+- **Tier 4 (`.waymark/memory` BM25 Consensus Memory & 5-Facet Semantic Repo Map)**: Charts and recalls verified `<100`-token architectural answers with SHA-256 file drift tracking for **any** language or file type.
 
 ---
 

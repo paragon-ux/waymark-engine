@@ -5,6 +5,7 @@ import { classifyTokenShape, rankFzf } from "./fuzzyMatcher.js";
 import { queryStructural, queryFuzzyCandidates } from "./codedbAdapter.js";
 import { PrefixTrie } from "./prefixTrie.js";
 import { tryDaemonResolvePath } from "./daemon.js";
+import { ensureStateDir, stateDir, MEMORY_STORE_LABEL } from "./stateDir.js";
 import {
   AskHitResult,
   AskJunctionResult,
@@ -227,10 +228,7 @@ export function getRepoPrefixTrie(root: string, maxAgeMs = 60_000): PrefixTrie {
 }
 
 function getCacheFilePath(root: string): string {
-  if (fs.existsSync(path.join(root, ".capn"))) {
-    return path.join(root, ".capn", "paths.v2.cache");
-  }
-  return path.join(root, ".waymark", "paths.v2.cache");
+  return path.join(stateDir(root), "paths.v2.cache");
 }
 
 export function collectRepoPaths(root: string, maxAgeMs = 60_000): string[] {
@@ -283,10 +281,7 @@ export function collectRepoPaths(root: string, maxAgeMs = 60_000): string[] {
 
   try {
     if (process.env.WAYMARK_READ_ONLY !== "1") {
-      const dir = path.dirname(cacheFile);
-      if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true });
-      }
+      ensureStateDir(root);
       fs.writeFileSync(cacheFile, out.join("\n"), "utf8");
     }
   } catch {
@@ -816,7 +811,7 @@ async function routeDiscoveryCore(ctx: DiscoveryRouteContext): Promise<AskResult
         ? capnRes.reason
         : "NO_CHARTED_MEMORY",
       reason: capnRes.reason === "STORE_UNINITIALIZED"
-        ? capnRes.note || "Repository consensus memory is not initialized (.capn missing). Run waymark_init to enable Tier 4."
+        ? capnRes.note || `Repository consensus memory is not initialized (${MEMORY_STORE_LABEL} missing). Run waymark_init to enable Tier 4.`
         : (capnRes.reason === "CAPN_NON_DETERMINISTIC_MODE"
           ? capnRes.note || "Capn store is in embedding mode. Re-initialize with deterministic lexical mode."
           : `No charted memory found for "${question}".`),

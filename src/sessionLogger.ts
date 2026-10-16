@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import type { AskResult } from "./types.js";
+import { ensureStateDir, stateDir } from "./stateDir.js";
 
 export interface SessionTelemetryEvent {
   timestamp: string;
@@ -33,7 +34,7 @@ export function resolveSessionLogPath(repoRoot: string, customPath?: string): st
   if (customPath) {
     return path.resolve(repoRoot, customPath);
   }
-  const defaultDir = path.join(repoRoot, ".waymark", "sessions");
+  const defaultDir = path.join(stateDir(repoRoot), "sessions");
   return path.join(defaultDir, "active.jsonl");
 }
 
@@ -51,6 +52,7 @@ export function logSessionEvent(event: SessionTelemetryEvent, customPath?: strin
     const dir = path.dirname(logPath);
     if (!fs.existsSync(dir)) {
       try {
+        if (!customPath) ensureStateDir(event.repoRoot);
         fs.mkdirSync(dir, { recursive: true });
       } catch {
         // Directory creation might fail in read-only mounts

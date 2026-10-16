@@ -7,6 +7,10 @@ import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { extractCandidateTokens, routeDiscovery } from "../src/discoveryRouter.js";
 import { ask, publish, assertLexicalStore, initCapn } from "../src/capnAdapter.js";
+import { memoryStoreDir } from "../src/stateDir.js";
+import { useCapnStoreContract } from "./capnContract.js";
+
+useCapnStoreContract();
 import { AskJunctionResult, AskHitResult, FuzzyCandidate, WaymarkError } from "../src/types.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -15,8 +19,8 @@ const waymarkRoot = path.resolve(__dirname, "..");
 function createTestRepo(): string {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), "waymark-junction-test-"));
   execFileSync("git", ["init", "-q", "-b", "main"], { cwd: repo });
-  fs.mkdirSync(path.join(repo, ".capn"), { recursive: true });
-  fs.writeFileSync(path.join(repo, ".capn", "config.json"), '{"embedding": false}');
+  fs.mkdirSync(memoryStoreDir(repo), { recursive: true });
+  fs.writeFileSync(path.join(memoryStoreDir(repo), "config.json"), '{"embedding": false}');
   fs.mkdirSync(path.join(repo, "src", "billing"), { recursive: true });
   fs.writeFileSync(
     path.join(repo, "src", "billing", "refund.ts"),

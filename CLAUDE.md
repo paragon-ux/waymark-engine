@@ -4,7 +4,7 @@ Waymark Engine is a four-tier symbolic and semantic discovery engine for one-sho
 1. **Tier 1: AST Structural** — deterministic codedb call graph (`@paragon-ux/codedb-core` v1.1.0, resolved and fail-closed).
 2. **Tier 2: Literal Path Router** — exact and substring path resolution with zero-hallucination fail-closed defense.
 3. **Tier 3: Deterministic Fuzzy Matcher** — embedded Junegunn Choi `fzf` (`algo.go`) two-pass scoring.
-4. **Tier 4: Charted Memory** — lexical BM25 repository consensus memory via `@paragon-ux/capn-hook`.
+4. **Tier 4: Charted Memory** — lexical BM25 repository consensus memory via `@paragon-ux/capn-hook`, stored in `.waymark/memory`.
 5. **Single-File Structured AST** — precise tree-sitter class, method, function, and type extraction for TypeScript and Python.
 
 When structural and literal tiers miss, the **Discovery Junction** evaluates syntactic candidate signals and emits an inspectable recommendation (`status: "junction"`) with machine-readable continuation instructions. Misses fall through cleanly; the router never guesses.
@@ -26,6 +26,7 @@ npm run verify   # build + full test suite (covers success AND fail-closed paths
 - **Fail-closed routing**: The router must miss cleanly (`status: "miss"`) rather than fabricate an answer or speculate.
 - **Explicit invocation**: External tools run via explicit argv arrays (no shell), bounded output, hard timeouts.
 - **Bundled dependencies**: The bundled `@paragon-ux/capn-hook` and `@paragon-ux/codedb-core` are the default tested executables.
+- **Waymark-owned state only**: Everything Waymark writes in a repository goes under `.waymark/` (with `.waymark/.gitignore` = `*`); daemon socket and PID record go to the OS temp dir. Never read or write `.capn/`, which belongs to upstream capn. `memoryStoreDir(root)` (`src/stateDir.ts`) is the only store location, and every capn call passes `--root`/`--store-dir` (`capnStoreArgs`). A capn without those flags is refused with `CAPN_STORE_DIR_UNSUPPORTED`. See `docs/memory-store.md`.
 - **CPU & Resource Protection**: `CODEDB_MAX_THREADS` automatically defaults to `max(1, cpus - 1)` so 1 logical core remains free for host responsiveness.
 
 ---
@@ -83,7 +84,8 @@ When Claude Desktop runs the MCP server via stdio, the server defaults its worki
 
 ```bash
 npm install -g waymark-engine
-waymark-init                                     # one-time lexical store init per repo (or: waymark init)
+waymark-init                                     # one-time lexical store init in .waymark/memory (or: waymark init)
+waymark memory migrate                           # opt-in copy of a 3.x store from .capn/ (source never modified)
 
 waymark-ask "Who calls verifyHop?"               # Tier 1 AST answer, no external process
 waymark-ask "refundOrdr"                         # Discovery Junction (fuzzy recommended, ~92% match)

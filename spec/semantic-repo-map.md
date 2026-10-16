@@ -22,7 +22,7 @@ Conventional agent tooling attempts repository awareness through passive structu
 Waymark’s Semantic Repo Map establishes:
 * **Zero Passive Context Cost**: 0 tokens injected into the prompt. Knowledge is retrieved on-demand via `waymark ask` in ultra-compact plain text (~25–40 tokens).
 * **Architectural & Intent Grounding**: Answers fundamental questions about entrypoints, data persistence, boundary protocols, invariants, and failure handling.
-* **Unified SQLite Ledger Parity**: Bootstrap charts live directly in the existing SQLite consensus store (`.capn`) with zero file-editing overhead. The agent never reads or manages internal engine documents.
+* **Unified SQLite Ledger Parity**: Bootstrap charts live directly in the existing SQLite consensus store (`.waymark/memory`) with zero file-editing overhead. The agent never reads or manages internal engine documents.
 
 ---
 
@@ -92,7 +92,7 @@ The Semantic Repo Map categorizes all repository architecture into five canonica
 
 The Semantic Repo Map does not introduce auxiliary JSON or markdown manifest files, eliminating the cognitive aversion and syntax corruption risks of forcing agents to read or edit internal directories. 
 
-Instead, the Semantic Repo Map achieves **100% mechanism and schema parity with the existing SQLite consensus store (`.capn`)**:
+Instead, the Semantic Repo Map achieves **100% mechanism and schema parity with the existing SQLite consensus store (`.waymark/memory`)**:
 
 ```mermaid
 flowchart TD
@@ -106,7 +106,7 @@ flowchart TD
     end
     
     subgraph Single SQLite Storage Engine
-        ToolChart --> SQLite[".capn SQLite Consensus Ledger (FTS5)"]
+        ToolChart --> SQLite[".waymark/memory SQLite Consensus Ledger (FTS5)"]
         ToolBootstrap --> SQLite
         SQLite --> ToolAsk
         SQLite --> ToolStatus
@@ -160,7 +160,7 @@ A verified `not_applicable` entry satisfies the completion requirements for 100%
 
 | Command | Status | Input / Arguments | Behavioral Contract |
 | :--- | :--- | :--- | :--- |
-| `waymark bootstrap`<br>`waymark-bootstrap` | **Stable** | `[--dry-run]` | Collects source excerpts as unverified drafts. It does not initialize `.capn` or publish architectural claims; a human must verify and chart supported conclusions. `--subsystem` is rejected with `UNSUPPORTED_SUBSYSTEM`. |
+| `waymark bootstrap`<br>`waymark-bootstrap` | **Stable** | `[--dry-run]` | Collects source excerpts as unverified drafts. It does not initialize the memory store or publish architectural claims; a human must verify and chart supported conclusions. `--subsystem` is rejected with `UNSUPPORTED_SUBSYSTEM`. |
 | `waymark map status` | **Stable** | `[--plain]` | Reports health of Semantic Repo Map (e.g. `5/5 Facets Active`, drift status, stale anchors in SQLite). |
 | `waymark map show [facet]` | **Stable** | `[facet_name]`<br>`[--plain]` | Prints compact summary and backing files for one or all charted facets. |
 | `waymark map heal` | **Stable** | None | Recollects source-backed, unverified draft candidates; established consensus entries are not automatically rewritten. |
@@ -214,6 +214,6 @@ The specification formally mandates adherence to the 9 Anti-Pattern Guardrails:
 4. **Coarse-Grained Anchoring**: Anchors bind to top-level module files and entry spans, preventing alert fatigue from volatile internal line shifts.
 5. **Strict Token Budget**: Answers are hard-capped at $\le 100$ tokens (3–5 bullets) formatted as *What / Where / Invariants*.
 6. **Task Isolation**: `waymark bootstrap` is strictly an on-demand operation; regular `ask` queries on unmapped repos return a non-blocking advisory and never hijack the user's active task.
-7. **Direct SQLite Consensus Ledger Parity**: Human-verified Semantic Repo Map claims live in the existing `.capn` SQLite ledger via `publish()` / `capn chart` primitives. Bootstrap drafts are returned to the caller and are never written as established consensus.
+7. **Direct SQLite Consensus Ledger Parity**: Human-verified Semantic Repo Map claims live in the existing `.waymark/memory` SQLite ledger via `publish()` / `capn chart` primitives. Bootstrap drafts are returned to the caller and are never written as established consensus.
 8. **Two-Pass Grounding**: Bootstrap harvests existing human docs before verifying code against AST.
 9. **BM25 Lexical Scoping**: Facet entries carry unique header tags (`[FACET:*]`) and support explicit `--facet` query isolation.

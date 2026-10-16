@@ -8,6 +8,7 @@ import { collectRepoPaths, detectAstIntent, detectLiteralIntent, matchLiteralPat
 import { queryStructural } from "./codedbAdapter.js";
 import { resolveWindowsExecutable } from "./executable.js";
 import { resolveRepositoryFile } from "./paths.js";
+import { ensureStateDir, memoryStoreDir, LEGACY_STORE_DIR_NAME, MEMORY_STORE_LABEL } from "./stateDir.js";
 
 export { resolveWindowsExecutable };
 
@@ -66,6 +67,8 @@ interface ResolvedCapnCommand {
 /**
  * Resolve how to invoke capn:
  *  1. explicit executable (flag/env WAYMARK_CAPN_EXECUTABLE) — PATH/.cmd rules apply;
+ *     a `.js`/`.mjs`/`.cjs` entry (for example a local capn-hook checkout's
+ *     dist/capn.js) runs with this Node process;
  *  2. the bundled @paragon-ux/capn-hook dist entry, run with this Node process
  *     (no PATH, no shell shims);
  *  3. `capn` on PATH as a last resort.
@@ -73,6 +76,9 @@ interface ResolvedCapnCommand {
 export function resolveCapnCommand(executable?: string): ResolvedCapnCommand {
   const override = (executable && executable.trim()) || process.env.WAYMARK_CAPN_EXECUTABLE;
   if (override && override !== "capn") {
+    if (/\.[cm]?js$/iu.test(override)) {
+      return { file: process.execPath, prefix: [path.resolve(override)], viaCmdShim: false };
+    }
     const resolved = resolveWindowsExecutable(override);
     const ext = path.extname(resolved).toLowerCase();
     return { file: resolved, prefix: [], viaCmdShim: ext === ".cmd" || ext === ".bat" };
@@ -86,25 +92,53 @@ export function resolveCapnCommand(executable?: string): ResolvedCapnCommand {
   return { file: resolved, prefix: [], viaCmdShim: ext === ".cmd" || ext === ".bat" };
 }
 
+/**
+ * Global capn arguments that pin the project root and the Waymark-owned memory
+ * store. They precede the subcommand, so a capn without store-dir support sees
+ * an unknown command and prints usage before it touches disk.
+ */
+export function capnStoreArgs(root: string): string[] {
+  const absolute = path.resolve(root);
+  return ["--root", absolute, "--store-dir", memoryStoreDir(absolute)];
+}
+
+function isUsageResponse(error: unknown): boolean {
+  const candidate = error as { stdout?: string; stderr?: string };
+  return /^\s*Usage:/u.test(candidate.stdout || "") || /^\s*Usage:/u.test(candidate.stderr || "");
+}
+
+function storeDirUnsupported(): WaymarkError {
+  return new WaymarkError(
+    "CAPN_STORE_DIR_UNSUPPORTED",
+    `The capn executable does not accept --root/--store-dir, so it could only use the shared ${LEGACY_STORE_DIR_NAME} folder. Waymark refuses to run it; its memory store lives in ${MEMORY_STORE_LABEL}. Upgrade @paragon-ux/capn-hook to a release with store-dir support.`,
+    2,
+  );
+}
+
 async function execute(root: string, command: ResolvedCapnCommand, args: readonly string[]): Promise<{ stdout: string; stderr: string }> {
-  const fullArgs = [...command.prefix, ...args];
-  if (process.platform === "win32" && command.viaCmdShim) {
-    const commandLine = [command.file, ...fullArgs].map(quoteCmdArgument).join(" ");
-    return await execFileAsync(process.env.ComSpec || "cmd.exe", ["/d", "/v:off", "/s", "/c", commandLine], {
+  const fullArgs = [...command.prefix, ...capnStoreArgs(root), ...args];
+  try {
+    if (process.platform === "win32" && command.viaCmdShim) {
+      const commandLine = [command.file, ...fullArgs].map(quoteCmdArgument).join(" ");
+      return await execFileAsync(process.env.ComSpec || "cmd.exe", ["/d", "/v:off", "/s", "/c", commandLine], {
+        cwd: root,
+        windowsHide: true,
+        shell: false,
+        timeout: 15_000,
+        maxBuffer: 64 * 1024,
+      });
+    }
+    return await execFileAsync(command.file, fullArgs, {
       cwd: root,
       windowsHide: true,
       shell: false,
       timeout: 15_000,
       maxBuffer: 64 * 1024,
     });
+  } catch (error) {
+    if (isUsageResponse(error)) throw storeDirUnsupported();
+    throw error;
   }
-  return await execFileAsync(command.file, fullArgs, {
-    cwd: root,
-    windowsHide: true,
-    shell: false,
-    timeout: 15_000,
-    maxBuffer: 64 * 1024,
-  });
 }
 
 export function capnChartArgs(question: string, answer: string, files: readonly string[]): string[] {
@@ -113,7 +147,7 @@ export function capnChartArgs(question: string, answer: string, files: readonly 
 }
 
 function capnConfigPath(root: string): string {
-  return path.join(root, ".capn", "config.json");
+  return path.join(memoryStoreDir(root), "config.json");
 }
 
 /**
@@ -144,7 +178,7 @@ export function assertLexicalStore(root: string): void {
   if (config === null) {
     throw new WaymarkError(
       "CAPN_STORE_UNINITIALIZED",
-      "Capn store is not initialized. Run `capn init` (the lexical-only @paragon-ux/capn-hook) in the repository first — the engine requires deterministic lexical (BM25) recall.",
+      `Memory store is not initialized (${MEMORY_STORE_LABEL} missing). Run \`waymark init\` in the repository first — the engine requires deterministic lexical (BM25) recall.`,
       2,
     );
   }
@@ -175,7 +209,8 @@ export async function publish(
   if (profile === "none") return { published: false, adapter: profile, output: "publication disabled" };
 
   if (readCapnConfig(root) === null) {
-    await initCapn(root, executable);
+    const initialized = await initCapn(root, executable);
+    if (!initialized.ok) return { published: false, adapter: profile, output: "", error: String(initialized.error) };
   }
   assertLexicalStore(root);
   const args = capnChartArgs(question, answer, selectedFiles);
@@ -199,7 +234,7 @@ export async function publish(
 
 function lookupExactCapnEntry(root: string, query: string): unknown | null {
   try {
-    const entriesDir = path.join(root, ".capn", "entries");
+    const entriesDir = path.join(memoryStoreDir(root), "entries");
     if (!fs.existsSync(entriesDir)) return null;
 
     const files = fs.readdirSync(entriesDir).filter((f) => f.endsWith(".md"));
@@ -285,7 +320,7 @@ async function queryCapnMemory(
       hit: false,
       result: null,
       reason: "STORE_UNINITIALIZED",
-      note: "Repository consensus memory is not initialized (.capn missing). Run waymark_init to enable Tier 4.",
+      note: `Repository consensus memory is not initialized (${MEMORY_STORE_LABEL} missing). Run waymark_init to enable Tier 4.`,
     };
   }
   if (config.embedding !== false) {
@@ -315,6 +350,9 @@ async function queryCapnMemory(
     }
     return { hit: false, result: null };
   } catch (error) {
+    if (error instanceof WaymarkError) {
+      return { hit: false, result: null, error: `${error.code}: ${error.message}` };
+    }
     const candidate = error as { message?: string; stderr?: string; stdout?: string; code?: string | number };
     const combined = `${candidate.stdout || ""}\n${candidate.stderr || ""}`;
     if (combined.includes("No charted answer.")) {
@@ -400,6 +438,9 @@ async function runCapnSimple(root: string, executable: string, args: readonly st
     const result = await execute(root, resolveCapnCommand(executable), args);
     return { ok: true, exitCode: 0, output: digestOutput(result.stdout || result.stderr || "", MAX_OUTPUT_LARGE) };
   } catch (error) {
+    if (error instanceof WaymarkError) {
+      return { ok: false, exitCode: error.exitCode, output: `${error.code}: ${error.message}` };
+    }
     const candidate = error as { message?: string; stdout?: string; stderr?: string; code?: string | number };
     const detail = candidate.stderr || candidate.stdout || candidate.message || "capn command failed";
     return {
@@ -486,15 +527,76 @@ export async function context(root: string, executable: string): Promise<Record<
       ok: true,
       exitCode: 0,
       store: "uninitialized",
-      output: routingHints + "Store is currently uninitialized (.capn missing). Run waymark_init to enable Tier 4 semantic memory.",
+      output: routingHints + `Store is currently uninitialized (${MEMORY_STORE_LABEL} missing). Run waymark_init to enable Tier 4 semantic memory.`,
     };
   }
   const result = await runCapnSimple(root, executable, ["context"]);
   return { waymark: 1, kind: "context", ok: result.ok, exitCode: result.exitCode, ...(result.ok ? { output: routingHints + result.output } : { error: result.output }) };
 }
 
-/** Initialize the repository's Capn lexical store using the bundled fork. */
+/** Initialize the repository's lexical memory store (`.waymark/memory`) using the bundled fork. */
 export async function initCapn(root: string, executable?: string): Promise<Record<string, unknown>> {
+  ensureStateDir(root);
   const result = await runCapnSimple(root, executable ?? "", ["init"]);
   return { waymark: 1, kind: "init", ok: result.ok, exitCode: result.exitCode, ...(result.ok ? { output: result.output } : { error: result.output }) };
+}
+
+const LEGACY_ENTRY_FILE = /^[0-9a-f]{8}\.md$/u;
+
+/**
+ * Explicit, opt-in import of charted entries from a store that an earlier
+ * `waymark init` created in the legacy folder. The source is only read: that
+ * folder may belong to upstream capn, so nothing in it is moved, modified, or deleted.
+ * Fails closed unless the source is a lexical store of capn entries and the
+ * Waymark memory store holds no entries yet.
+ */
+export async function migrateMemoryStore(root: string, executable: string, from = LEGACY_STORE_DIR_NAME): Promise<Record<string, unknown>> {
+  const source = path.resolve(root, from);
+  const target = memoryStoreDir(root);
+  const refuse = (code: string, message: string): Record<string, unknown> =>
+    ({ waymark: 1, kind: "migrate", ok: false, exitCode: 2, error: `${code}: ${message} Nothing was copied.` });
+
+  const relativeSource = path.relative(target, source);
+  if (relativeSource === "" || (!relativeSource.startsWith("..") && !path.isAbsolute(relativeSource))) {
+    return refuse("MIGRATE_SOURCE_INVALID", `${from} is the Waymark memory store itself.`);
+  }
+  let config: Record<string, unknown>;
+  try {
+    config = JSON.parse(fs.readFileSync(path.join(source, "config.json"), "utf8")) as Record<string, unknown>;
+  } catch {
+    return refuse("MIGRATE_SOURCE_NOT_LEXICAL", `${from}/config.json is missing or unreadable, so ${from} is not a store created by waymark init.`);
+  }
+  if (config.embedding !== false) {
+    return refuse("MIGRATE_SOURCE_NOT_LEXICAL", `${from} is not a lexical (embedding: false) store, so it was not created by waymark init.`);
+  }
+  const sourceEntries = path.join(source, "entries");
+  const files = fs.existsSync(sourceEntries) ? fs.readdirSync(sourceEntries).filter((file) => LEGACY_ENTRY_FILE.test(file)).sort() : [];
+  const invalid = files.filter((file) => !fs.readFileSync(path.join(sourceEntries, file), "utf8").startsWith("---\ncapn: 1\n"));
+  if (invalid.length > 0) {
+    return refuse("MIGRATE_SOURCE_INVALID", `${from}/entries holds files that are not capn entries: ${invalid.join(", ")}.`);
+  }
+  const targetEntries = path.join(target, "entries");
+  if (fs.existsSync(targetEntries) && fs.readdirSync(targetEntries).some((file) => file.endsWith(".md"))) {
+    return refuse("MIGRATE_DESTINATION_NOT_EMPTY", `${MEMORY_STORE_LABEL} already holds charted entries; migration never merges stores.`);
+  }
+
+  const initialized = await initCapn(root, executable);
+  if (!initialized.ok) return { ...initialized, kind: "migrate", copied: 0 };
+  for (const file of files) {
+    fs.copyFileSync(path.join(sourceEntries, file), path.join(targetEntries, file), fs.constants.COPYFILE_EXCL);
+  }
+  // Re-running init rebuilds the lexical index and file map from the copied entries.
+  const reindexed = await runCapnSimple(root, executable, ["init"]);
+  return {
+    waymark: 1,
+    kind: "migrate",
+    ok: reindexed.ok,
+    exitCode: reindexed.exitCode,
+    copied: files.length,
+    from: source,
+    to: target,
+    ...(reindexed.ok
+      ? { output: `Copied ${files.length} charted entries from ${from} into ${MEMORY_STORE_LABEL}. ${from} was only read and is unchanged.` }
+      : { error: reindexed.output }),
+  };
 }

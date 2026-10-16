@@ -35,7 +35,7 @@ A query is classified as a literal filename when:
 
 ## 3. Matching Cascade & Invariants
 
-Matching follows a strict 4-step fail-closed cascade over repository paths collected via `collectRepoPaths(root)` (cached with a 30-second TTL, excluding build directories such as `node_modules`, `dist`, `.git`, `.capn`):
+Matching follows a strict 4-step fail-closed cascade over repository paths collected via `collectRepoPaths(root)` (cached with a 30-second TTL, excluding build directories such as `node_modules`, `dist`, `.git`, `.capn`, `.waymark`):
 
 1. **Exact Match (Case-Insensitive with Strict Tie-Breaker)**:
    Matches all paths matching the normalized query case-insensitively. If multiple paths match only differing by case, a strict case-sensitive match takes precedence.

@@ -14,7 +14,7 @@ npm run verify
 ```
 
 `npm run verify` compiles the TypeScript and runs the Node test suite. Do not commit
-`dist/`, `node_modules/`, `.capn/`, or runtime evidence.
+`dist/`, `node_modules/`, `.capn/`, `.waymark/`, or runtime evidence.
 
 Keep CLI arguments explicit and use `execFile`-style argv boundaries for external
 tools (the Capn adapter never goes through a shell). The router must miss cleanly

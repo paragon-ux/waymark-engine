@@ -35,10 +35,12 @@ Waymark ships with prebuilt artifacts in `dist/` — no TypeScript build steps o
 Waymark organizes all operations into two clear verbs: **`waymark ask`** (Read & Discovery) and **`waymark memory`** (Write, Bootstrap & Consensus).
 
 ### 1. Initialize Consensus Store
-Before using long-term architectural memory, initialize the deterministic lexical BM25 store (`.capn`):
+Before using long-term architectural memory, initialize the deterministic lexical BM25 store (`.waymark/memory`):
 ```bash
 waymark memory init
 ```
+
+The store lives in `.waymark/memory`, and `.waymark/.gitignore` keeps it out of `git status`. Upgrading from 3.x with charts in `.capn/`? Run `waymark memory migrate`; see [Memory Store & State Layout](memory-store.md).
 
 ### 2. Discover Symbols & Call Graphs (`waymark ask`)
 

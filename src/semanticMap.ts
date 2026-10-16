@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { repoRoot, resolveRepositoryFile } from "./paths.js";
+import { memoryStoreDir, MEMORY_STORE_LABEL } from "./stateDir.js";
 import { WaymarkError } from "./types.js";
 
 export type SemanticFacetId =
@@ -79,11 +80,11 @@ export interface ParsedCapnEntry {
 }
 
 /**
- * Directly read charted entries from .capn/entries directory.
+ * Directly read charted entries from the memory store's entries directory.
  * Fast, synchronous, zero-subprocess overhead.
  */
 export function readChartedEntries(root: string): ParsedCapnEntry[] {
-  const entriesDir = path.join(root, ".capn", "entries");
+  const entriesDir = path.join(memoryStoreDir(root), "entries");
   if (!fs.existsSync(entriesDir)) return [];
 
   const entries: ParsedCapnEntry[] = [];
@@ -226,7 +227,7 @@ export function validateFacetBackingFiles(root: string, files: string[], isNotAp
  * Inspect the health, completion percentage, and anchor drift of the Semantic Repo Map.
  */
 export function getSemanticMapStatus(root: string): SemanticMapStatus {
-  const capnConfig = path.join(root, ".capn", "config.json");
+  const capnConfig = path.join(memoryStoreDir(root), "config.json");
   if (!fs.existsSync(capnConfig)) {
     const emptyFacets = {} as Record<SemanticFacetId, FacetStatus>;
     for (const fid of ALL_FACET_IDS) {
@@ -249,7 +250,7 @@ export function getSemanticMapStatus(root: string): SemanticMapStatus {
       facets: emptyFacets,
       missing: [...ALL_FACET_IDS],
       drifted: [],
-      message: "Consensus memory store (.capn) is uninitialized. Run 'waymark memory init' to initialize it; bootstrap only collects unverified source-evidence drafts.",
+      message: `Consensus memory store (${MEMORY_STORE_LABEL}) is uninitialized. Run 'waymark memory init' to initialize it; bootstrap only collects unverified source-evidence drafts.`,
     };
   }
 

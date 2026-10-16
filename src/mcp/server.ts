@@ -17,6 +17,15 @@ const require = createRequire(import.meta.url);
 /** Version reported in MCP serverInfo, read from package.json so it cannot drift from releases. */
 export const PACKAGE_VERSION: string = (require("../../../package.json") as { version: string }).version;
 
+/** Newest first; `server/discover` advertises this list and per-request `_meta` versions are checked against it. */
+export const SUPPORTED_PROTOCOL_VERSIONS = ["2026-07-28", "2025-11-25", "2024-11-05"];
+
+/** Methods whose results are a `CacheableResult` (required `ttlMs` + `cacheScope`) in protocol revision 2026-07-28. */
+const CACHEABLE_METHODS = new Set(["server/discover", "tools/list", "prompts/list", "resources/list", "resources/read"]);
+
+/** Tools, prompts, resources, and server metadata are fixed for the life of a server process. */
+const CACHE_TTL_MS = 3_600_000;
+
 /**
  * Implicit daemon warm-up indexes the entire root, so it only runs for a real project:
  * a git checkout or an initialized `.capn` store, never the home directory or a filesystem root.
@@ -179,8 +188,30 @@ export class McpServer {
       return null;
     }
 
-    const response = await this.handleRequest(message as unknown as JsonRpcRequest);
-    return JSON.stringify(response);
+    const request = message as unknown as JsonRpcRequest;
+    const response = await this.handleRequest(request);
+    return JSON.stringify(this.withResultFields(response, request.method));
+  }
+
+  /**
+   * Adds the result fields protocol revision 2026-07-28 requires (`resultType`, cache hints)
+   * plus `serverInfo` in `_meta`. Results stay valid for earlier revisions, which ignore extra fields.
+   */
+  private withResultFields(response: JsonRpcResponse, method: string): JsonRpcResponse {
+    if (!response.result || typeof response.result !== "object") return response;
+    const result = response.result as Record<string, unknown>;
+    return {
+      ...response,
+      result: {
+        resultType: "complete",
+        ...(CACHEABLE_METHODS.has(method) ? { ttlMs: CACHE_TTL_MS, cacheScope: "private" } : {}),
+        ...result,
+        _meta: {
+          "io.modelcontextprotocol/serverInfo": { name: this.serverName, version: this.serverVersion },
+          ...(result._meta as Record<string, unknown> | undefined),
+        },
+      },
+    };
   }
 
   private async handleNotification(notification: JsonRpcNotification): Promise<void> {
@@ -192,25 +223,37 @@ export class McpServer {
   private async handleRequest(request: JsonRpcRequest): Promise<JsonRpcResponse> {
     const { id, method, params } = request;
 
-    const supportedVersions = ["2026-07-28", "2025-11-25", "2024-11-05"];
+    const supportedVersions = SUPPORTED_PROTOCOL_VERSIONS;
+
+    // Revision 2026-07-28 carries the protocol version on every request; discover and the legacy handshake negotiate it instead.
+    const requestedVersion = (params?._meta as Record<string, unknown> | undefined)?.["io.modelcontextprotocol/protocolVersion"];
+    if (
+      typeof requestedVersion === "string"
+      && method !== "server/discover"
+      && method !== "initialize"
+      && !supportedVersions.includes(requestedVersion)
+    ) {
+      return {
+        jsonrpc: "2.0",
+        id,
+        error: {
+          code: -32022,
+          message: "Unsupported protocol version",
+          data: { supported: supportedVersions, requested: requestedVersion },
+        },
+      };
+    }
 
     if (method === "server/discover") {
       return {
         jsonrpc: "2.0",
         id,
         result: {
-          resultType: "complete",
           supportedVersions,
           capabilities: {
             tools: {},
             resources: {},
             prompts: {},
-          },
-          _meta: {
-            "io.modelcontextprotocol/serverInfo": {
-              name: this.serverName,
-              version: this.serverVersion,
-            },
           },
           instructions: "Waymark discovery engine: AST structural graph, literal path router, deterministic fzf fuzzy matcher, and repository consensus BM25 memory.",
         },

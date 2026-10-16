@@ -1,3 +1,7 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { createRequire } from "node:module";
 import { CAPN_TOOLS } from "./capnTools.js";
 import {
   JsonRpcNotification,
@@ -7,6 +11,22 @@ import {
   McpResourceDefinition,
   McpToolHandler,
 } from "./types.js";
+
+const require = createRequire(import.meta.url);
+
+/** Version reported in MCP serverInfo, read from package.json so it cannot drift from releases. */
+export const PACKAGE_VERSION: string = (require("../../../package.json") as { version: string }).version;
+
+/**
+ * Implicit daemon warm-up indexes the entire root, so it only runs for a real project:
+ * a git checkout or an initialized `.capn` store, never the home directory or a filesystem root.
+ */
+export function shouldWarmResidentDaemon(root: string): boolean {
+  const resolved = path.resolve(root);
+  if (path.dirname(resolved) === resolved) return false;
+  if (path.relative(os.homedir(), resolved) === "") return false;
+  return fs.existsSync(path.join(resolved, ".git")) || fs.existsSync(path.join(resolved, ".capn"));
+}
 
 export const CAPN_RESOURCES: McpResourceDefinition[] = [
   {
@@ -85,12 +105,14 @@ export class McpServer {
   private readonly root: string;
   private readonly enableDaemon: boolean;
   private daemon: any = null;
+  private daemonWarmup: Promise<void> | null = null;
+  private closed = false;
   constructor(optionsOrHandlers: McpServerOptions | McpToolHandler[] = CAPN_TOOLS) {
     process.env.WAYMARK_MCP_SESSION = "1";
     const verbose = process.env.WAYMARK_MCP_VERBOSE === "1" || process.env.WAYMARK_MCP_ALL_TOOLS === "1";
     if (Array.isArray(optionsOrHandlers)) {
       this.serverName = "waymark-engine";
-      this.serverVersion = "2.7.3";
+      this.serverVersion = PACKAGE_VERSION;
       this.canonicalOnly = !verbose;
       this.resources = CAPN_RESOURCES;
       this.prompts = CAPN_PROMPTS;
@@ -101,7 +123,7 @@ export class McpServer {
       }
     } else {
       this.serverName = optionsOrHandlers.name ?? "waymark-engine";
-      this.serverVersion = optionsOrHandlers.version ?? "2.7.3";
+      this.serverVersion = optionsOrHandlers.version ?? PACKAGE_VERSION;
       this.canonicalOnly = optionsOrHandlers.canonicalOnly !== undefined
         ? optionsOrHandlers.canonicalOnly
         : !verbose;
@@ -433,18 +455,34 @@ export class McpServer {
     };
   }
 
-  public async startResidentDaemon(): Promise<void> {
-    if (!this.enableDaemon || this.daemon) return;
+  /** Warms the resident daemon once per server; repeat calls share the first warm-up. */
+  public startResidentDaemon(): Promise<void> {
+    this.daemonWarmup ??= this.warmResidentDaemon();
+    return this.daemonWarmup;
+  }
+
+  private async warmResidentDaemon(): Promise<void> {
+    if (!this.enableDaemon || !shouldWarmResidentDaemon(this.root)) return;
+    let daemon: any = null;
     try {
       const { WaymarkDaemon } = await import("../daemon.js");
-      this.daemon = new WaymarkDaemon(this.root, 0); // 0 = keep alive for entire MCP session
-      await this.daemon.start();
+      if (this.closed) return;
+      daemon = new WaymarkDaemon(this.root, 0); // 0 = keep alive for entire MCP session
+      await daemon.start();
     } catch {
       // non-fatal: fail closed to cold query path
+    }
+    if (!daemon) return;
+    if (this.closed) {
+      // The session ended mid warm-up; release the listener so the process can exit.
+      daemon.stop();
+    } else {
+      this.daemon = daemon;
     }
   }
 
   public close(): void {
+    this.closed = true;
     if (this.daemon) {
       try {
         this.daemon.stop();
@@ -456,8 +494,6 @@ export class McpServer {
   }
 
   public async runStdio(): Promise<void> {
-    await this.startResidentDaemon();
-
     const cleanup = () => this.close();
     process.once("SIGINT", cleanup);
     process.once("SIGTERM", cleanup);
@@ -489,5 +525,8 @@ export class McpServer {
       }
       this.close();
     });
+
+    // Warm up only after stdin is wired: the handshake must never wait on indexing the root.
+    void this.startResidentDaemon();
   }
 }

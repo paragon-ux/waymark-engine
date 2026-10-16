@@ -15,7 +15,7 @@ When structural and literal tiers miss, the **Discovery Junction** evaluates syn
 
 ```bash
 npm ci
-npm run verify   # build + 43-test suite (covers success AND fail-closed paths)
+npm run verify   # build + full test suite (covers success AND fail-closed paths)
 ```
 
 ---

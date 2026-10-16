@@ -4,6 +4,24 @@ All notable changes to `waymark-engine` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.0] - 2026-10-16
+
+### Added
+- **MCP `2026-07-28` Result Compliance (`src/mcp/server.ts`)**: Every result now carries `resultType: "complete"` and identifies the server in `_meta["io.modelcontextprotocol/serverInfo"]`. `CacheableResult` methods (`server/discover`, `tools/list`, `prompts/list`, `resources/list`, `resources/read`) carry `ttlMs` and `cacheScope`. Earlier-revision clients ignore the extra fields.
+- **Per-Request Protocol Version Guard (`src/mcp/server.ts`)**: Requests whose `_meta["io.modelcontextprotocol/protocolVersion"]` is unsupported fail with `UnsupportedProtocolVersionError` (`-32022`, `data: { supported, requested }`). `server/discover` and `initialize` still answer so clients can renegotiate.
+
+### Fixed
+- **MCP Clients Rejected `tools/list` (`src/mcp/server.ts`)**: `server/discover` advertised `2026-07-28`, so clients such as Claude Code negotiated that revision and then rejected `tools/list` for missing `resultType`. The server connected with no tools.
+- **Stdio Handshake Blocked on Daemon Warm-Up (`src/mcp/server.ts`)**: `runStdio` awaited resident-daemon warm-up (codedb `tree` plus prefix-trie walk over the working directory) before reading stdin. Launched from a large folder such as the home directory, the server never answered `initialize`. Stdin is now wired first and warm-up runs in the background.
+- **Implicit Warm-Up Scope (`src/mcp/server.ts`)**: The MCP server only warms the resident daemon in project roots (`.git` or `.capn`), never the home directory or a filesystem root. A daemon whose warm-up finishes after stdin closes is stopped so the process exits.
+- **Stale `serverInfo.version` (`src/mcp/server.ts`, `src/mcp/capnIndex.ts`)**: Reported `2.7.3`; now read from `package.json`.
+
+### Tests
+- `test/mcpStdioStartup.test.ts`: handshake while warm-up never finishes, late warm-up after EOF, project-root gate, reported version.
+- `test/mcpProtocol.test.ts`: `resultType` and `serverInfo` on every result, cache hints on cacheable results only, `-32022` for unsupported versions.
+
+---
+
 ## [3.0.0] - 2026-10-14
 
 ### Changed (Breaking Architecture Milestone)

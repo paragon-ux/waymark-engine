@@ -2,6 +2,10 @@
 
 Waymark Engine implements the Model Context Protocol (MCP) dual-era specification (`2026-07-28` modern discovery + `2024-11-05` standard handshake) over stdio.
 
+- **Supported revisions**: `2026-07-28`, `2025-11-25`, `2024-11-05` (advertised by `server/discover`).
+- **`2026-07-28` results**: every result carries `resultType` and `_meta["io.modelcontextprotocol/serverInfo"]`; list and read results carry `ttlMs` and `cacheScope`. A request whose `_meta` protocol version is unsupported fails with `-32022`.
+- **Startup**: the server answers the handshake immediately. When launched inside a project root (`.git` or `.capn`), it warms the resident daemon in the background; elsewhere, such as a home directory, it skips warm-up.
+
 ---
 
 ## The Two-Verb Interface (<450 Tokens)
@@ -118,7 +122,15 @@ Dispatches consensus memory and lifecycle operations using the **`action`** para
 }
 ```
 
-### 2. Claude Desktop (`claude_desktop_config.json`)
+### 2. Claude Code and the Claude Desktop Code tab (`~/.claude.json`)
+```bash
+claude mcp add waymark-engine --scope user -e CODEDB_ALLOW_TEMP=1 -- npx -y waymark-engine
+claude mcp get waymark-engine   # expect: Connected
+```
+Claude Code starts the server in the current project directory, so `root` defaults to that project.
+
+### 3. Claude Desktop chat (`claude_desktop_config.json`)
+Edit this file only while Claude Desktop is fully quit; the running app rewrites it. On Windows Store (MSIX) installs, the file lives under `%LOCALAPPDATA%\Packages\Claude_<id>\LocalCache\Roaming\Claude\`.
 ```json
 {
   "mcpServers": {
@@ -133,7 +145,7 @@ Dispatches consensus memory and lifecycle operations using the **`action`** para
 }
 ```
 
-### 3. Cursor / Zed / Continue
+### 4. Cursor / Zed / Continue
 - **Command**: `npx -y waymark-engine`
 - **Transport**: `stdio`
 - **Environment**: `CODEDB_ALLOW_TEMP=1`

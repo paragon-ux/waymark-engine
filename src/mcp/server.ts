@@ -1,7 +1,8 @@
 import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
 import { createRequire } from "node:module";
+import { canonicalRoot, WaymarkDaemon } from "../daemon.js";
+import { collectRepoPathsBounded } from "../discoveryRouter.js";
+import { repoRootAsync } from "../paths.js";
 import { CAPN_TOOLS } from "./capnTools.js";
 import {
   JsonRpcNotification,
@@ -26,15 +27,56 @@ const CACHEABLE_METHODS = new Set(["server/discover", "tools/list", "prompts/lis
 /** Tools, prompts, resources, and server metadata are fixed for the life of a server process. */
 const CACHE_TTL_MS = 3_600_000;
 
+/** Repositories with more files than this are never warmed; their calls stay on the cold path. */
+const DEFAULT_WARM_MAX_FILES = 50_000;
+/** A warm-up walk that runs longer than this is abandoned. */
+const DEFAULT_WARM_TIMEOUT_MS = 10_000;
+/** Each warm root holds a resident codedb process and a path trie, so only a few stay warm. */
+const DEFAULT_WARM_MAX_ROOTS = 2;
+/** Roots remembered as over budget or failed, so they are not re-walked on every call. */
+const MAX_REMEMBERED_ROOTS = 32;
+
+export interface McpWarmupOptions {
+  /**
+   * Warm a resident daemon for each root that tool calls target. Defaults to on once
+   * `runStdio()` owns the process and off for direct `handleMessage()` use.
+   * `WAYMARK_MCP_WARM=0`, `WAYMARK_DISABLE_RESIDENT=1`, or `enableDaemon: false` force it off.
+   */
+  enabled?: boolean;
+  /** Abandon warm-up for a root with more files than this (`WAYMARK_MCP_WARM_MAX_FILES`). */
+  maxFiles?: number;
+  /** Abandon warm-up for a root whose file walk runs longer than this (`WAYMARK_MCP_WARM_TIMEOUT_MS`). */
+  timeoutMs?: number;
+  /** Most roots kept warm at once; the least recently used is stopped (`WAYMARK_MCP_WARM_MAX_ROOTS`). */
+  maxRoots?: number;
+}
+
 /**
- * Implicit daemon warm-up indexes the entire root, so it only runs for a real project:
- * a git checkout or an initialized `.capn` store, never the home directory or a filesystem root.
+ * - `warming`: walking the tree or starting the daemon.
+ * - `warm`: this server's daemon serves the root.
+ * - `external`: another process already serves the root.
+ * - `over-budget`: the root exceeded the file or time budget and stays on the cold path.
+ * - `failed`: the root could not be resolved or the daemon failed to start.
+ * - `stopped`: the server closed or evicted the root mid warm-up.
+ * - `disabled`: warm-up is off.
  */
-export function shouldWarmResidentDaemon(root: string): boolean {
-  const resolved = path.resolve(root);
-  if (path.dirname(resolved) === resolved) return false;
-  if (path.relative(os.homedir(), resolved) === "") return false;
-  return fs.existsSync(path.join(resolved, ".git")) || fs.existsSync(path.join(resolved, ".capn"));
+export type WarmupState = "warming" | "warm" | "external" | "over-budget" | "failed" | "stopped" | "disabled";
+
+interface WarmRoot {
+  root: string;
+  state: WarmupState;
+  daemon: WaymarkDaemon | null;
+  abort: AbortController;
+  done: Promise<WarmupState>;
+}
+
+function envFlagOff(value: string | undefined): boolean {
+  return value !== undefined && ["0", "false", "off", "no"].includes(value.trim().toLowerCase());
+}
+
+function positiveInt(value: number | string | undefined, fallback: number): number {
+  const parsed = typeof value === "number" ? value : Number.parseInt(value ?? "", 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
 }
 
 export const CAPN_RESOURCES: McpResourceDefinition[] = [
@@ -102,6 +144,7 @@ export interface McpServerOptions {
   prompts?: McpPromptDefinition[];
   root?: string;
   enableDaemon?: boolean;
+  warmup?: McpWarmupOptions;
 }
 
 export class McpServer {
@@ -112,9 +155,15 @@ export class McpServer {
   private readonly resources: McpResourceDefinition[];
   private readonly prompts: McpPromptDefinition[];
   private readonly root: string;
-  private readonly enableDaemon: boolean;
-  private daemon: any = null;
-  private daemonWarmup: Promise<void> | null = null;
+  private readonly warmupAllowed: boolean;
+  private warmupEnabled: boolean;
+  private readonly warmMaxFiles: number;
+  private readonly warmTimeoutMs: number;
+  private readonly warmMaxRoots: number;
+  /** Keyed by canonical repository root, least recently used first. */
+  private readonly warmRoots = new Map<string, WarmRoot>();
+  /** Canonical requested root to the repository root that tools resolve it to. */
+  private readonly repoRoots = new Map<string, Promise<string>>();
   private closed = false;
   constructor(optionsOrHandlers: McpServerOptions | McpToolHandler[] = CAPN_TOOLS) {
     process.env.WAYMARK_MCP_SESSION = "1";
@@ -126,7 +175,6 @@ export class McpServer {
       this.resources = CAPN_RESOURCES;
       this.prompts = CAPN_PROMPTS;
       this.root = process.cwd();
-      this.enableDaemon = true;
       for (const item of optionsOrHandlers) {
         this.toolMap.set(item.definition.name, item);
       }
@@ -140,11 +188,20 @@ export class McpServer {
       this.resources = optionsOrHandlers.resources ?? CAPN_RESOURCES;
       this.prompts = optionsOrHandlers.prompts ?? CAPN_PROMPTS;
       this.root = optionsOrHandlers.root ?? process.cwd();
-      this.enableDaemon = optionsOrHandlers.enableDaemon !== false;
       for (const item of tools) {
         this.toolMap.set(item.definition.name, item);
       }
     }
+    const options: McpServerOptions = Array.isArray(optionsOrHandlers) ? {} : optionsOrHandlers;
+    const warmup = options.warmup ?? {};
+    this.warmupAllowed = options.enableDaemon !== false
+      && warmup.enabled !== false
+      && !envFlagOff(process.env.WAYMARK_MCP_WARM)
+      && process.env.WAYMARK_DISABLE_RESIDENT !== "1";
+    this.warmupEnabled = this.warmupAllowed && warmup.enabled === true;
+    this.warmMaxFiles = positiveInt(warmup.maxFiles ?? process.env.WAYMARK_MCP_WARM_MAX_FILES, DEFAULT_WARM_MAX_FILES);
+    this.warmTimeoutMs = positiveInt(warmup.timeoutMs ?? process.env.WAYMARK_MCP_WARM_TIMEOUT_MS, DEFAULT_WARM_TIMEOUT_MS);
+    this.warmMaxRoots = positiveInt(warmup.maxRoots ?? process.env.WAYMARK_MCP_WARM_MAX_ROOTS, DEFAULT_WARM_MAX_ROOTS);
   }
 
   public getToolDefinitions() {
@@ -315,6 +372,10 @@ export class McpServer {
           },
         };
       }
+
+      // Fire and forget: this call takes the cold path; later calls on the root find it warm.
+      const targetRoot = typeof toolArgs.root === "string" && toolArgs.root.trim() ? toolArgs.root.trim() : this.root;
+      void this.warmRoot(targetRoot);
 
       try {
         const result = await handler.handler(toolArgs);
@@ -498,42 +559,105 @@ export class McpServer {
     };
   }
 
-  /** Warms the resident daemon once per server; repeat calls share the first warm-up. */
-  public startResidentDaemon(): Promise<void> {
-    this.daemonWarmup ??= this.warmResidentDaemon();
-    return this.daemonWarmup;
+  /**
+   * Warms a resident daemon in the background for the repository that tools resolve `root` to.
+   * Memoized per repository, so repeat calls share one warm-up; never rejects.
+   */
+  public warmRoot(root: string = this.root): Promise<WarmupState> {
+    if (!this.warmupEnabled || this.closed) return Promise.resolve("disabled");
+    const requested = canonicalRoot(root);
+    let repo = this.repoRoots.get(requested);
+    if (!repo) {
+      repo = repoRootAsync(root);
+      this.repoRoots.set(requested, repo);
+      // A root that does not exist yet may exist on a later call.
+      repo.catch(() => this.repoRoots.delete(requested));
+    }
+    return repo.then((repoRoot) => this.warmRepo(repoRoot), (): WarmupState => "failed");
   }
 
-  private async warmResidentDaemon(): Promise<void> {
-    if (!this.enableDaemon || !shouldWarmResidentDaemon(this.root)) return;
-    let daemon: any = null;
-    try {
-      const { WaymarkDaemon } = await import("../daemon.js");
-      if (this.closed) return;
-      daemon = new WaymarkDaemon(this.root, 0); // 0 = keep alive for entire MCP session
-      await daemon.start();
-    } catch {
-      // non-fatal: fail closed to cold query path
+  /** Warm-up state per repository root, least recently used first. */
+  public getWarmupStatus(): Array<{ root: string; state: WarmupState }> {
+    return Array.from(this.warmRoots.values(), ({ root, state }) => ({ root, state }));
+  }
+
+  private warmRepo(repoRoot: string): Promise<WarmupState> {
+    if (this.closed) return Promise.resolve("stopped");
+    const key = canonicalRoot(repoRoot);
+    const known = this.warmRoots.get(key);
+    if (known) {
+      this.warmRoots.delete(key);
+      this.warmRoots.set(key, known);
+      return known.done;
     }
-    if (!daemon) return;
-    if (this.closed) {
-      // The session ended mid warm-up; release the listener so the process can exit.
-      daemon.stop();
-    } else {
-      this.daemon = daemon;
+    const entry: WarmRoot = { root: repoRoot, state: "warming", daemon: null, abort: new AbortController(), done: Promise.resolve("warming") };
+    this.warmRoots.set(key, entry);
+    entry.done = this.runWarmup(entry);
+    this.evictWarmRoots();
+    return entry.done;
+  }
+
+  private async runWarmup(entry: WarmRoot): Promise<WarmupState> {
+    const { signal } = entry.abort;
+    const settle = (state: WarmupState): WarmupState => {
+      entry.state = state;
+      return state;
+    };
+    try {
+      if (!(await fs.promises.stat(entry.root)).isDirectory()) return settle("failed");
+      const walk = await collectRepoPathsBounded(entry.root, {
+        maxFiles: this.warmMaxFiles,
+        timeoutMs: this.warmTimeoutMs,
+        signal,
+      });
+      if (!walk.complete) return settle(walk.reason === "aborted" ? "stopped" : "over-budget");
+      const daemon = new WaymarkDaemon(entry.root, 0); // 0 = keep alive for the MCP session
+      let serving = false;
+      try {
+        serving = await daemon.start({ paths: walk.paths, signal });
+      } finally {
+        // stop() also releases the resident codedb client that a refused or failed start left open.
+        if (!serving || signal.aborted) daemon.stop();
+      }
+      if (signal.aborted) return settle("stopped");
+      if (!serving) return settle("external");
+      entry.daemon = daemon;
+      return settle("warm");
+    } catch {
+      // non-fatal: the root stays on the cold query path
+      return settle(signal.aborted ? "stopped" : "failed");
+    }
+  }
+
+  private evictWarmRoots(): void {
+    const holding = Array.from(this.warmRoots).filter(([, entry]) => entry.state === "warming" || entry.state === "warm");
+    for (const [key, entry] of holding.slice(0, Math.max(0, holding.length - this.warmMaxRoots))) {
+      this.warmRoots.delete(key);
+      this.releaseWarmRoot(entry);
+    }
+    for (const [key, entry] of this.warmRoots) {
+      if (this.warmRoots.size <= this.warmMaxRoots + MAX_REMEMBERED_ROOTS) break;
+      if (entry.state !== "warming" && entry.state !== "warm") this.warmRoots.delete(key);
+    }
+  }
+
+  /** Stops a warm daemon now; a warm-up still in flight sees the abort and stops its own daemon when it settles. */
+  private releaseWarmRoot(entry: WarmRoot): void {
+    entry.abort.abort();
+    if (entry.daemon) {
+      try {
+        entry.daemon.stop();
+      } catch {
+        // ignore
+      }
+      entry.daemon = null;
     }
   }
 
   public close(): void {
     this.closed = true;
-    if (this.daemon) {
-      try {
-        this.daemon.stop();
-      } catch {
-        // ignore
-      }
-      this.daemon = null;
-    }
+    for (const entry of this.warmRoots.values()) this.releaseWarmRoot(entry);
+    this.warmRoots.clear();
   }
 
   public async runStdio(): Promise<void> {
@@ -569,7 +693,8 @@ export class McpServer {
       this.close();
     });
 
-    // Warm up only after stdin is wired: the handshake must never wait on indexing the root.
-    void this.startResidentDaemon();
+    // Nothing is indexed at startup: the launch folder (often the home folder) says nothing
+    // about intent. Tool calls warm the roots they target, in the background.
+    this.warmupEnabled = this.warmupAllowed;
   }
 }

@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { collectRepoPaths, detectAstIntent, detectLiteralIntent, matchLiteralPath, extractCandidateTokens } from "../src/discoveryRouter.js";
+import { collectRepoPaths, collectRepoPathsBounded, detectAstIntent, detectLiteralIntent, matchLiteralPath, extractCandidateTokens } from "../src/discoveryRouter.js";
 import { queryStructural, resolveCodedbCommand } from "../src/codedbAdapter.js";
 import { ask } from "../src/capnAdapter.js";
 
@@ -106,6 +106,26 @@ function literalWorkspace(): string {
   fs.writeFileSync(path.join(repo, "Dockerfile"), "FROM node:22\n");
   return repo;
 }
+
+test("collectRepoPathsBounded matches collectRepoPaths and gives up over budget", async () => {
+  const repo = literalWorkspace();
+  fs.mkdirSync(path.join(repo, "node_modules", "pkg"), { recursive: true });
+  fs.writeFileSync(path.join(repo, "node_modules", "pkg", "index.js"), "");
+  fs.writeFileSync(path.join(repo, "debug.log"), "");
+  try {
+    const unlimited = { maxFiles: 1_000, timeoutMs: 60_000 };
+    const bounded = await collectRepoPathsBounded(repo, unlimited);
+    assert.ok(bounded.complete);
+    // Seeding the daemon trie from this walk must give the same answers as the cold path.
+    assert.deepEqual(bounded.paths, collectRepoPaths(repo, 0));
+
+    assert.deepEqual(await collectRepoPathsBounded(repo, { ...unlimited, maxFiles: 2 }), { complete: false, reason: "max-files", scanned: 2 });
+    assert.deepEqual(await collectRepoPathsBounded(repo, { ...unlimited, timeoutMs: 0 }), { complete: false, reason: "timeout", scanned: 0 });
+    assert.deepEqual(await collectRepoPathsBounded(repo, { ...unlimited, signal: AbortSignal.abort() }), { complete: false, reason: "aborted", scanned: 0 });
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
 
 test("detectLiteralIntent classifies literal queries and leaves natural language alone", () => {
   assert.deepEqual(detectLiteralIntent("sample.ts"), { isLiteral: true, normalized: "sample.ts", isExplicitPath: false });

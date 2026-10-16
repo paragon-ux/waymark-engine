@@ -272,8 +272,7 @@ export function collectRepoPaths(root: string, maxAgeMs = 60_000): string[] {
           walk(full);
         }
       } else if (ent.isFile()) {
-        if (ent.name === ".DS_Store") continue;
-        if (ent.name.endsWith(".log") || ent.name.endsWith(".tsbuildinfo")) continue;
+        if (isSkippedFile(ent.name)) continue;
         out.push(path.relative(base, full).replace(/\\/g, "/"));
       }
     }
@@ -295,6 +294,65 @@ export function collectRepoPaths(root: string, maxAgeMs = 60_000): string[] {
   }
 
   return out;
+}
+
+function isSkippedFile(name: string): boolean {
+  return name === ".DS_Store" || name.endsWith(".log") || name.endsWith(".tsbuildinfo");
+}
+
+export interface RepoWalkBudget {
+  /** Give up once the walk finds more files than this. */
+  maxFiles: number;
+  /** Give up once the walk has run longer than this. */
+  timeoutMs: number;
+  signal?: AbortSignal;
+}
+
+export type RepoWalkResult =
+  | { complete: true; paths: string[] }
+  | { complete: false; reason: "max-files" | "timeout" | "aborted"; scanned: number };
+
+/**
+ * Async, budgeted `collectRepoPaths`: same skip rules and path order, but it yields to the
+ * event loop between directories and never returns a partial list. A truncated list would
+ * make an ambiguous basename look unique, so over budget the walk is abandoned instead.
+ * It reads and writes no path cache.
+ */
+export async function collectRepoPathsBounded(root: string, budget: RepoWalkBudget): Promise<RepoWalkResult> {
+  const base = path.resolve(root);
+  const deadline = Date.now() + budget.timeoutMs;
+  const out: string[] = [];
+  // Cast so control-flow analysis does not narrow it to null; the walk closure assigns it.
+  let stopped = null as "max-files" | "timeout" | "aborted" | null;
+  const walk = async (dir: string): Promise<void> => {
+    if (budget.signal?.aborted) stopped = "aborted";
+    else if (Date.now() >= deadline) stopped = "timeout";
+    if (stopped) return;
+    let entries: fs.Dirent[];
+    try {
+      entries = await fs.promises.readdir(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const ent of entries) {
+      if (stopped) return;
+      const full = path.join(dir, ent.name);
+      if (ent.isDirectory()) {
+        if (!SKIP_DIRS.has(ent.name)) {
+          await walk(full);
+        }
+      } else if (ent.isFile()) {
+        if (isSkippedFile(ent.name)) continue;
+        if (out.length >= budget.maxFiles) {
+          stopped = "max-files";
+          return;
+        }
+        out.push(path.relative(base, full).replace(/\\/g, "/"));
+      }
+    }
+  };
+  await walk(base);
+  return stopped ? { complete: false, reason: stopped, scanned: out.length } : { complete: true, paths: out };
 }
 
 export function matchLiteralPath(

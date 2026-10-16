@@ -442,6 +442,8 @@ export class WaymarkDaemon {
   private idleTimer: NodeJS.Timeout | null = null;
   private idleTimeoutMs: number;
   private isStopping = false;
+  private serving = false;
+  private readonly onProcessExit = () => this.stop();
 
   constructor(root: string, idleTimeoutMs = 600_000) {
     let canonical = path.resolve(root);
@@ -473,10 +475,15 @@ export class WaymarkDaemon {
     this.idleTimer.unref();
   }
 
-  async start(): Promise<void> {
+  /**
+   * Starts serving the root. Resolves false without listening when another daemon already
+   * answers for it, or when `signal` aborts before the listener opens. `paths` seeds the
+   * prefix trie so a caller that already walked the tree skips the synchronous walk.
+   */
+  async start(options: { paths?: string[]; signal?: AbortSignal } = {}): Promise<boolean> {
     const active = await tryDaemonPing(this.root, 300);
     if (active && active.ok) {
-      return;
+      return false;
     }
 
     if (process.platform !== "win32" && fs.existsSync(this.address)) {
@@ -491,12 +498,14 @@ export class WaymarkDaemon {
     this.residentClient = getResidentClient(this.root, command);
 
     // Warm up resident client and prefix trie
+    if (options.paths) this.prefixTrie = new PrefixTrie(options.paths, Date.now());
     await this.residentClient.send(["tree", "--json"]).catch(() => null);
     try {
       this.getPrefixTrie();
     } catch {
       // non-fatal
     }
+    if (options.signal?.aborted || this.isStopping) return false;
 
     this.server = net.createServer((socket) => {
       this.resetIdle();
@@ -551,6 +560,7 @@ export class WaymarkDaemon {
         resolve();
       });
     });
+    this.serving = true;
 
     try {
       fs.mkdirSync(path.dirname(this.pidFile), { recursive: true });
@@ -562,17 +572,22 @@ export class WaymarkDaemon {
     registerDaemon(this.root, process.pid, this.address);
     this.resetIdle();
 
-    const cleanup = () => this.stop();
-    process.once("SIGINT", cleanup);
-    process.once("SIGTERM", cleanup);
-    process.once("exit", cleanup);
+    process.once("SIGINT", this.onProcessExit);
+    process.once("SIGTERM", this.onProcessExit);
+    process.once("exit", this.onProcessExit);
+    return true;
   }
 
+  /** Safe on a daemon that never started serving: the registry entry and PID file are only removed if this instance owns them. */
   stop(): void {
     if (this.isStopping) return;
     this.isStopping = true;
 
-    unregisterDaemon(this.root);
+    process.removeListener("SIGINT", this.onProcessExit);
+    process.removeListener("SIGTERM", this.onProcessExit);
+    process.removeListener("exit", this.onProcessExit);
+
+    if (this.serving) unregisterDaemon(this.root);
 
     if (this.idleTimer) {
       clearTimeout(this.idleTimer);
@@ -595,14 +610,14 @@ export class WaymarkDaemon {
     }
 
     try {
-      if (fs.existsSync(this.pidFile)) {
+      if (this.serving && fs.existsSync(this.pidFile)) {
         fs.unlinkSync(this.pidFile);
       }
     } catch {
       // ignore
     }
 
-    if (process.platform !== "win32") {
+    if (this.serving && process.platform !== "win32") {
       try {
         if (fs.existsSync(this.address)) {
           fs.unlinkSync(this.address);

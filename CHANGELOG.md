@@ -4,6 +4,23 @@ All notable changes to `waymark-engine` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- **Lazy Per-Root MCP Warm-Up (`src/mcp/server.ts`)**: The stdio server no longer warms the resident daemon at startup or checks for `.git`/`.capn` markers. Each `tools/call` starts a background warm-up for the repository it targets (`root` argument, else the server root, resolved to the Git top level), memoized per repository. The call itself never waits; it takes the cold path. At most two repositories stay warm (`WAYMARK_MCP_WARM_MAX_ROOTS`); the least recently used daemon is stopped. `close()` stops every warm daemon, including one whose warm-up finishes after stdin closes. `shouldWarmResidentDaemon` and `startResidentDaemon` are removed.
+- **Warm-Up Budget (`src/discoveryRouter.ts`)**: New `collectRepoPathsBounded` walks the tree asynchronously with the `collectRepoPaths` skip rules and path order, and gives up past a file cap (`WAYMARK_MCP_WARM_MAX_FILES`, default 50,000) or time cap (`WAYMARK_MCP_WARM_TIMEOUT_MS`, default 10,000). An over-budget repository is never warmed and is not re-walked during the session. A complete walk seeds the daemon's prefix trie, so the synchronous walk no longer runs during warm-up.
+- **`WaymarkDaemon.start()` (`src/daemon.ts`)**: Accepts `{ paths, signal }` and resolves `true` only when it started serving; it resolves `false` when another daemon already answers for the root or the signal aborts before it listens. `stop()` only removes the registry entry and PID file the instance wrote, and it removes its process signal listeners.
+
+### Added
+- **`WAYMARK_MCP_WARM=0`**: Disables warm-up. `WAYMARK_DISABLE_RESIDENT=1` and `McpServer({ enableDaemon: false })` also disable it. `McpServer({ warmup })` sets the budget programmatically; warm-up is on under `runStdio()` and off for direct `handleMessage()` use.
+- **`--root <path>` (`src/mcp/capnIndex.ts`)**: Sets the default tool root for hosts that cannot set a working directory. `waymark mcp --root` now moves the working directory too, so tool calls without `root` use it.
+
+### Tests
+- `test/mcpStdioStartup.test.ts`: no indexing at startup, tool call answered while its root's warm-up never finishes, late warm-up stopped after EOF, `--root`, per-root memoization, file budget, opt-out, root cap and `close()`.
+- `test/discoveryRouter.test.ts`: bounded walk matches `collectRepoPaths` and stops on file, time, and abort limits.
+
+---
+
 ## [3.1.0] - 2026-10-16
 
 ### Added

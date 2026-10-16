@@ -4,7 +4,7 @@ Waymark Engine implements the Model Context Protocol (MCP) dual-era specificatio
 
 - **Supported revisions**: `2026-07-28`, `2025-11-25`, `2024-11-05` (advertised by `server/discover`).
 - **`2026-07-28` results**: every result carries `resultType` and `_meta["io.modelcontextprotocol/serverInfo"]`; list and read results carry `ttlMs` and `cacheScope`. A request whose `_meta` protocol version is unsupported fails with `-32022`.
-- **Startup**: the server answers the handshake immediately. When launched inside a project root (`.git` or `.capn`), it warms the resident daemon in the background; elsewhere, such as a home directory, it skips warm-up.
+- **Startup**: the server answers the handshake immediately and indexes nothing. The first tool call on a repository (its `root` argument, else the server's working directory, resolved to the Git top level) warms a resident daemon for it in the background; that call and any made during warm-up take the cold path. A repository with more than 50,000 files, or whose file walk takes over 10 seconds, is never warmed. At most two repositories stay warm; the least recently used is stopped. See [Warm-up](#resident-daemon-warm-up).
 
 ---
 
@@ -165,6 +165,21 @@ When an agent runs `waymark-engine` via stdio, the server defaults to its curren
   }
 }
 ```
+
+To start the server against a repository when the host cannot set a working directory (Claude Desktop chat), pass `--root`: `"args": ["-y", "waymark-engine", "--root", "/path/to/target/repository"]`. Tool calls without `root` then default to it.
+
+---
+
+## Resident Daemon Warm-Up
+
+| Variable | Default | Effect |
+|---|---|---|
+| `WAYMARK_MCP_WARM` | on | `0` disables warm-up; every call takes the cold path. `WAYMARK_DISABLE_RESIDENT=1` disables it too. |
+| `WAYMARK_MCP_WARM_MAX_FILES` | `50000` | Repositories with more files than this are not warmed. |
+| `WAYMARK_MCP_WARM_TIMEOUT_MS` | `10000` | A file walk that runs longer than this is abandoned and the repository is not warmed. |
+| `WAYMARK_MCP_WARM_MAX_ROOTS` | `2` | Most repositories kept warm at once. |
+
+The file walk is asynchronous and skips the same directories as the literal path router (`node_modules`, `dist`, `.git`, …). A repository over budget is remembered for the session and stays on the cold path; the walk is abandoned rather than kept as a partial path list, because a partial list could make an ambiguous file name look unique.
 
 ---
 

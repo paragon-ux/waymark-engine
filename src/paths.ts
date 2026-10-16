@@ -1,8 +1,8 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
-import { TextDecoder } from "node:util";
+import { execFile, execFileSync } from "node:child_process";
+import { TextDecoder, promisify } from "node:util";
 import { LineRange, LineRangeLike, StructuralSignature, WaymarkError } from "./types.js";
 
 const decoder = new TextDecoder("utf-8", { fatal: true });
@@ -29,6 +29,24 @@ export function repoRoot(cwd = process.cwd()): string {
     return fs.realpathSync.native(root);
   } catch {
     return fs.realpathSync.native(cwd);
+  }
+}
+
+const execFileAsync = promisify(execFile);
+
+/** `repoRoot` without blocking the event loop; rejects when `cwd` does not exist. */
+export async function repoRootAsync(cwd = process.cwd()): Promise<string> {
+  try {
+    const { stdout } = await execFileAsync("git", ["-C", cwd, "rev-parse", "--show-toplevel"], {
+      encoding: "buffer",
+      windowsHide: true,
+      timeout: 5000,
+    });
+    const root = decoder.decode(stdout).trim();
+    if (!root) throw new Error("empty Git root");
+    return await fs.promises.realpath(root);
+  } catch {
+    return await fs.promises.realpath(cwd);
   }
 }
 

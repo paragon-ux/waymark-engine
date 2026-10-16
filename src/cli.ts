@@ -549,6 +549,8 @@ async function runCommand(command: string, rawArgs: readonly string[]): Promise<
 
   if (command === "mcp") {
     const { McpServer } = await import("./mcp/server.js");
+    // Tools default `root` to the working directory; keep it in step with the server root.
+    process.chdir(root);
     const server = new McpServer({ root });
     await server.runStdio();
     return { value: null };

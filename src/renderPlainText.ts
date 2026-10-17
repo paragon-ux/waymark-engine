@@ -29,7 +29,8 @@ export function renderCallGraph(graph: CallGraphData): string {
     out += `${pad}↳ ${relType}:\n`;
     for (const node of nodes) {
       const loc = node.path ? ` (${node.path}:${node.line})` : "";
-      out += `${pad}    - ${node.name}${loc}\n`;
+      const tag = node.kind && node.kind !== "function" ? ` [${node.kind}]` : "";
+      out += `${pad}    - ${node.name}${tag}${loc}\n`;
       if (node[relType] && node[relType]!.length > 0) {
         renderSubtree(node[relType]!, indent + 4, relType);
       }

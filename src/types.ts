@@ -211,9 +211,11 @@ export type AskResult =
   | AskErrorResult;
 
 export interface CallGraphHopNode {
+  /** Qualified (`Class.member`, `binding.member`) when codedb has one; `<module>` for a module node. */
   name: string;
   path: string;
   line: number;
+  /** "function" | "method" | "module" (a TS/JS file's top-level code, at line 1). */
   kind?: string;
   callers?: CallGraphHopNode[];
   callees?: CallGraphHopNode[];

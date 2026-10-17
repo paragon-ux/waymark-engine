@@ -185,7 +185,38 @@ interface Neighbor {
   path: string;
   name: string;
   line: number;
+  /** "function" | "method" | "module" (codedb-core call-graph nodes). */
   kind?: string;
+  /** `Class.member` / `binding.member` for qualified TS/JS members. */
+  qualified?: string;
+}
+
+/**
+ * A call-graph hop node. It is named by its qualified name when codedb has
+ * one, which is also what the next hop queries. A `module` node (a TS/JS
+ * file's top-level code, named `<module>` at line 1) only ever calls, so
+ * traversal never hops from it.
+ */
+function hopNode(c: Neighbor): CallGraphHopNode {
+  return { name: c.qualified || c.name, path: c.path, line: c.line, kind: c.kind ?? "function" };
+}
+
+/** A caller/callee label for the flat (depth-less) listing. */
+function neighborLabel(c: Neighbor): string {
+  if (c.kind === "module") return `<module> (${c.path})`;
+  return c.qualified || c.name;
+}
+
+/**
+ * The last segment of a dotted root name (`path.join` -> `join`), or
+ * undefined for a bare name. A dotted question first asks codedb for the
+ * qualified name and asks again with this only when codedb reports that the
+ * qualified name doesn't exist (`symbol_exists: false`). A qualified name that
+ * exists is never widened to the bare name, even when it is ambiguous.
+ */
+function bareFallback(fn: string): string | undefined {
+  const bare = fn.slice(fn.lastIndexOf(".") + 1);
+  return bare && bare !== fn ? bare : undefined;
 }
 
 interface SymbolHit {
@@ -241,7 +272,7 @@ export async function queryMultiHopCallGraph(
         out += `ambiguous: true\n`;
         out += `candidates (${cands.length}):\n`;
         for (const c of cands) {
-          out += `  ${c.path}:${c.line} ${c.kind ?? "function"} ${c.name}\n`;
+          out += `  ${c.path}:${c.line} ${c.kind ?? "function"} ${c.qualified || c.name}\n`;
         }
         return { hit: true, output: out.trim() };
       }
@@ -262,21 +293,26 @@ export async function queryMultiHopCallGraph(
     out += `ambiguous: true\n`;
     out += `candidates (${cands.length}):\n`;
     for (const c of cands) {
-      out += `  ${c.path}:${c.line} ${c.kind ?? "function"} ${c.name}\n`;
+      out += `  ${c.path}:${c.line} ${c.kind ?? "function"} ${c.qualified || c.name}\n`;
     }
     return { hit: true, output: out.trim() };
   }
 
+  const bare = bareFallback(fn);
   if (nRun.payload.symbol_exists === false) {
+    if (bare) return queryMultiHopCallGraph(root, bare, depth, direction, cmd, excludeTests, autoDaemon);
     return { hit: false, output: `Function or method "${fn}" not found.` };
   }
 
+  // A qualified root is located among its bare name's definitions.
   let rootPath: string | undefined;
   let rootLine: number | undefined;
   let rootKind: string | undefined;
-  const symRun = await runJson(root, cmd, ["symbol", fn, "--json"], { autoDaemon });
-  if (symRun.ok && symRun.payload && Array.isArray(symRun.payload.results) && symRun.payload.results.length > 0) {
-    const r0 = symRun.payload.results[0] as { path?: string; line?: number; kind?: string };
+  const symArgs = bare ? ["symbol", bare, "--max-results", "200", "--json"] : ["symbol", fn, "--json"];
+  const symRun = await runJson(root, cmd, symArgs, { autoDaemon });
+  const symResults = (symRun.ok && Array.isArray(symRun.payload?.results) ? symRun.payload!.results : []) as Array<{ path?: string; line?: number; kind?: string; qualified?: string }>;
+  const r0 = bare ? symResults.find((r) => r.qualified === fn) : symResults[0];
+  if (r0) {
     rootPath = r0.path;
     rootLine = r0.line;
     rootKind = r0.kind;
@@ -302,7 +338,7 @@ export async function queryMultiHopCallGraph(
   if (direction === "callers" || direction === "both") {
     for (const c of callerItems) {
       if (excludeTests && isTestFile(c.path)) continue;
-      const key = `${c.path}:${c.line}:${c.name}`;
+      const key = `${c.path}:${c.line}:${c.qualified || c.name}`;
       if (!visited.has(key)) {
         if (totalNodes >= 50) {
           truncated = true;
@@ -310,7 +346,7 @@ export async function queryMultiHopCallGraph(
         }
         visited.add(key);
         totalNodes++;
-        const node: CallGraphHopNode = { name: c.name, path: c.path, line: c.line, kind: c.kind ?? "function" };
+        const node = hopNode(c);
         rootCallers.push(node);
         currentCallerQueue.push(node);
       }
@@ -320,7 +356,7 @@ export async function queryMultiHopCallGraph(
   if (direction === "callees" || direction === "both") {
     for (const c of calleeItems) {
       if (excludeTests && isTestFile(c.path)) continue;
-      const key = `${c.path}:${c.line}:${c.name}`;
+      const key = `${c.path}:${c.line}:${c.qualified || c.name}`;
       if (!visited.has(key)) {
         if (totalNodes >= 50) {
           truncated = true;
@@ -328,7 +364,7 @@ export async function queryMultiHopCallGraph(
         }
         visited.add(key);
         totalNodes++;
-        const node: CallGraphHopNode = { name: c.name, path: c.path, line: c.line, kind: c.kind ?? "function" };
+        const node = hopNode(c);
         rootCallees.push(node);
         currentCalleeQueue.push(node);
       }
@@ -347,6 +383,7 @@ export async function queryMultiHopCallGraph(
           truncated = true;
           break;
         }
+        if (parent.kind === "module") continue; // a module node has no callers
         const hopRes = await runJson(root, cmd, ["neighbors", parent.name, "--json"], { autoDaemon });
         if (!hopRes.ok || !hopRes.payload) return { hit: false, output: hopRes.error || "codedb multi-hop lookup failed", error: true };
         if (hopRes.ok && hopRes.payload) {
@@ -354,7 +391,7 @@ export async function queryMultiHopCallGraph(
           const hopCallers = ((Array.isArray(hopCallersData) ? hopCallersData : (hopCallersData as { results?: Neighbor[] })?.results) ?? []) as Neighbor[];
           for (const c of hopCallers) {
             if (excludeTests && isTestFile(c.path)) continue;
-            const key = `${c.path}:${c.line}:${c.name}`;
+            const key = `${c.path}:${c.line}:${c.qualified || c.name}`;
             if (!visited.has(key)) {
               if (totalNodes >= 50) {
                 truncated = true;
@@ -362,7 +399,7 @@ export async function queryMultiHopCallGraph(
               }
               visited.add(key);
               totalNodes++;
-              const child: CallGraphHopNode = { name: c.name, path: c.path, line: c.line, kind: c.kind ?? "function" };
+              const child = hopNode(c);
               if (!parent.callers) parent.callers = [];
               parent.callers.push(child);
               nextCallerQueue.push(child);
@@ -387,7 +424,7 @@ export async function queryMultiHopCallGraph(
           const hopCallees = ((Array.isArray(hopCalleesData) ? hopCalleesData : (hopCalleesData as { results?: Neighbor[] })?.results) ?? []) as Neighbor[];
           for (const c of hopCallees) {
             if (excludeTests && isTestFile(c.path)) continue;
-            const key = `${c.path}:${c.line}:${c.name}`;
+            const key = `${c.path}:${c.line}:${c.qualified || c.name}`;
             if (!visited.has(key)) {
               if (totalNodes >= 50) {
                 truncated = true;
@@ -395,7 +432,7 @@ export async function queryMultiHopCallGraph(
               }
               visited.add(key);
               totalNodes++;
-              const child: CallGraphHopNode = { name: c.name, path: c.path, line: c.line, kind: c.kind ?? "function" };
+              const child = hopNode(c);
               if (!parent.callees) parent.callees = [];
               parent.callees.push(child);
               nextCalleeQueue.push(child);
@@ -471,7 +508,7 @@ export async function queryStructural(
           out += `ambiguous: true\n`;
           out += `candidates (${cands.length}):\n`;
           for (const c of cands) {
-            out += `  ${c.path}:${c.line} ${c.kind ?? "function"} ${c.name}\n`;
+            out += `  ${c.path}:${c.line} ${c.kind ?? "function"} ${c.qualified || c.name}\n`;
           }
           return { hit: true, output: out.trim() };
         }
@@ -490,12 +527,14 @@ export async function queryStructural(
         out += `ambiguous: true\n`;
         out += `candidates (${cands.length}):\n`;
         for (const c of cands) {
-          out += `  ${c.path}:${c.line} ${c.kind ?? "function"} ${c.name}\n`;
+          out += `  ${c.path}:${c.line} ${c.kind ?? "function"} ${c.qualified || c.name}\n`;
         }
         return { hit: true, output: out.trim() };
       }
 
       if (nRun.payload.symbol_exists === false) {
+        const bare = bareFallback(fn);
+        if (bare) return queryStructural({ ...intent, functionName: bare }, root, executable, options);
         return { hit: false, output: `Function or method "${fn}" not found.` };
       }
 
@@ -505,8 +544,8 @@ export async function queryStructural(
       const rawCalleeItems = (Array.isArray(calleesData) ? calleesData : (calleesData as { results?: Neighbor[] })?.results) ?? [];
       const callerItems = options?.excludeTests ? rawCallerItems.filter((r: any) => !isTestFile(r.path || "")) : rawCallerItems;
       const calleeItems = options?.excludeTests ? rawCalleeItems.filter((r: any) => !isTestFile(r.path || "")) : rawCalleeItems;
-      const callerNames = callerItems.map((r: any) => r.name);
-      const calleeNames = calleeItems.map((r: any) => r.name);
+      const callerNames = (callerItems as Neighbor[]).map(neighborLabel);
+      const calleeNames = (calleeItems as Neighbor[]).map(neighborLabel);
 
       let out = `function: ${fn}\n`;
       out += `direction: both\n`;
@@ -531,19 +570,21 @@ export async function queryStructural(
       out += `ambiguous: true\n`;
       out += `candidates (${cands.length}):\n`;
       for (const c of cands) {
-        out += `  ${c.path}:${c.line} ${c.kind ?? "function"} ${c.name}\n`;
+        out += `  ${c.path}:${c.line} ${c.kind ?? "function"} ${c.qualified || c.name}\n`;
       }
       return { hit: true, output: out.trim() };
     }
 
-    const callerNames = (callers.payload?.results as Neighbor[] | undefined)?.map((r) => r.name) ?? [];
-    const calleeNames = (callees.payload?.results as Neighbor[] | undefined)?.map((r) => r.name) ?? [];
+    const callerNames = (callers.payload?.results as Neighbor[] | undefined)?.map(neighborLabel) ?? [];
+    const calleeNames = (callees.payload?.results as Neighbor[] | undefined)?.map(neighborLabel) ?? [];
 
     if (callerNames.length === 0 && calleeNames.length === 0) {
       const symbol = await runJson(root, command, ["symbol", fn, "--json"], { autoDaemon: options?.autoDaemon });
       if (!symbol.ok || !symbol.payload) return { hit: false, output: symbol.error || "codedb symbol lookup failed", error: true };
       const symbolCount = (symbol.payload?.results as unknown[] | undefined)?.length ?? 0;
       if (symbolCount === 0) {
+        const bare = bareFallback(fn);
+        if (bare) return queryStructural({ ...intent, functionName: bare }, root, executable, options);
         return { hit: false, output: `Function or method "${fn}" not found.` };
       }
     }

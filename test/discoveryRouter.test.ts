@@ -28,6 +28,7 @@ test("detectAstIntent classifies structural queries correctly", () => {
   assert.equal(i1.requiresParser, true);
   assert.equal(i1.tool, "trace_path");
   assert.equal(i1.functionName, "capnChartArgs");
+  assert.equal(detectAstIntent("Who calls WaymarkDaemon.start?").functionName, "WaymarkDaemon.start");
 
   const i2 = detectAstIntent("Where is function publish declared?");
   assert.equal(i2.requiresParser, true);

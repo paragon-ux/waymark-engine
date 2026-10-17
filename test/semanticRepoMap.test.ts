@@ -189,6 +189,60 @@ test("Bootstrap returns evidence-backed drafts and never publishes unverified fa
   assert.match(plainText, /\[semantic-map: 0\/5 facets active \(0%\)\]/);
 });
 
+test("bootstrap evidence cites facet-relevant code, never imports or comments", async () => {
+  const repo = setupTestRepo();
+  try {
+    fs.writeFileSync(path.join(repo, "src", "storage.ts"), [
+      'import fs from "node:fs";',
+      'import path from "node:path";',
+      "import {",
+      "  memoryStoreDir,",
+      "  stateDir,",
+      '} from "./stateDir.js";',
+      "",
+      "// Persisted state lives under the state directory.",
+      "export function formatBytes(n: number): string { return `${n} B`; }",
+      "",
+      "export function persistState(root: string, state: object): void {",
+      '  fs.writeFileSync(path.join(stateDir(root), "state.json"), JSON.stringify(state));',
+      "}",
+    ].join("\n"), "utf8");
+    fs.writeFileSync(path.join(repo, "src", "daemon.ts"), 'import net from "node:net";\n// Socket server goes here.\n', "utf8");
+    fs.writeFileSync(path.join(repo, "src", "types.ts"), 'import type { Buffer } from "node:buffer";\n\nexport function describe(value: Buffer): string { return value.toString(); }\n', "utf8");
+
+    const result = await bootstrapSemanticMap(repo, { dryRun: true });
+    const draft = (id: string) => {
+      const found = result.scaffolded.find((facet) => facet.id === id);
+      assert.ok(found, `missing ${id} draft`);
+      return found;
+    };
+
+    // Keyword lines win over imports, comments, and an unrelated exported helper.
+    assert.deepEqual(draft("data_state").evidence, [
+      { file: "src/storage.ts", line: 11, excerpt: "export function persistState(root: string, state: object): void {" },
+      { file: "src/storage.ts", line: 12, excerpt: 'fs.writeFileSync(path.join(stateDir(root), "state.json"), JSON.stringify(state));' },
+    ]);
+    // A file with no keyword line falls back to its exported declarations.
+    assert.deepEqual(draft("failure").evidence, [
+      { file: "src/types.ts", line: 3, excerpt: "export function describe(value: Buffer): string { return value.toString(); }" },
+    ]);
+    // A candidate holding only imports and comments is not cited.
+    assert.deepEqual(draft("boundaries").files, ["src/server.ts"]);
+
+    for (const facet of result.scaffolded) {
+      assert.ok(facet.evidence.length > 0, `${facet.id} has evidence`);
+      for (const line of facet.evidence) {
+        assert.doesNotMatch(line.excerpt, /^(?:import\b|\}\s*from\b|\/\/)/u, `${facet.id} cites ${line.file}:${line.line}`);
+        assert.ok(facet.files.includes(line.file), `${facet.id} cites ${line.file} without listing it`);
+      }
+    }
+    assert.equal(result.published, false);
+    assert.equal(fs.readdirSync(path.join(memoryStoreDir(repo), "entries")).filter((file) => file.endsWith(".md")).length, 0);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
 test("minimal repository bootstrap adds no map facts or memory store", async () => {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), "waymark-empty-map-"));
   try {

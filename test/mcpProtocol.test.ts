@@ -87,3 +87,50 @@ test("unsupported per-request protocol versions return UnsupportedProtocolVersio
   }));
   assert.deepEqual(JSON.parse(discover ?? "{}").result?.supportedVersions, SUPPORTED_PROTOCOL_VERSIONS, "discover still answers so clients can renegotiate");
 });
+
+const ROOT_PROMPTS: Array<[string, Record<string, string>]> = [
+  ["explore-subsystem", { query: "verifyHop" }],
+  ["architectural-map", { topic: "capnStoreArgs" }],
+  ["bootstrap-semantic-map", {}],
+];
+
+async function promptText(server: McpServer, name: string, args: Record<string, unknown>): Promise<string> {
+  const body = await call(server, "prompts/get", { name, arguments: args });
+  assert.equal(body.error, undefined, `${name}: ${JSON.stringify(body.error)}`);
+  return body.result?.messages?.[0]?.content?.text ?? "";
+}
+
+test("every prompt declares an optional root argument", async () => {
+  const { result } = await call(new McpServer({ enableDaemon: false }), "prompts/list");
+  for (const [name] of ROOT_PROMPTS) {
+    const prompt = result?.prompts?.find((entry: { name: string }) => entry.name === name);
+    assert.ok(prompt, `${name} is listed`);
+    const root = prompt.arguments?.find((arg: { name: string }) => arg.name === "root");
+    assert.equal(root?.required, false, `${name} declares an optional root`);
+  }
+});
+
+test("prompts tell the agent to pass the given root on every tool call", async () => {
+  const server = new McpServer({ enableDaemon: false });
+  const root = String.raw`C:\work\my "repo"`;
+  for (const [name, args] of ROOT_PROMPTS) {
+    const text = await promptText(server, name, { ...args, root: `  ${root}  ` });
+    assert.ok(
+      text.endsWith(` Pass root: ${JSON.stringify(root)} on every waymark_ask, waymark_memory, and waymark_chart call.`),
+      `${name}: ${text}`,
+    );
+  }
+});
+
+test("prompts without a root leave the tool calls on the server root", async () => {
+  const server = new McpServer({ enableDaemon: false });
+  for (const [name, args] of ROOT_PROMPTS) {
+    for (const root of [undefined, "", "   ", 42]) {
+      const text = await promptText(server, name, root === undefined ? args : { ...args, root });
+      assert.ok(text.length > 0, `${name} has text`);
+      assert.doesNotMatch(text, /Pass root/u, `${name} with root ${JSON.stringify(root)}`);
+    }
+  }
+  assert.match(await promptText(server, "explore-subsystem", { query: "verifyHop" }), /for: "verifyHop"/u);
+  assert.match(await promptText(server, "architectural-map", { topic: "capnStoreArgs" }), /for: "capnStoreArgs"/u);
+});

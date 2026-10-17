@@ -91,7 +91,7 @@ Dispatches consensus memory and lifecycle operations using the **`action`** para
 
 | Action | Example Arguments | Description |
 | :--- | :--- | :--- |
-| **`bootstrap`** | `{"action": "bootstrap", "dry_run": false}` | Collect source excerpts as unverified drafts. It does not initialize the memory store or publish claims; verify and chart supported conclusions explicitly. |
+| **`bootstrap`** | `{"action": "bootstrap", "dry_run": false}` | Collect source excerpts as unverified drafts. Each excerpt is a line that names the facet's keywords, or an exported declaration when the file has none; imports and comments are skipped. It does not initialize the memory store or publish claims; verify and chart supported conclusions explicitly. |
 | **`status`** | `{"action": "status", "plain": true}` | Inspect Semantic Repo Map completion ratio, active facets, and file drift. |
 | **`chart`** | `{"action": "chart", "facet": "boundaries", "question": "IPC Protocol", "answer": "Named pipes on Windows...", "files": ["src/daemon.ts"]}` | Record architectural knowledge into consensus memory. |
 | **`heal`** | `{"action": "heal"}` | Recollect source-backed unverified drafts; established consensus entries are unchanged. |
@@ -208,9 +208,13 @@ If your agent framework requires flat, single-purpose tools, enable **Verbose Mo
 - `capn://status`: Memory store configuration and adapter status.
 
 ### Prompts
-- `explore-subsystem`: Guided repository-wide exploration workflow for a concept or module; scoped subsystem indexes are unsupported.
-- `architectural-map`: Structured call-graph and consensus memory mapping workflow.
-- `bootstrap-semantic-map`: Collects unverified source-backed drafts; a human must verify and explicitly chart any supported claim.
+| Prompt | Arguments | Workflow |
+| :--- | :--- | :--- |
+| `explore-subsystem` | `query` (required), `root` | Guided repository-wide exploration of a concept or module; scoped subsystem indexes are unsupported. |
+| `architectural-map` | `topic` (required), `root` | Structured call-graph and consensus memory mapping. |
+| `bootstrap-semantic-map` | `root` | Collects unverified source-backed drafts; a human must verify and explicitly chart any supported claim. |
+
+`root` is optional on every prompt. When it is set, the prompt tells the agent to pass `root: "<value>"` on every `waymark_ask`, `waymark_memory`, and `waymark_chart` call, so a host whose working directory isn't the repository still targets it.
 
 [`examples/`](https://github.com/paragon-ux/waymark-engine/tree/main/examples) has a recorded run of each prompt against this repository.
 

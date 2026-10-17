@@ -254,7 +254,7 @@ The resident stdio MCP server (`waymark-mcp`) provides two modes of tool exposur
   }
   ```
 - **Subcommand Behaviors & Output Shapes**:
-  - `bootstrap`: Collects source excerpts into unverified draft facets and does not write to the memory store. Verify claims and publish explicitly with `chart`.
+  - `bootstrap`: Collects source excerpts into unverified draft facets and does not write to the memory store. Each excerpt is a line naming the facet's keywords (`evidenceKeywords`), or an exported declaration when the file has none; imports and comments are never evidence, and a candidate file with no evidence is not cited. Verify claims and publish explicitly with `chart`.
   - `status`: Inspects active facets, health, and anchor drift. Output: `{ ok: true, status: "healthy" | "drifted" | "empty", completion: "N/5", facets: [...], drifted: [...] }` (or compact text when `plain: true`).
   - `chart`: Inserts or updates architectural memory entry. Output: `{ waymark: 1, kind: "chart", published: true, adapter: string, output: string }`.
   - `bust`: Invalidates all memories citing `file`. Output: `{ waymark: 1, kind: "bust", ok: true, file: string }`.
@@ -269,8 +269,10 @@ The resident stdio MCP server (`waymark-mcp`) provides two modes of tool exposur
 ### 4.13 MCP Prompts Registry
 The server registers standard prompts to orchestrate complex agentic discovery workflows:
 - **`explore-subsystem`**: Guides a structured 4-tier exploration of a subsystem or symbol in the codebase (`arguments: [{ name: "query", required: true }, { name: "root", required: false }]`).
-- **`architectural-map`**: Generates an architectural call-graph map and consensus memory summary for a feature (`arguments: [{ name: "topic", required: true }]`).
+- **`architectural-map`**: Generates an architectural call-graph map and consensus memory summary for a feature (`arguments: [{ name: "topic", required: true }, { name: "root", required: false }]`).
 - **`bootstrap-semantic-map`**: Repository-wide prompt that gathers unverified source-backed drafts; humans verify and explicitly chart supported claims (`arguments: [{ name: "root", required: false }]`).
+
+When `root` is a non-blank string, the prompt text ends with `Pass root: "<root>" on every waymark_ask, waymark_memory, and waymark_chart call.` The value is trimmed and written as a JSON string literal. Without it, tool calls fall back to the server's root.
 
 ### 4.14 MCP Resources Registry
 The server exposes resident resources for configuration inspection and capability negotiation:

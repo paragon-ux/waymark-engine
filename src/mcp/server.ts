@@ -79,6 +79,18 @@ function positiveInt(value: number | string | undefined, fallback: number): numb
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+const PROMPT_ROOT_ARGUMENT = {
+  name: "root",
+  description: "Optional repository root path. The prompt tells the agent to pass it on every Waymark tool call.",
+  required: false,
+};
+
+/** Prompt sentence that keeps every tool call on the repository named by the prompt's `root` argument. */
+function promptRootDirective(root: unknown): string {
+  if (typeof root !== "string" || !root.trim()) return "";
+  return ` Pass root: ${JSON.stringify(root.trim())} on every waymark_ask, waymark_memory, and waymark_chart call.`;
+}
+
 export const CAPN_RESOURCES: McpResourceDefinition[] = [
   {
     uri: "capn://status",
@@ -104,11 +116,7 @@ export const CAPN_PROMPTS: McpPromptDefinition[] = [
         description: "The symbol, function, concept, or path to investigate.",
         required: true,
       },
-      {
-        name: "root",
-        description: "Optional repository root path.",
-        required: false,
-      },
+      PROMPT_ROOT_ARGUMENT,
     ],
   },
   {
@@ -120,18 +128,13 @@ export const CAPN_PROMPTS: McpPromptDefinition[] = [
         description: "The architectural topic or subsystem to map.",
         required: true,
       },
+      PROMPT_ROOT_ARGUMENT,
     ],
   },
   {
     name: "bootstrap-semantic-map",
     description: "Collect source excerpts as unverified drafts for the repository Semantic Repo Map; a human must verify and explicitly chart each claim.",
-    arguments: [
-      {
-        name: "root",
-        description: "Optional repository root path.",
-        required: false,
-      },
-    ],
+    arguments: [PROMPT_ROOT_ARGUMENT],
   },
 ];
 
@@ -482,9 +485,10 @@ export class McpServer {
 
     if (method === "prompts/get") {
       const name = String(params?.name ?? "");
-      const args = (params?.arguments && typeof params.arguments === "object" ? params.arguments : {}) as Record<string, string>;
+      const args = (params?.arguments && typeof params.arguments === "object" ? params.arguments : {}) as Record<string, unknown>;
+      const rootDirective = promptRootDirective(args.root);
       if (name === "explore-subsystem") {
-        const query = args.query ?? "unknown";
+        const query = String(args.query ?? "unknown");
         return {
           jsonrpc: "2.0",
           id,
@@ -495,7 +499,7 @@ export class McpServer {
                 role: "user",
                 content: {
                   type: "text",
-                  text: `Please explore the codebase using waymark-engine MCP tools for: "${query}". First use waymark_ask to check Tier 1 AST call graphs or Tier 3 Discovery Junction recommendations, inspect relevant file AST outlines with waymark_ask (argument: path), and chart architectural findings into consensus memory via waymark_memory (action: "chart", or waymark_chart).`,
+                  text: `Please explore the codebase using waymark-engine MCP tools for: "${query}". First use waymark_ask to check Tier 1 AST call graphs or Tier 3 Discovery Junction recommendations, inspect relevant file AST outlines with waymark_ask (argument: path), and chart architectural findings into consensus memory via waymark_memory (action: "chart", or waymark_chart).${rootDirective}`,
                 },
               },
             ],
@@ -503,7 +507,7 @@ export class McpServer {
         };
       }
       if (name === "architectural-map") {
-        const topic = args.topic ?? "unknown";
+        const topic = String(args.topic ?? "unknown");
         return {
           jsonrpc: "2.0",
           id,
@@ -514,7 +518,7 @@ export class McpServer {
                 role: "user",
                 content: {
                   type: "text",
-                  text: `Trace the architectural call chain and execution flow for: "${topic}". Use waymark_ask to resolve callers and callees (arguments: depth, direction), verify exact file paths, and summarize the consensus policy in long-term memory via waymark_memory (action: "chart", or waymark_chart).`,
+                  text: `Trace the architectural call chain and execution flow for: "${topic}". Use waymark_ask to resolve callers and callees (arguments: depth, direction), verify exact file paths, and summarize the consensus policy in long-term memory via waymark_memory (action: "chart", or waymark_chart).${rootDirective}`,
                 },
               },
             ],
@@ -532,7 +536,7 @@ export class McpServer {
                 role: "user",
                 content: {
                   type: "text",
-                  text: `Inspect the repository-wide Semantic Repo Map with waymark_memory(action="status"). Bootstrap may collect source excerpts as unverified drafts but never publishes claims. Verify each claim against its cited source and publish only supported conclusions with waymark_memory(action="chart"). Subsystem-scoped maps are unsupported.`,
+                  text: `Inspect the repository-wide Semantic Repo Map with waymark_memory(action="status"). Bootstrap may collect source excerpts as unverified drafts but never publishes claims. Verify each claim against its cited source and publish only supported conclusions with waymark_memory(action="chart"). Subsystem-scoped maps are unsupported.${rootDirective}`,
                 },
               },
             ],

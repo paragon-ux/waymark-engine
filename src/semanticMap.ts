@@ -18,6 +18,8 @@ export interface FacetDefinition {
   canonicalQuestion: string;
   description: string;
   targetFilesSummary: string;
+  /** Lowercase word prefixes that mark a source line as evidence for this facet. */
+  evidenceKeywords: string[];
 }
 
 export const SEMANTIC_FACETS: Record<SemanticFacetId, FacetDefinition> = {
@@ -28,6 +30,7 @@ export const SEMANTIC_FACETS: Record<SemanticFacetId, FacetDefinition> = {
     canonicalQuestion: "[FACET:LIFECYCLE] What are the primary executable entrypoints, daemon lifecycles, and bootstrapping sequences?",
     description: "Executable wrappers, daemon servers, root index modules, bootstrap sequence.",
     targetFilesSummary: "bin/*, src/index.ts, src/cli.ts, src/daemon.ts",
+    evidenceKeywords: ["main", "start", "stop", "boot", "init", "launch", "spawn", "listen", "serve", "shutdown", "close", "exit", "argv", "daemon", "lifecycle", "warm", "run"],
   },
   data_state: {
     id: "data_state",
@@ -36,6 +39,7 @@ export const SEMANTIC_FACETS: Record<SemanticFacetId, FacetDefinition> = {
     canonicalQuestion: "[FACET:DATA_STATE] How is data, state, or cache stored, synchronized, and persisted on disk?",
     description: "Storage adapters, SQLite databases, file caches, state stores, migrations.",
     targetFilesSummary: "src/capnAdapter.ts, database schemas, cache managers",
+    evidenceKeywords: ["store", "cache", "persist", "state", "save", "write", "load", "disk", "dir", "mkdir", "fs", "db", "database", "sqlite", "sql", "schema", "migrat", "memory"],
   },
   boundaries: {
     id: "boundaries",
@@ -44,6 +48,7 @@ export const SEMANTIC_FACETS: Record<SemanticFacetId, FacetDefinition> = {
     canonicalQuestion: "[FACET:BOUNDARIES] What boundary protocols (Named Pipes, Unix Sockets, HTTP, RPC, SQL) connect internal modules or external services?",
     description: "Boundary protocols, IPC bridges, API endpoints, protocol clients.",
     targetFilesSummary: "src/daemon.ts, src/mcp/*, IPC bridges",
+    evidenceKeywords: ["socket", "pipe", "http", "rpc", "jsonrpc", "ipc", "net", "server", "client", "request", "response", "protocol", "stdio", "stdin", "stdout", "connect", "exec", "spawn", "port", "endpoint", "fetch", "url", "mcp"],
   },
   invariants: {
     id: "invariants",
@@ -52,6 +57,7 @@ export const SEMANTIC_FACETS: Record<SemanticFacetId, FacetDefinition> = {
     canonicalQuestion: "[FACET:INVARIANTS] What non-obvious security, path normalization, or OS-specific invariants must not be violated?",
     description: "Path normalizers, platform guards, security sanitizers, fail-closed checks.",
     targetFilesSummary: "src/paths.ts, src/integrity.ts",
+    evidenceKeywords: ["normalize", "resolve", "realpath", "symlink", "canonical", "escape", "contain", "inside", "outside", "relative", "absolute", "platform", "win", "posix", "sanitize", "valid", "assert", "guard", "invariant", "integrity", "verify", "reject", "forbid", "safe"],
   },
   failure: {
     id: "failure",
@@ -60,6 +66,7 @@ export const SEMANTIC_FACETS: Record<SemanticFacetId, FacetDefinition> = {
     canonicalQuestion: "[FACET:FAILURE] How does the system fail closed on misses and recover from uninitialized, corrupted, or degraded states?",
     description: "Fail-closed policy, error registries, typed exception classes, recovery fallback.",
     targetFilesSummary: "src/types.ts, error handlers",
+    evidenceKeywords: ["err", "throw", "catch", "fail", "recover", "fallback", "retry", "miss", "reject", "abort", "timeout", "degrad", "corrupt", "invalid", "uninitiali", "exception", "panic", "fatal"],
   },
 };
 
@@ -409,6 +416,70 @@ export interface BootstrapResult {
   chartErrors?: string[];
 }
 
+const MAX_DRAFT_EVIDENCE = 6;
+const MAX_EXCERPT_LENGTH = 240;
+
+/** Imports, re-exports, and module headers: they name dependencies but show no behavior. */
+const IMPORT_LINE = /^(?:import\b|export\s+(?:type\s+)?[*{]|from\s+\S+\s+import\b|use\s|package\s|#include\b|(?:const|let|var)\s+[^=]+=\s*require\s*\(|require\s*\()/u;
+const COMMENT_LINE = /^(?:\/\/|\/\*|\*|#|"""|''')/u;
+/** Declarations a file exposes to other modules (TypeScript/JavaScript, Python, Go, Rust). */
+const EXPORTED_DECLARATION = [
+  /^\s*export\s+(?:default\s+)?(?:declare\s+)?(?:abstract\s+)?(?:async\s+)?(?:function\b|class\b|interface\b|type\b|enum\b|const\b|let\b|var\b)/u,
+  /^\s*(?:module\.)?exports\b/u,
+  /^(?:async\s+)?def\s+[A-Za-z]|^class\s+[A-Za-z]/u,
+  /^func\s+(?:\([^)]*\)\s*)?[A-Z]|^type\s+[A-Z]/u,
+  /^\s*pub(?:\([^)]*\))?\s+(?:async\s+)?(?:fn|struct|enum|trait|type|const)\b/u,
+];
+
+/** Lowercase words of a line, with camelCase and snake_case identifiers split apart. */
+function lineWords(line: string): string[] {
+  return (line.match(/[A-Z]+(?![a-z])|[A-Z]?[a-z]+/gu) ?? []).map((word) => word.toLowerCase());
+}
+
+function countChar(text: string, char: string): number {
+  return text.split(char).length - 1;
+}
+
+/**
+ * Picks the lines of a file that bear on a facet: the lines naming the most facet keywords,
+ * exported declarations first among equals. A file with no keyword line falls back to its
+ * exported declarations. Imports, comments, and blank lines never count as evidence.
+ * Returns at most `limit` lines, in file order.
+ */
+function selectFacetEvidence(text: string, keywords: string[], limit: number): Array<{ line: number; excerpt: string }> {
+  const matches: Array<{ line: number; excerpt: string; hits: number; score: number }> = [];
+  const seen = new Set<string>();
+  let importCloser: string | undefined;
+  text.split(/\r?\n/u).forEach((raw, index) => {
+    const trimmed = raw.trim();
+    if (importCloser) {
+      if (trimmed.includes(importCloser)) importCloser = undefined;
+      return;
+    }
+    if (!trimmed || COMMENT_LINE.test(trimmed)) return;
+    if (IMPORT_LINE.test(trimmed)) {
+      // A multi-line import list is skipped until it closes.
+      if (countChar(trimmed, "{") > countChar(trimmed, "}")) importCloser = "}";
+      else if (countChar(trimmed, "(") > countChar(trimmed, ")")) importCloser = ")";
+      return;
+    }
+    const words = lineWords(trimmed);
+    const hits = keywords.filter((keyword) => words.some((word) => word.startsWith(keyword))).length;
+    const exported = EXPORTED_DECLARATION.some((pattern) => pattern.test(raw));
+    if (hits === 0 && !exported) return;
+    const excerpt = trimmed.slice(0, MAX_EXCERPT_LENGTH);
+    if (seen.has(excerpt)) return;
+    seen.add(excerpt);
+    matches.push({ line: index + 1, excerpt, hits, score: hits + (exported ? 2 : 0) });
+  });
+  const keywordLines = matches.filter((match) => match.hits > 0);
+  return (keywordLines.length > 0 ? keywordLines : matches)
+    .sort((a, b) => b.score - a.score || a.line - b.line)
+    .slice(0, limit)
+    .sort((a, b) => a.line - b.line)
+    .map(({ line, excerpt }) => ({ line, excerpt }));
+}
+
 /**
  * Collects source excerpts as unverified candidates. Only an agent or developer
  * can validate these excerpts and chart an architectural claim.
@@ -492,11 +563,14 @@ export async function bootstrapSemanticMap(
   // Collect evidence only; filenames and package metadata do not establish architecture.
   for (const fid of missingFacets) {
     const def = SEMANTIC_FACETS[fid];
-    const files = candidates[fid].filter(isRepositoryFile);
-    const evidence = files.flatMap((file) => {
+    const candidateFiles = [...new Set(candidates[fid])].filter(isRepositoryFile);
+    const perFile = Math.ceil(MAX_DRAFT_EVIDENCE / Math.max(1, candidateFiles.length));
+    const evidence = candidateFiles.flatMap((file) => {
       const text = fs.readFileSync(resolveRepositoryFile(root, file).real, "utf8");
-      return text.split(/\r?\n/u).flatMap((line, index) => line.trim() ? [{ file, line: index + 1, excerpt: line.trim().slice(0, 240) }] : []).slice(0, 3);
-    }).slice(0, 6);
+      return selectFacetEvidence(text, def.evidenceKeywords, perFile).map((line) => ({ file, ...line }));
+    }).slice(0, MAX_DRAFT_EVIDENCE);
+    // A candidate file with nothing relevant to the facet is not cited.
+    const files = candidateFiles.filter((file) => evidence.some((line) => line.file === file));
     if (evidence.length > 0) {
       scaffolded.push({
         id: fid,

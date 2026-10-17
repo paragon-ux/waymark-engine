@@ -132,7 +132,7 @@ test("backing-file containment holds through status, bootstrap, publisher, CLI, 
     assert.equal(status.facets.lifecycle.status, "drifted");
     assert.deepEqual(status.facets.lifecycle.missingFiles, ["src/external/secret.ts"]);
 
-    const drafts = await bootstrapSemanticMap(repo, { dryRun: false });
+    const drafts = await bootstrapSemanticMap(repo);
     assert.equal(drafts.published, false);
     assert.ok(drafts.scaffolded.every((facet) => !facet.files.includes("src/external/secret.ts")));
     await assert.rejects(() => publish(repo, "none", "", "Unsafe chart", "outside", ["src/external/secret.ts"]), /escapes repository root|symlink escapes/u);
@@ -171,7 +171,7 @@ test("Bootstrap returns evidence-backed drafts and never publishes unverified fa
   assert.equal(initStatus.missing.length, 5);
 
   // Bootstrap the repository
-  const bootResult = await bootstrapSemanticMap(repo, { dryRun: false });
+  const bootResult = await bootstrapSemanticMap(repo);
   assert.equal(bootResult.ok, true);
   assert.equal(bootResult.scaffolded.length, 5);
   assert.equal(bootResult.published, false);
@@ -210,7 +210,7 @@ test("bootstrap evidence cites facet-relevant code, never imports or comments", 
     fs.writeFileSync(path.join(repo, "src", "daemon.ts"), 'import net from "node:net";\n// Socket server goes here.\n', "utf8");
     fs.writeFileSync(path.join(repo, "src", "types.ts"), 'import type { Buffer } from "node:buffer";\n\nexport function describe(value: Buffer): string { return value.toString(); }\n', "utf8");
 
-    const result = await bootstrapSemanticMap(repo, { dryRun: true });
+    const result = await bootstrapSemanticMap(repo);
     const draft = (id: string) => {
       const found = result.scaffolded.find((facet) => facet.id === id);
       assert.ok(found, `missing ${id} draft`);
@@ -246,7 +246,7 @@ test("bootstrap evidence cites facet-relevant code, never imports or comments", 
 test("minimal repository bootstrap adds no map facts or memory store", async () => {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), "waymark-empty-map-"));
   try {
-    const result = await bootstrapSemanticMap(repo, { dryRun: false });
+    const result = await bootstrapSemanticMap(repo);
     assert.equal(result.scaffolded.length, 0);
     assert.equal(result.published, false);
     assert.equal(fs.existsSync(memoryStoreDir(repo)), false);
@@ -376,7 +376,7 @@ test("MCP waymark_memory tool: bootstrap -> status -> chart -> list -> bust -> u
 
 test("MCP waymark_ask facet addressing & path outline mode", async () => {
   const repo = setupTestRepo();
-  await bootstrapSemanticMap(repo, { dryRun: false });
+  await bootstrapSemanticMap(repo);
   const server = new McpServer({ root: repo });
 
   // 1. Ask with facet: 'status'

@@ -31,6 +31,8 @@ export interface AstIntent {
   tool: "trace_path" | "search_graph" | "get_architecture";
   functionName?: string;
   query?: string;
+  /** search_graph: a dotted query never widens to its bare name (`mutex.lock` stays `mutex.lock`). */
+  strictQualified?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -62,7 +64,14 @@ export interface LiteralIntent {
   isLiteral: boolean;
   normalized: string;
   isExplicitPath: boolean;
+  /**
+   * A literal that is also a qualified identifier (`mutex.lock`, `response.json`, `db.sql`):
+   * its "extension" may be a method name, so when no file matches, the router looks it up as a symbol.
+   */
+  couldBeSymbol: boolean;
 }
+
+const DOTTED_IDENTIFIER = /^[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)+(?:\(\))?$/u;
 
 export function detectLiteralIntent(question: string): LiteralIntent {
   const q = question.trim().replace(/^['"`]+|['"`]+$/g, "");
@@ -77,8 +86,9 @@ export function detectLiteralIntent(question: string): LiteralIntent {
   const noExt = NO_EXT_FILENAMES.has(lower);
 
   const isExplicitPath = hasSep || hasExplicitPrefix;
+  const isLiteral = hasSep || hasExt || leadingDot || noExt;
 
-  return { isLiteral: hasSep || hasExt || leadingDot || noExt, normalized, isExplicitPath };
+  return { isLiteral, normalized, isExplicitPath, couldBeSymbol: isLiteral && !isExplicitPath && hasExt && DOTTED_IDENTIFIER.test(q) };
 }
 
 export function detectAstIntent(question: string): AstIntent {
@@ -159,8 +169,9 @@ export function detectAstIntent(question: string): AstIntent {
     lower.includes("method signature") ||
     lower.includes("find symbol") ||
     lower.includes("locate symbol") ||
-    /\bwhere\s+is\s+([A-Za-z0-9_]+)\s+(declared|defined|implemented|located)\b/i.test(q) ||
-    /\bwhere\s+is\s+([A-Za-z0-9_]+)\s*\??$/i.test(q) ||
+    // A qualified name (`WaymarkDaemon.start`) is a symbol too.
+    /\bwhere\s+is\s+([A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)*)\s+(declared|defined|implemented|located)\b/i.test(q) ||
+    /\bwhere\s+is\s+([A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)*)\s*\??$/i.test(q) ||
     /\b(declared|defined|implemented)\s+in\b/i.test(q) ||
     /\b(declaration|definition|implementation)\s+of\b/i.test(q);
 
@@ -195,16 +206,28 @@ export function detectAstIntent(question: string): AstIntent {
   return { requiresParser: false, tool: "search_graph" };
 }
 
-const SKIP_DIRS = new Set<string>([
-  "node_modules", "dist", "out", "build", "coverage", "next", "nuxt",
-  "capn", "waymark", "qmd", "claude", "codex", "zed",
-  "eval", "experiments", "evidence", "sandbox", "tmp", "vendor", "venv",
-  "__pycache__", ".git", ".capn", ".waymark",
+/** Directories skipped at any depth: dependencies, build output, and tool state. */
+const SKIP_DIRS_ANY_DEPTH = new Set<string>([
+  "node_modules", "dist", "out", "build", "coverage", "__pycache__", "venv", ".venv",
+  ".git", ".capn", ".waymark", ".next", ".nuxt", ".qmd", ".codex", ".zed",
   // Tool state that never belongs in path results: upstream codedb, the codedb-core
   // fork, the capn-hook fork default store, and Claude Code, whose .claude/worktrees
   // holds whole checkouts that would make every basename ambiguous.
   ".codedb", ".codedb-core", ".capn-hook", ".claude",
 ]);
+
+/**
+ * Scratch and tool folders skipped only at the repository root. Nested folders with these names
+ * (`src/waymark`, `src/claude`, `src/eval`) are ordinary source and stay visible.
+ */
+const SKIP_DIRS_ROOT_ONLY = new Set<string>([
+  "next", "nuxt", "capn", "waymark", "qmd", "claude", "codex", "zed",
+  "eval", "experiments", "evidence", "sandbox", "scratch", "tmp", "vendor",
+]);
+
+export function isSkippedDir(name: string, depth: number): boolean {
+  return SKIP_DIRS_ANY_DEPTH.has(name) || (depth === 0 && SKIP_DIRS_ROOT_ONLY.has(name));
+}
 
 function canonicalRoot(r: string): string {
   return path.resolve(r).replace(/^[a-zA-Z]:/, (m) => m.toLowerCase());
@@ -234,7 +257,7 @@ export function getRepoPrefixTrie(root: string, maxAgeMs = 60_000): PrefixTrie {
 }
 
 function getCacheFilePath(root: string): string {
-  return path.join(stateDir(root), "paths.v2.cache");
+  return path.join(stateDir(root), "paths.v3.cache");
 }
 
 export function collectRepoPaths(root: string, maxAgeMs = 60_000): string[] {
@@ -262,7 +285,7 @@ export function collectRepoPaths(root: string, maxAgeMs = 60_000): string[] {
 
   const base = path.resolve(root);
   const out: string[] = [];
-  const walk = (dir: string) => {
+  const walk = (dir: string, depth: number) => {
     let entries: fs.Dirent[];
     try {
       entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -272,8 +295,8 @@ export function collectRepoPaths(root: string, maxAgeMs = 60_000): string[] {
     for (const ent of entries) {
       const full = path.join(dir, ent.name);
       if (ent.isDirectory()) {
-        if (!SKIP_DIRS.has(ent.name)) {
-          walk(full);
+        if (!isSkippedDir(ent.name, depth)) {
+          walk(full, depth + 1);
         }
       } else if (ent.isFile()) {
         if (isSkippedFile(ent.name)) continue;
@@ -281,7 +304,7 @@ export function collectRepoPaths(root: string, maxAgeMs = 60_000): string[] {
       }
     }
   };
-  walk(base);
+  walk(base, 0);
 
   pathCache = { root: normRoot, at: Date.now(), paths: out };
 
@@ -325,7 +348,7 @@ export async function collectRepoPathsBounded(root: string, budget: RepoWalkBudg
   const out: string[] = [];
   // Cast so control-flow analysis does not narrow it to null; the walk closure assigns it.
   let stopped = null as "max-files" | "timeout" | "aborted" | null;
-  const walk = async (dir: string): Promise<void> => {
+  const walk = async (dir: string, depth: number): Promise<void> => {
     if (budget.signal?.aborted) stopped = "aborted";
     else if (Date.now() >= deadline) stopped = "timeout";
     if (stopped) return;
@@ -339,8 +362,8 @@ export async function collectRepoPathsBounded(root: string, budget: RepoWalkBudg
       if (stopped) return;
       const full = path.join(dir, ent.name);
       if (ent.isDirectory()) {
-        if (!SKIP_DIRS.has(ent.name)) {
-          await walk(full);
+        if (!isSkippedDir(ent.name, depth)) {
+          await walk(full, depth + 1);
         }
       } else if (ent.isFile()) {
         if (isSkippedFile(ent.name)) continue;
@@ -352,7 +375,7 @@ export async function collectRepoPathsBounded(root: string, budget: RepoWalkBudg
       }
     }
   };
-  await walk(base);
+  await walk(base, 0);
   return stopped ? { complete: false, reason: stopped, scanned: out.length } : { complete: true, paths: out };
 }
 
@@ -463,6 +486,21 @@ export function extractCandidateTokens(question: string): {
   return { shape, candidateTokens, plainTokens };
 }
 
+/**
+ * The names a file-scoped question filters that file's symbols by: the call-graph or definition
+ * target when the question has one, else its identifier-shaped tokens, else its content words.
+ * An empty question lists every symbol.
+ */
+function fileScopeTerms(question: string, astIntent: AstIntent): string[] {
+  if (!question.trim()) return [];
+  if (astIntent.functionName) return [astIntent.functionName];
+  if (astIntent.query) return [astIntent.query];
+  const { candidateTokens, plainTokens } = extractCandidateTokens(question);
+  if (candidateTokens.length > 0) return candidateTokens;
+  if (plainTokens.length > 0) return plainTokens;
+  return [question.trim()];
+}
+
 export interface DiscoveryRouteContext {
   root: string;
   question: string;
@@ -470,7 +508,7 @@ export interface DiscoveryRouteContext {
   codedbExecutable?: string;
   capnExecutable?: string;
   profile?: string;
-  queryCapnMemory: (root: string, executable: string, question: string) => Promise<{ hit: boolean; result: unknown; error?: string; reason?: string; note?: string }>;
+  queryCapnMemory: (root: string, executable: string, question: string) => Promise<{ hit: boolean; result: unknown; error?: string; reason?: string; note?: string; pruned?: string[] }>;
   assertLexicalStore?: (root: string) => void;
   overrideCandidates?: FuzzyCandidate[];
 }
@@ -531,8 +569,50 @@ async function routeDiscoveryCore(ctx: DiscoveryRouteContext): Promise<AskResult
     }
   }
 
+  let astIntent = detectAstIntent(question);
+  // A bare symbol asked with a traversal option is a call-graph question.
+  if (astIntent.tool === "search_graph" && astIntent.query && (options?.depth !== undefined || options?.direction !== undefined)) {
+    astIntent = { requiresParser: true, tool: "trace_path", functionName: astIntent.query };
+  }
+
+  // A question scoped to one file is answered from that file's symbols, never the whole repository.
+  const scopedPath = typeof options?.path === "string" ? options.path.trim() : "";
+  if (scopedPath && !options?.facet) {
+    const { discoverSymbolsInFile } = await import("./astExtractor.js");
+    const tScope0 = performance.now();
+    const discovered = await discoverSymbolsInFile(root, scopedPath, options?.language);
+    const terms = fileScopeTerms(question, astIntent);
+    const symbols = terms.length === 0
+      ? discovered.symbols
+      : discovered.symbols.filter((s) => terms.some((t) => s.name.toLowerCase().includes(t.toLowerCase())));
+    if (recordTiming) {
+      timings.ast_ms = Math.round((performance.now() - tScope0) * 100) / 100;
+      timings.total_ms = Math.round((performance.now() - startTime) * 100) / 100;
+    }
+    if (symbols.length === 0) {
+      return {
+        waymark: 1,
+        kind: "ask",
+        status: "miss",
+        provider: "codedb",
+        missCode: "SYMBOL_NOT_FOUND",
+        reason: `No symbols in ${discovered.path} match "${question}"${terms.length > 0 ? ` (terms: ${terms.join(", ")})` : ""}.`,
+        matches: [],
+        ...(recordTiming ? { timings } : {}),
+      };
+    }
+    return {
+      waymark: 1,
+      kind: "ask",
+      status: "hit",
+      provider: "codedb",
+      confidence: "exact",
+      result: { ...discovered, symbols },
+      ...(recordTiming ? { timings } : {}),
+    };
+  }
+
   // Tier 1: Structural AST check (codedb)
-  const astIntent = detectAstIntent(question);
   const hasStructuralIntent = astIntent.requiresParser;
 
   if (tier === "auto" || tier === "ast") {
@@ -620,22 +700,47 @@ async function routeDiscoveryCore(ctx: DiscoveryRouteContext): Promise<AskResult
         tier === "path" ||
         (tier === "auto" && literal.isLiteral)
       ) {
-        if (recordTiming) timings.total_ms = Math.round((performance.now() - startTime) * 100) / 100;
         const trie = getRepoPrefixTrie(root);
-        const baseName = literal.normalized.split("/").pop()?.toLowerCase() ?? "";
-        const candidates = trie.getPaths().filter((p) => (p.split("/").pop() ?? "").toLowerCase() === baseName);
-        if (candidates.length > 1) {
+        const collisions = trie.collisions(literal.normalized);
+        if (collisions.length > 1) {
+          if (recordTiming) timings.total_ms = Math.round((performance.now() - startTime) * 100) / 100;
+          const files = collisions.map((m) => m.file);
+          const kindLabel = collisions[0]?.kind === "basename" ? "basename" : `${collisions[0]?.kind ?? "path"} match`;
           return {
             waymark: 1,
             kind: "ask",
             status: "miss",
             provider: "literal-path",
             missCode: "AMBIGUOUS_PATH_COLLISION",
-            reason: `Ambiguous basename collision for "${question}": found ${candidates.length} candidates (${candidates.slice(0, 5).join(", ")}${candidates.length > 5 ? "..." : ""}). Qualify path explicitly with relative path (e.g. ./${literal.normalized}).`,
-            matches: candidates.slice(0, 10).map((file) => ({ file, kind: "basename" as const })),
+            reason: `Ambiguous ${kindLabel} collision for "${question}": found ${files.length} candidates (${files.slice(0, 5).join(", ")}${files.length > 5 ? "..." : ""}). Qualify the path explicitly (e.g. ./${files[0] ?? literal.normalized}).`,
+            matches: collisions.slice(0, 10),
             ...(recordTiming ? { timings } : {}),
           };
         }
+        // `mutex.lock`, `response.json`: no such file, so it is a qualified symbol, not a path.
+        if (tier === "auto" && literal.couldBeSymbol) {
+          const tSym0 = performance.now();
+          const symbolResult = await queryStructural(
+            { requiresParser: true, tool: "search_graph", query: question.trim().replace(/\(\)$/u, ""), strictQualified: true },
+            root,
+            codedbExecutable,
+            { autoDaemon: options?.daemon },
+          );
+          if (recordTiming) timings.ast_ms = Math.round((performance.now() - tSym0) * 100) / 100;
+          if (symbolResult.hit) {
+            if (recordTiming) timings.total_ms = Math.round((performance.now() - startTime) * 100) / 100;
+            return {
+              waymark: 1,
+              kind: "ask",
+              status: "hit",
+              provider: "codedb",
+              confidence: "exact",
+              result: symbolResult.output,
+              ...(recordTiming ? { timings } : {}),
+            };
+          }
+        }
+        if (recordTiming) timings.total_ms = Math.round((performance.now() - startTime) * 100) / 100;
         return {
           waymark: 1,
           kind: "ask",
@@ -732,7 +837,7 @@ async function routeDiscoveryCore(ctx: DiscoveryRouteContext): Promise<AskResult
         options: [executedOption, alternativeOption],
         executedOption,
         alternativeOption,
-        chartHint: "This answer can be charted with waymark-chart regardless of which option resolved it.",
+        chartHint: "This answer can be charted with waymark_memory(action: \"chart\") (CLI: waymark-chart) regardless of which option resolved it.",
         recommendation: `Recommended tier: fuzzy-lexical. Found match '${topFuzzy.candidate.name}' in ${topFuzzy.candidate.path}:${topFuzzy.candidate.line}.`,
         tip: `To search charted semantic memory instead: waymark-ask "${question}" --tier capn`,
         ...(recordTiming ? { timings } : {}),
@@ -757,6 +862,24 @@ async function routeDiscoveryCore(ctx: DiscoveryRouteContext): Promise<AskResult
     const capnRes = await queryCapnMemory(root, capnExecutable, effectiveQuestion);
     if (recordTiming) timings.capn_ms = Math.round((performance.now() - tCapn0) * 100) / 100;
     if (recordTiming) timings.total_ms = Math.round((performance.now() - startTime) * 100) / 100;
+
+    // A facet question scoped to a file only accepts a charted answer that cites that file.
+    if (capnRes.hit && scopedPath) {
+      const cited = (capnRes.result as { files?: unknown } | null)?.files;
+      const wanted = scopedPath.replace(/\\/g, "/").replace(/^\.\//u, "");
+      if (!Array.isArray(cited) || !cited.some((f) => typeof f === "string" && f.replace(/\\/g, "/") === wanted)) {
+        return {
+          waymark: 1,
+          kind: "ask",
+          status: "miss",
+          provider: "capn-cli",
+          missCode: "NO_CHARTED_MEMORY",
+          reason: `Charted memory for "${effectiveQuestion}" does not cite ${wanted}.`,
+          matches: [],
+          ...(recordTiming ? { timings } : {}),
+        };
+      }
+    }
 
     if (capnRes.hit) {
       if (autoResolve) {
@@ -801,7 +924,7 @@ async function routeDiscoveryCore(ctx: DiscoveryRouteContext): Promise<AskResult
         options: [executedOption, alternativeOption],
         executedOption,
         alternativeOption,
-        chartHint: "This answer can be charted with waymark-chart regardless of which option resolved it.",
+        chartHint: "This answer can be charted with waymark_memory(action: \"chart\") (CLI: waymark-chart) regardless of which option resolved it.",
         recommendation: `Recommended tier: capn-cli. Queried charted memory for "${question}".`,
         tip: `To search code symbols fuzzily instead: waymark-ask "${question}" --tier fuzzy`,
         ...(recordTiming ? { timings } : {}),
@@ -817,7 +940,7 @@ async function routeDiscoveryCore(ctx: DiscoveryRouteContext): Promise<AskResult
         ? capnRes.reason
         : "NO_CHARTED_MEMORY",
       reason: capnRes.reason === "STORE_UNINITIALIZED"
-        ? capnRes.note || `Repository consensus memory is not initialized (${MEMORY_STORE_LABEL} missing). Run waymark_init to enable Tier 4.`
+        ? capnRes.note || `Repository consensus memory is not initialized (${MEMORY_STORE_LABEL} missing). Run waymark_memory(action: "init") (CLI: waymark memory init) to enable Tier 4.`
         : (capnRes.reason === "CAPN_NON_DETERMINISTIC_MODE"
           ? capnRes.note || "Capn store is in embedding mode. Re-initialize with deterministic lexical mode."
           : `No charted memory found for "${question}".`),
@@ -909,7 +1032,7 @@ async function routeDiscoveryCore(ctx: DiscoveryRouteContext): Promise<AskResult
       options: [executedOption, alternativeOption],
       executedOption,
       alternativeOption,
-      chartHint: "This answer can be charted with waymark-chart regardless of which option resolved it.",
+      chartHint: "This answer can be charted with waymark_memory(action: \"chart\") (CLI: waymark-chart) regardless of which option resolved it.",
       recommendation: `Recommended tier: fuzzy-lexical. Found match '${bestFuzzyResult.candidate.name}' in ${bestFuzzyResult.candidate.path}:${bestFuzzyResult.candidate.line}.`,
       tip: `To query charted semantic memory instead: waymark-ask "${question}" --tier capn`,
       ...(recordTiming ? { timings } : {}),
@@ -918,7 +1041,7 @@ async function routeDiscoveryCore(ctx: DiscoveryRouteContext): Promise<AskResult
 
   // Stage 2: No identifier-shaped tokens or fuzzy below threshold -> semantic recommendation executes eagerly
   const tCapn0 = performance.now();
-  const capnRes = await queryCapnMemory(root, capnExecutable, question);
+  const capnRes = await queryCapnMemory(root, capnExecutable, effectiveQuestion);
   if (recordTiming) timings.capn_ms = Math.round((performance.now() - tCapn0) * 100) / 100;
 
   if (capnRes.hit) {
@@ -973,7 +1096,7 @@ async function routeDiscoveryCore(ctx: DiscoveryRouteContext): Promise<AskResult
       options: [executedOption, alternativeOption],
       executedOption,
       alternativeOption,
-      chartHint: "This answer can be charted with waymark-chart regardless of which option resolved it.",
+      chartHint: "This answer can be charted with waymark_memory(action: \"chart\") (CLI: waymark-chart) regardless of which option resolved it.",
       recommendation: `Recommended tier: capn-cli. Queried charted memory.`,
       tip: `To search code symbols fuzzily instead: waymark-ask "${question}" --tier fuzzy`,
       ...(recordTiming ? { timings } : {}),
@@ -1090,7 +1213,7 @@ async function routeDiscoveryCore(ctx: DiscoveryRouteContext): Promise<AskResult
       options: [executedOption, alternativeOption],
       executedOption,
       alternativeOption,
-      chartHint: "This answer can be charted with waymark-chart regardless of which option resolved it.",
+      chartHint: "This answer can be charted with waymark_memory(action: \"chart\") (CLI: waymark-chart) regardless of which option resolved it.",
       recommendation: `Recommended tier: fuzzy-lexical. Matched '${exhaustiveHit.candidate.name}' via exhaustive fuzzy pass on '${exhaustiveToken}'.`,
       tip: `To chart this answer for fast retrieval next time: waymark-chart --question "${question}" --answer "<details>" --files "${exhaustiveHit.candidate.path}"`,
       ...(recordTiming ? { timings } : {}),
@@ -1116,8 +1239,19 @@ export async function routeDiscovery(ctx: DiscoveryRouteContext): Promise<AskRes
   const isDev = Boolean(ctx.options?.dev);
   const startedAt = performance.now();
   let res: AskResult;
+  // capn deletes stale entries while it answers; the result names them instead of losing them silently.
+  let memoryPruned: string[] | undefined;
+  const tracked: DiscoveryRouteContext = {
+    ...ctx,
+    queryCapnMemory: async (root, executable, question) => {
+      const answer = await ctx.queryCapnMemory(root, executable, question);
+      if (answer.pruned && answer.pruned.length > 0) memoryPruned = answer.pruned;
+      return answer;
+    },
+  };
   try {
-    res = await routeDiscoveryCore(ctx);
+    res = await routeDiscoveryCore(tracked);
+    if (memoryPruned && res.status !== "error") res = { ...res, memoryPruned };
   } catch (error) {
     const code = error instanceof WaymarkError ? error.code : "UNEXPECTED_ERROR";
     if (code !== "UNSUPPORTED_SUBSYSTEM" && !code.startsWith("CODEDB_")) throw error;

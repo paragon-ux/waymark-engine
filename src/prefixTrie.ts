@@ -124,4 +124,23 @@ export class PrefixTrie {
 
     return [];
   }
+
+  /**
+   * The candidates that made `match` refuse to answer: every file sharing the basename, else every
+   * suffix match, else every substring match, when more than one exists. Empty when the query
+   * matches one file or none.
+   */
+  collisions(rawNormalized: string): LiteralMatch[] {
+    const normalized = rawNormalized.replace(/\\/g, "/").replace(/^\.\//, "");
+    const lower = normalized.toLowerCase();
+    if (!lower) return [];
+    const baseName = lower.split("/").pop() ?? "";
+    const basenames = this.basenameMap.get(baseName) ?? [];
+    if (basenames.length > 1) return basenames.map((file) => ({ file, kind: "basename" }));
+    const suffixes = this.allPaths.filter((p) => p.toLowerCase().endsWith(lower));
+    if (suffixes.length > 1) return suffixes.map((file) => ({ file, kind: "suffix" }));
+    const subs = this.allPaths.filter((p) => p.toLowerCase().includes(lower));
+    if (subs.length > 1) return subs.map((file) => ({ file, kind: "substring" }));
+    return [];
+  }
 }

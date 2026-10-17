@@ -40,7 +40,10 @@ test("full wrapped capn surface: chart -> ask -> list -> bust -> chart -> unchar
 
   const ctx = await context(repo, exe);
   assert.equal(ctx.ok, true);
-  assert.match(String(ctx.output), /capn ask/);
+  // capn's contract is rewritten to the Waymark calls, which pass the Waymark store arguments.
+  assert.match(String(ctx.output), /waymark_ask\(question:/);
+  assert.match(String(ctx.output), /waymark_memory\(action: "chart"/);
+  assert.doesNotMatch(String(ctx.output), /\bcapn (?:ask|chart)\b/);
 
   const busted = await bust(repo, exe, "src/payments.ts");
   assert.equal(busted.ok, true);

@@ -91,10 +91,10 @@ Dispatches consensus memory and lifecycle operations using the **`action`** para
 
 | Action | Example Arguments | Description |
 | :--- | :--- | :--- |
-| **`bootstrap`** | `{"action": "bootstrap", "dry_run": false}` | Collect source excerpts as unverified drafts. Each excerpt is a line that names the facet's keywords, or an exported declaration when the file has none; imports and comments are skipped. It does not initialize the memory store or publish claims; verify and chart supported conclusions explicitly. |
+| **`bootstrap`** | `{"action": "bootstrap", "plain": true}` | Collect source excerpts as unverified drafts for every missing or drifted facet, from the repository's own entry and source files. Each excerpt is a line that names the facet's keywords, or an exported declaration when the file has none; imports and comments are skipped. It does not initialize the memory store or publish claims; verify and chart supported conclusions explicitly. |
 | **`status`** | `{"action": "status", "plain": true}` | Inspect Semantic Repo Map completion ratio, active facets, and file drift. |
-| **`chart`** | `{"action": "chart", "facet": "boundaries", "question": "IPC Protocol", "answer": "Named pipes on Windows...", "files": ["src/daemon.ts"]}` | Record architectural knowledge into consensus memory. |
-| **`heal`** | `{"action": "heal"}` | Recollect source-backed unverified drafts; established consensus entries are unchanged. |
+| **`chart`** | `{"action": "chart", "facet": "boundaries", "question": "IPC Protocol", "answer": "Named pipes on Windows...", "files": ["src/daemon.ts"]}` | Record architectural knowledge into consensus memory. Same bounds and facet rules as the CLI: question 1-240 characters, answer 1-4000, a facet from the five ids (also accepted as a `[FACET:<ID>]` tag in any case) with at least one backing file; charting a facet replaces its earlier entry. Returns `{ waymark: 1, kind: "chart", published, ... }`. |
+| **`heal`** | `{"action": "heal", "dry_run": true}` | Unchart drifted facet entries (backing file vanished or changed) and collect replacement drafts; `dry_run: true` only reports what it would unchart. Active entries are unchanged. |
 | **`export`** | `{"action": "export", "format": "md"}` | Export consensus architecture map as Markdown or JSON. |
 | **`bust`** | `{"action": "bust", "file": "src/daemon.ts"}` | Invalidate all consensus memories backed by a changed file. |
 | **`prune`** | `{"action": "prune"}` | Cleanly remove stale entries whose backing files vanished. |
@@ -102,6 +102,9 @@ Dispatches consensus memory and lifecycle operations using the **`action`** para
 | **`unchart`** | `{"action": "unchart", "id": "3a8f1b2c", "if_exists": true}` | Delete a specific memory entry by hex ID. |
 | **`init`** | `{"action": "init"}` | One-time deterministic lexical store initialization (`.waymark/memory`). |
 | **`context`** | `{"action": "context"}` | Retrieve ask-first routing contract and syntax guidelines. |
+| **`evict`** / **`close`** | `{"action": "close", "all": false}` | Release the root's resident codedb instance and the server's warm daemon for it (`all: true`: every root). Never starts a daemon. |
+
+With `plain: true`, every action returns plain text; `export` with `format: "json"` still returns JSON.
 
 ---
 
@@ -210,11 +213,11 @@ If your agent framework requires flat, single-purpose tools, enable **Verbose Mo
 ### Prompts
 | Prompt | Arguments | Workflow |
 | :--- | :--- | :--- |
-| `explore-subsystem` | `query` (required), `root` | Guided repository-wide exploration of a concept or module; scoped subsystem indexes are unsupported. |
-| `architectural-map` | `topic` (required), `root` | Structured call-graph and consensus memory mapping. |
+| `explore-subsystem` | `query` (required, non-empty; missing → JSON-RPC `-32602`), `root` | Guided repository-wide exploration of a concept or module; scoped subsystem indexes are unsupported. |
+| `architectural-map` | `topic` (required, non-empty; missing → JSON-RPC `-32602`), `root` | Structured call-graph and consensus memory mapping. |
 | `bootstrap-semantic-map` | `root` | Collects unverified source-backed drafts; a human must verify and explicitly chart any supported claim. |
 
-`root` is optional on every prompt. When it is set, the prompt tells the agent to pass `root: "<value>"` on every `waymark_ask`, `waymark_memory`, and `waymark_chart` call, so a host whose working directory isn't the repository still targets it.
+`root` is optional on every prompt. When it is set, the prompt tells the agent to pass `root: "<value>"` on every `waymark_ask` and `waymark_memory` call, so a host whose working directory isn't the repository still targets it.
 
 [`examples/`](https://github.com/paragon-ux/waymark-engine/tree/main/examples) has a recorded run of each prompt against this repository.
 

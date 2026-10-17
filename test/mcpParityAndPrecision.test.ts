@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { McpServer } from "../src/mcp/server.js";
 import { routeDiscovery } from "../src/discoveryRouter.js";
@@ -408,7 +409,8 @@ test("MCP waymark_ask supports explicit multi-symbol querying (JSON & plain: tru
 
 test("CLI symbols and waymark-symbols commands return consolidated results", async () => {
   const repo = setupRepo();
-  const cli = path.resolve("dist/src/cli.js");
+  // Resolved from this compiled test (dist/test), so the test passes from any working directory.
+  const cli = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../src/cli.js");
 
   // Run 'waymark symbols executeCommand'
   const stdout = execFileSync(process.execPath, [cli, "symbols", "executeCommand", "--plain"], {

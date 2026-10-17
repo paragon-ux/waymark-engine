@@ -8,7 +8,7 @@ Waymark keeps everything it writes inside a repository under `.waymark/`. It nev
 | :--- | :--- | :--- |
 | `.waymark/.gitignore` | `*`, so the folder never shows up in `git status`. An existing file is kept. | The first Waymark write in the repository |
 | `.waymark/memory/` | Tier 4 memory store: `config.json` (`{"embedding": false}`), `entries/*.md`, `map.json`, `qmd/index.sqlite` | `waymark init`, chart, bust, prune, unchart |
-| `.waymark/paths.v2.cache` | Tier 2 repository path cache | Path router (skipped when `WAYMARK_READ_ONLY=1`) |
+| `.waymark/paths.v3.cache` | Tier 2 repository path cache | Path router (skipped when `WAYMARK_READ_ONLY=1`) |
 | `.waymark/sessions/active.jsonl` | Opt-in telemetry | Session logger (`WAYMARK_TELEMETRY=1`) |
 
 The daemon socket, PID record, and daemon registry live in the OS temp directory. The PID record is informational only: `waymark daemon stop --force` never uses it to choose a process to kill (audit finding F-01).

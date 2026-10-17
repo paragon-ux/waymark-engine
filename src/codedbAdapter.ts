@@ -236,11 +236,94 @@ function bareFallback(fn: string): string | undefined {
   return bare && bare !== fn ? bare : undefined;
 }
 
-interface SymbolHit {
+export interface SymbolDefinition {
+  name: string;
   path: string;
   line: number;
-  kind: string;
-  name: string;
+  kind?: string;
+  qualified?: string;
+  detail?: string;
+}
+
+export type SymbolLookup =
+  | { ok: true; hits: SymbolDefinition[]; source: "codedb" | "tree-sitter"; widened: boolean }
+  | { ok: false; error: string };
+
+function symbolRows(payload: CodedbJson | null): SymbolDefinition[] {
+  return (Array.isArray(payload?.results) ? payload!.results : []) as SymbolDefinition[];
+}
+
+/**
+ * Definitions of `query`. codedb `symbol` matches bare names only, so a dotted name
+ * (`WaymarkDaemon.start`) is looked up among its bare name's definitions and kept where the
+ * qualified name matches. With `widenToBare`, a dotted name with no qualified match falls back to
+ * every definition of the bare name (`path.join` -> `join`), and the result says it was widened.
+ * Files codedb-core does not index (.mjs/.cjs/.mts/.cts/.toml) are searched with tree-sitter
+ * when codedb finds nothing.
+ */
+export async function lookupSymbolDefinitions(
+  root: string,
+  command: ResolvedCodedbCommand,
+  query: string,
+  options?: { autoDaemon?: boolean; widenToBare?: boolean },
+): Promise<SymbolLookup> {
+  const q = query.trim();
+  const run = await runJson(root, command, ["symbol", q, "--json"], { autoDaemon: options?.autoDaemon });
+  if (!run.ok || !run.payload) return { ok: false, error: run.error || "codedb symbol lookup failed" };
+  const direct = symbolRows(run.payload);
+  if (direct.length > 0) return { ok: true, hits: direct, source: "codedb", widened: false };
+
+  const bare = bareFallback(q);
+  let bareHits: SymbolDefinition[] = [];
+  if (bare) {
+    const bareRun = await runJson(root, command, ["symbol", bare, "--max-results", "200", "--json"], { autoDaemon: options?.autoDaemon });
+    if (!bareRun.ok || !bareRun.payload) return { ok: false, error: bareRun.error || "codedb symbol lookup failed" };
+    bareHits = symbolRows(bareRun.payload);
+    const qualified = bareHits.filter((r) => r.qualified === q);
+    if (qualified.length > 0) return { ok: true, hits: qualified, source: "codedb", widened: false };
+  }
+
+  const { lookupFallbackSymbols } = await import("./treeSitterIndex.js");
+  const fallback = await lookupFallbackSymbols(root, q);
+  if (fallback.length > 0) {
+    return { ok: true, hits: fallback.map((s) => ({ name: s.name, path: s.path, line: s.line, kind: s.kind, qualified: s.qualified })), source: "tree-sitter", widened: false };
+  }
+
+  if (bare && options?.widenToBare) {
+    if (bareHits.length > 0) return { ok: true, hits: bareHits, source: "codedb", widened: true };
+    const bareFallbackHits = await lookupFallbackSymbols(root, bare);
+    if (bareFallbackHits.length > 0) {
+      return { ok: true, hits: bareFallbackHits.map((s) => ({ name: s.name, path: s.path, line: s.line, kind: s.kind, qualified: s.qualified })), source: "tree-sitter", widened: true };
+    }
+  }
+  return { ok: true, hits: [], source: "codedb", widened: false };
+}
+
+/** Flat (depth-less) caller/callee listing in the format the codedb `neighbors` path prints. */
+function formatFlatGraph(fn: string, callerNames: string[], calleeNames: string[], direction: "callers" | "callees" | "both" = "both", note?: string): string {
+  let out = `function: ${fn}\n`;
+  out += `direction: ${direction}\n`;
+  if (note) out += `index: ${note}\n`;
+  if (direction !== "callers") {
+    out += `callees_total: ${calleeNames.length}\n`;
+    out += `callees: ${calleeNames.length > 0 ? calleeNames.join(", ") : "None"}\n`;
+  }
+  if (direction !== "callees") {
+    out += `callers_total: ${callerNames.length}\n`;
+    out += `callers: ${callerNames.length > 0 ? callerNames.join(", ") : "None"}\n`;
+  }
+  return out.trim();
+}
+
+const TREE_SITTER_NOTE = "tree-sitter (codedb-core does not index this file type)";
+
+/** Depth-1 fallback call graph for a definition only the tree-sitter index holds, flat-formatted. */
+async function flatFallbackGraph(root: string, fn: string, excludeTests: boolean): Promise<string | null> {
+  const { fallbackCallGraph } = await import("./treeSitterIndex.js");
+  const graph = await fallbackCallGraph(root, fn, 1, "both", excludeTests);
+  if (!graph) return null;
+  const label = (n: CallGraphHopNode) => (n.kind === "module" ? `<module> (${n.path})` : n.name);
+  return formatFlatGraph(fn, (graph.callers ?? []).map(label), (graph.callees ?? []).map(label), "both", TREE_SITTER_NOTE);
 }
 
 const HIGH_COLLISION_NAMES = new Set([
@@ -294,6 +377,9 @@ export async function queryMultiHopCallGraph(
         return { hit: true, output: out.trim() };
       }
       if (cands.length === 0) {
+        const { fallbackCallGraph } = await import("./treeSitterIndex.js");
+        const graph = await fallbackCallGraph(root, fn, depth, direction, excludeTests);
+        if (graph) return { hit: true, output: graph };
         return { hit: false, output: `Function or method "${fn}" not found.` };
       }
     }
@@ -317,7 +403,13 @@ export async function queryMultiHopCallGraph(
 
   const bare = bareFallback(fn);
   if (nRun.payload.symbol_exists === false) {
-    if (bare) return queryMultiHopCallGraph(root, bare, depth, direction, cmd, excludeTests, autoDaemon);
+    if (bare) {
+      // A qualified member of an unindexed file keeps its qualifier before it is widened.
+      const { fallbackCallGraph } = await import("./treeSitterIndex.js");
+      const graph = await fallbackCallGraph(root, fn, depth, direction, excludeTests);
+      if (graph) return { hit: true, output: graph };
+      return queryMultiHopCallGraph(root, bare, depth, direction, cmd, excludeTests, autoDaemon);
+    }
     return { hit: false, output: `Function or method "${fn}" not found.` };
   }
 
@@ -496,6 +588,20 @@ export async function queryStructural(
     const tree = await runJson(root, command, ["tree", "--json"], { autoDaemon: options?.autoDaemon });
     if (!tree.ok || !tree.payload) return { hit: false, output: tree.error, error: true };
     const files = (tree.payload.files ?? []) as Array<{ path: string; language: string; line_count: number; sym_count: number }>;
+    if (files.some((f) => (!f.language || f.language === "unknown") && !f.sym_count)) {
+      // codedb-core reports .mjs/.cjs/.mts/.cts/.toml as unknown with 0 symbols; tree-sitter fills them in.
+      const { fallbackFileSummaries, FALLBACK_INDEX_EXTENSIONS } = await import("./treeSitterIndex.js");
+      if (files.some((f) => FALLBACK_INDEX_EXTENSIONS.has(path.extname(f.path).toLowerCase()))) {
+        const summaries = await fallbackFileSummaries(root);
+        for (const f of files) {
+          const summary = summaries.get(f.path.replace(/\\/g, "/"));
+          if (summary && (!f.language || f.language === "unknown")) {
+            f.language = summary.language;
+            f.sym_count = summary.symbols;
+          }
+        }
+      }
+    }
     const totalSymbols = files.reduce((n, f) => n + (f.sym_count ?? 0), 0);
     let out = `total_files: ${files.length}\n`;
     out += `total_symbols: ${totalSymbols}\n`;
@@ -508,7 +614,8 @@ export async function queryStructural(
   if (intent.tool === "trace_path") {
     const fn = intent.functionName || "";
 
-    if (options?.depth !== undefined || options?.excludeTests) {
+    // Any traversal option asks for the structured graph; only a bare question gets the flat listing.
+    if (options?.depth !== undefined || options?.excludeTests || options?.direction !== undefined) {
       const graph = await queryMultiHopCallGraph(root, fn, options?.depth ?? 1, options?.direction ?? "both", command, Boolean(options?.excludeTests), Boolean(options?.autoDaemon));
       return { ...graph, ...(graph.error ? { error: true } : {}) };
     }
@@ -530,6 +637,8 @@ export async function queryStructural(
           return { hit: true, output: out.trim() };
         }
         if (cands.length === 0) {
+          const flat = await flatFallbackGraph(root, fn, Boolean(options?.excludeTests));
+          if (flat) return { hit: true, output: flat };
           return { hit: false, output: `Function or method "${fn}" not found.` };
         }
       }
@@ -551,7 +660,11 @@ export async function queryStructural(
 
       if (nRun.payload.symbol_exists === false) {
         const bare = bareFallback(fn);
-        if (bare) return queryStructural({ ...intent, functionName: bare }, root, executable, options);
+        if (bare) {
+          const flat = await flatFallbackGraph(root, fn, Boolean(options?.excludeTests));
+          if (flat) return { hit: true, output: flat };
+          return queryStructural({ ...intent, functionName: bare }, root, executable, options);
+        }
         return { hit: false, output: `Function or method "${fn}" not found.` };
       }
 
@@ -563,14 +676,7 @@ export async function queryStructural(
       const calleeItems = options?.excludeTests ? rawCalleeItems.filter((r: any) => !isTestFile(r.path || "")) : rawCalleeItems;
       const callerNames = (callerItems as Neighbor[]).map(neighborLabel);
       const calleeNames = (calleeItems as Neighbor[]).map(neighborLabel);
-
-      let out = `function: ${fn}\n`;
-      out += `direction: both\n`;
-      out += `callees_total: ${calleeNames.length}\n`;
-      out += `callees: ${calleeNames.length > 0 ? calleeNames.join(", ") : "None"}\n`;
-      out += `callers_total: ${callerNames.length}\n`;
-      out += `callers: ${callerNames.length > 0 ? callerNames.join(", ") : "None"}\n`;
-      return { hit: true, output: out.trim() };
+      return { hit: true, output: formatFlatGraph(fn, callerNames, calleeNames) };
     }
 
     // Fallback for legacy codedb without `neighbors`
@@ -600,32 +706,31 @@ export async function queryStructural(
       if (!symbol.ok || !symbol.payload) return { hit: false, output: symbol.error || "codedb symbol lookup failed", error: true };
       const symbolCount = (symbol.payload?.results as unknown[] | undefined)?.length ?? 0;
       if (symbolCount === 0) {
+        const flat = await flatFallbackGraph(root, fn, Boolean(options?.excludeTests));
+        if (flat) return { hit: true, output: flat };
         const bare = bareFallback(fn);
         if (bare) return queryStructural({ ...intent, functionName: bare }, root, executable, options);
         return { hit: false, output: `Function or method "${fn}" not found.` };
       }
     }
 
-    let out = `function: ${fn}\n`;
-    out += `direction: both\n`;
-    out += `callees_total: ${calleeNames.length}\n`;
-    out += `callees: ${calleeNames.length > 0 ? calleeNames.join(", ") : "None"}\n`;
-    out += `callers_total: ${callerNames.length}\n`;
-    out += `callers: ${callerNames.length > 0 ? callerNames.join(", ") : "None"}\n`;
-    return { hit: true, output: out.trim() };
+    return { hit: true, output: formatFlatGraph(fn, callerNames, calleeNames) };
   }
 
   // search_graph
   const query = intent.query || "";
-  const symbol = await runJson(root, command, ["symbol", query, "--json"], { autoDaemon: options?.autoDaemon });
-  if (!symbol.ok || !symbol.payload) return { hit: false, output: symbol.error || "codedb symbol lookup failed", error: true };
-  const results = (symbol.payload?.results as SymbolHit[] | undefined) ?? [];
+  const lookup = await lookupSymbolDefinitions(root, command, query, { autoDaemon: options?.autoDaemon, widenToBare: !intent.strictQualified });
+  if (!lookup.ok) return { hit: false, output: lookup.error, error: true };
+  const results = lookup.hits;
   if (results.length === 0) {
     return { hit: false, output: "results: 0" };
   }
+  const dotted = query.includes(".");
   let out = `total: ${results.length}\nresults: ${results.length} (cols: qn label file lines)\n`;
+  if (lookup.widened) out += `qualified: no definition named ${query}; showing definitions of ${bareFallback(query)}\n`;
+  if (lookup.source === "tree-sitter") out += `index: ${TREE_SITTER_NOTE}\n`;
   for (const r of results) {
-    out += `  ${r.name} ${r.kind} ${r.path} ${r.line}\n`;
+    out += `  ${dotted && r.qualified ? r.qualified : r.name} ${r.kind ?? "symbol"} ${r.path} ${r.line}\n`;
   }
   return { hit: true, output: out.trim() };
 }
@@ -646,6 +751,17 @@ export function pruneFuzzyCandidateCache(now = Date.now()): void {
 export function fuzzyCandidateCacheSize(): number {
   pruneFuzzyCandidateCache();
   return fuzzyCandidateCache.size;
+}
+
+/** True when every character of `needle` appears in `haystack` in order (fzf's precondition). */
+function fuzzySubsequence(haystack: string, needle: string): boolean {
+  let at = 0;
+  for (const ch of needle) {
+    at = haystack.indexOf(ch, at);
+    if (at === -1) return false;
+    at++;
+  }
+  return true;
 }
 
 /**
@@ -670,12 +786,23 @@ export async function queryFuzzyCandidates(
   if (!res.ok || !res.payload) throw codedbRunError(res.error);
   if (!res.payload.results) return [];
   const hits = res.payload.results as Array<{ name: string; path: string; line: number; kind?: string }>;
-  const candidates = hits.map((h) => ({
-    name: h.name,
+  // A codedb name taken from a CRLF file keeps its trailing \r; strip it before it reaches output.
+  const candidates: FuzzyCandidate[] = hits.map((h) => ({
+    name: String(h.name ?? "").replace(/[\r\n]+$/u, ""),
     path: h.path,
     line: h.line,
     kind: h.kind,
   }));
+  // Definitions in files codedb-core does not index (.mjs/.cjs/.mts/.cts/.toml) are candidates too.
+  const { fallbackSymbols } = await import("./treeSitterIndex.js");
+  const lowerToken = token.toLowerCase();
+  const seen = new Set(candidates.map((c) => `${c.path}:${c.line}:${c.name}`));
+  for (const s of await fallbackSymbols(root)) {
+    const key = `${s.path}:${s.line}:${s.name}`;
+    if (seen.has(key) || !fuzzySubsequence(s.name.toLowerCase(), lowerToken)) continue;
+    seen.add(key);
+    candidates.push({ name: s.name, path: s.path, line: s.line, kind: s.kind });
+  }
   fuzzyCandidateCache.set(cacheKey, { at: Date.now(), candidates });
   pruneFuzzyCandidateCache();
   return candidates;
@@ -754,9 +881,10 @@ export async function queryMultiSymbols(
 
   await Promise.all(
     uniqueSymbols.map(async (trimmed) => {
-        const res = await runJson(root, command, ["symbol", trimmed, "--json"]);
-        if (!res.ok || !res.payload) throw codedbRunError(res.error || `codedb failed to resolve ${trimmed}`);
-        const hits = Array.isArray(res.payload?.results) ? (res.payload.results as Array<{ name: string; path: string; line: number; kind?: string; detail?: string }>) : [];
+        // One answer per symbol, so a dotted name is never widened to its bare name.
+        const lookup = await lookupSymbolDefinitions(root, command, trimmed);
+        if (!lookup.ok) throw codedbRunError(lookup.error || `codedb failed to resolve ${trimmed}`);
+        const hits = lookup.hits.map((h) => ({ ...h, name: trimmed.includes(".") && h.qualified ? h.qualified : h.name }));
         const best = rankSymbolCandidates(hits, trimmed, root);
         if (best) {
           hitCount++;

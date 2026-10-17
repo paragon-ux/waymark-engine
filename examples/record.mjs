@@ -20,8 +20,10 @@ const chart = (facet, question, answer, files) => ({ action: "chart", facet, que
 const EXAMPLES = {
   "architectural-map": [
     ["prompts/get", { name: "architectural-map", arguments: { topic: "capnStoreArgs" } }],
-    ["waymark_ask", { question: "Who calls capnStoreArgs?", depth: 4, direction: "callers", exclude_tests: true, plain: true }],
-    ["waymark_ask", { question: "Callees of capnStoreArgs", depth: 2, direction: "callees", plain: true }],
+    ["waymark_ask", { question: "capnStoreArgs", plain: true }],
+    // A bare symbol with depth or direction is traced as a call graph.
+    ["waymark_ask", { query: "capnStoreArgs", depth: 4, direction: "callers", exclude_tests: true, plain: true }],
+    ["waymark_ask", { query: "capnStoreArgs", depth: 2, direction: "callees", plain: true }],
     ["waymark_memory", chart(
       "boundaries",
       "How does every capn invocation get --root and --store-dir?",
@@ -32,7 +34,8 @@ const EXAMPLES = {
   ],
   "explore-subsystem": [
     ["prompts/get", { name: "explore-subsystem", arguments: { query: "getResidentClient" } }],
-    ["waymark_ask", { question: "Who calls getResidentClient?", depth: 2, direction: "both", exclude_tests: true, plain: true }],
+    ["waymark_ask", { question: "getResidentClient", plain: true }],
+    ["waymark_ask", { query: "getResidentClient", depth: 2, direction: "both", exclude_tests: true, plain: true }],
     ["waymark_ask", { question: "getResidntClient", auto_resolve: false, plain: true }],
     ["waymark_ask", { path: "src/residentCodedb.ts", outline: true, plain: true }],
     ["waymark_memory", chart(
@@ -44,11 +47,12 @@ const EXAMPLES = {
   ],
   "bootstrap-semantic-map": [
     ["prompts/get", { name: "bootstrap-semantic-map", arguments: {} }],
-    ["waymark_memory", { action: "bootstrap", dry_run: true }],
+    ["waymark_memory", { action: "status", plain: true }],
+    ["waymark_memory", { action: "bootstrap", plain: true }],
     ["waymark_memory", chart(
       "data_state",
       "Where does Waymark store its state, cache, and memory on disk?",
-      "Only under .waymark/ (stateDir): the lexical memory store in .waymark/memory (memoryStoreDir), the Tier 2 path cache in .waymark/paths.v2.cache, and opt-in telemetry in .waymark/sessions/active.jsonl. ensureStateDir writes .waymark/.gitignore as *. The daemon socket, PID record and waymark-daemons.json registry live in os.tmpdir(), never in the repository.",
+      "Only under .waymark/ (stateDir): the lexical memory store in .waymark/memory (memoryStoreDir), the Tier 2 path cache in .waymark/paths.v3.cache, and opt-in telemetry in .waymark/sessions/active.jsonl. ensureStateDir writes .waymark/.gitignore as *. The daemon socket, PID record and waymark-daemons.json registry live in os.tmpdir(), never in the repository.",
       ["src/stateDir.ts", "src/discoveryRouter.ts", "src/sessionLogger.ts", "src/daemon.ts"],
     )],
     ["waymark_memory", chart(

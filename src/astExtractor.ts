@@ -803,12 +803,74 @@ async function discoverSymbolsViaCodedbOutline(
   }
 }
 
+/** One call site found by `parseSourceIndex`: `callee(...)`, `object.callee(...)`, or `new callee(...)`. */
+export interface SourceCall {
+  callee: string;
+  /** The receiver text of a member call (`this`, `daemon`, `WaymarkDaemon`), absent for a bare call. */
+  receiver?: string;
+  line: number;
+  column: number;
+}
+
+/** The JavaScript/TypeScript grammar for an extension, or undefined when the extension is not JS/TS. */
+export function scriptLanguageForPath(storedPath: string): "javascript" | "typescript" | undefined {
+  const language = STRUCTURED_EXTENSIONS[path.extname(storedPath).toLowerCase()];
+  return language === "javascript" || language === "typescript" ? language : undefined;
+}
+
+/**
+ * Symbols and call sites of one JavaScript/TypeScript source text. Unlike `discoverSymbolsInFile`
+ * it tolerates syntax errors, because the repo-wide fallback index (treeSitterIndex.ts) would
+ * rather keep a file's recoverable declarations than drop the file.
+ */
+export async function parseSourceIndex(text: string, language: "javascript" | "typescript"): Promise<{ symbols: StructuredSymbol[]; calls: SourceCall[] } | null> {
+  const wasmName = STRUCTURED_LANGUAGE_WASM[language];
+  const grammar = wasmName ? await getLanguageForWasm(wasmName) : null;
+  if (!grammar) return null;
+  const parser = new Parser();
+  let tree: any;
+  try {
+    parser.setLanguage(grammar as any);
+    tree = parser.parse(text);
+    const symbols = collectStructuredSymbols(tree.rootNode, language);
+    const calls: SourceCall[] = [];
+    const visit = (node: any): void => {
+      if (node.type === "call_expression") {
+        const fn = node.childForFieldName("function");
+        if (fn?.type === "identifier") {
+          calls.push({ callee: fn.text, line: node.startPosition.row + 1, column: node.startPosition.column });
+        } else if (fn?.type === "member_expression") {
+          const property = fn.childForFieldName("property");
+          const object = fn.childForFieldName("object");
+          if (property) {
+            calls.push({ callee: property.text, receiver: object?.text, line: node.startPosition.row + 1, column: node.startPosition.column });
+          }
+        }
+      } else if (node.type === "new_expression") {
+        const ctor = node.childForFieldName("constructor");
+        if (ctor?.type === "identifier") {
+          calls.push({ callee: ctor.text, receiver: "new", line: node.startPosition.row + 1, column: node.startPosition.column });
+        }
+      }
+      for (const child of node.namedChildren) visit(child);
+    };
+    visit(tree.rootNode);
+    return { symbols, calls };
+  } catch {
+    return null;
+  } finally {
+    try { tree?.delete(); } catch { /* ignore */ }
+    try { parser.delete(); } catch { /* ignore */ }
+  }
+}
+
 export interface RepoSymbolHit {
   name: string;
   path: string;
   line: number;
   kind: string;
   detail?: string;
+  qualified?: string;
 }
 
 export interface RepoSymbolDiscoveryResult {
@@ -823,24 +885,37 @@ export async function discoverSymbolsInRepo(
   repoRoot: string,
   query: string,
 ): Promise<RepoSymbolDiscoveryResult> {
-  const { resolveCodedbCommand, runJson } = await import("./codedbAdapter.js");
+  const { resolveCodedbCommand, lookupSymbolDefinitions } = await import("./codedbAdapter.js");
   const command = resolveCodedbCommand();
 
-  const run = await runJson(repoRoot, command, ["symbol", query, "--json"]);
-  if (!run.ok || !run.payload) throw new WaymarkError("CODEDB_PROCESS_ERROR", run.error || "codedb symbol lookup failed", 2);
-  const results = Array.isArray(run.payload.results) ? run.payload.results : [];
+  // Qualified names (`Class.method`) resolve the way call-graph roots do; a dotted name with no
+  // qualified match lists its bare name's definitions.
+  const lookup = await lookupSymbolDefinitions(repoRoot, command, query, { widenToBare: true });
+  if (!lookup.ok) throw new WaymarkError("CODEDB_PROCESS_ERROR", lookup.error || "codedb symbol lookup failed", 2);
+  const results: RepoSymbolHit[] = lookup.hits.map((r) => ({
+    name: String(r.name ?? "").replace(/[\r\n]+$/u, ""),
+    path: r.path,
+    line: r.line,
+    kind: r.kind || "symbol",
+    ...(r.detail ? { detail: r.detail.replace(/[\r\n]+$/u, "") } : {}),
+    ...(r.qualified ? { qualified: r.qualified } : {}),
+  }));
+
+  // codedb-core never indexes .mjs/.cjs/.mts/.cts/.toml, so their definitions are merged in.
+  if (lookup.source === "codedb") {
+    const { lookupFallbackSymbols } = await import("./treeSitterIndex.js");
+    const seen = new Set(results.map((r) => `${r.path}:${r.line}`));
+    for (const s of await lookupFallbackSymbols(repoRoot, query)) {
+      if (seen.has(`${s.path}:${s.line}`)) continue;
+      results.push({ name: s.name, path: s.path, line: s.line, kind: s.kind, qualified: s.qualified });
+    }
+  }
   return {
     ok: true,
     tool: "symbol",
     query,
     count: results.length,
-    results: results.map((r: any) => ({
-      name: r.name,
-      path: r.path,
-      line: r.line,
-      kind: r.kind || "symbol",
-      detail: r.detail,
-    })),
+    results,
   };
 }
 

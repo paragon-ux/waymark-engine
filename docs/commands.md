@@ -76,10 +76,10 @@ waymark memory <action> [options]
 
 | Action | CLI Syntax | Description |
 | :--- | :--- | :--- |
-| **`bootstrap`** | `waymark memory bootstrap [--dry-run]` | Collect source-backed, unverified facet drafts. Bootstrap does not initialize the memory store or publish claims; verify drafts and chart supported conclusions explicitly. |
+| **`bootstrap`** | `waymark memory bootstrap` | Collect source-backed, unverified drafts for every missing or drifted facet, citing the repository's own files (manifest entries, then source files ranked by facet keywords). Read-only: it does not initialize the memory store, publish claims, or remove entries; verify drafts and chart supported conclusions explicitly. |
 | **`status`** | `waymark memory status [--plain]` | Inspect Semantic Repo Map completion ratio, active facets, and file drift. |
-| **`chart`** | `waymark memory chart --question <q> --answer <a> --files <f> [--facet <facet>]` | Publish architectural knowledge into consensus SQLite memory. |
-| **`heal`** | `waymark memory heal` | Recollect source-backed drafts; it does not rewrite established consensus entries. |
+| **`chart`** | `waymark memory chart --question <q> --answer <a> --files <f> [--facet <facet>]` | Publish architectural knowledge into consensus memory. The question is 1-240 characters and the answer 1-4000. A facet (`--facet` or a `[FACET:<ID>]` tag, any case) must be one of lifecycle, data_state, boundaries, invariants, failure, needs at least one backing file, and replaces that facet's earlier entry. |
+| **`heal`** | `waymark memory heal [--dry-run]` | Unchart each drifted facet entry (a backing file vanished or changed), then collect replacement drafts for every missing or drifted facet. `--dry-run` reports the entries it would unchart and changes nothing. It never charts a claim. |
 | **`export`** | `waymark memory export [--format md\|json]` | Export consensus architecture map as Markdown or JSON. |
 | **`bust`** | `waymark memory bust <path>` | Invalidate all consensus memories citing a changed file. |
 | **`prune`** | `waymark memory prune` | Cleanly remove stale entries whose backing files vanished. |

@@ -1,8 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
-import { repoRoot, resolveRepositoryFile } from "./paths.js";
+import { resolveRepositoryFile } from "./paths.js";
 import { memoryStoreDir, MEMORY_STORE_LABEL } from "./stateDir.js";
-import { WaymarkError } from "./types.js";
+import { AdapterProfile, WaymarkError } from "./types.js";
+import { entryFreshness, readChartedEntries } from "./memoryEntries.js";
+import { publish, unchart } from "./capnAdapter.js";
 
 export type SemanticFacetId =
   | "lifecycle"
@@ -78,104 +80,20 @@ export const ALL_FACET_IDS: SemanticFacetId[] = [
   "failure",
 ];
 
-export interface ParsedCapnEntry {
-  id: string;
-  at?: string;
-  files: string[];
-  question: string;
-  details: string;
-}
+export { readChartedEntries } from "./memoryEntries.js";
+export type { ParsedCapnEntry } from "./memoryEntries.js";
 
 /**
- * Directly read charted entries from the memory store's entries directory.
- * Fast, synchronous, zero-subprocess overhead.
+ * True when a charted answer declares the facet not applicable with an explicit marker: a
+ * `status: not_applicable` line, or an answer that opens with `not_applicable` (`not_applicable:
+ * no daemon here`). Prose that merely mentions the identifier does not count.
  */
-export function readChartedEntries(root: string): ParsedCapnEntry[] {
-  const entriesDir = path.join(memoryStoreDir(root), "entries");
-  if (!fs.existsSync(entriesDir)) return [];
-
-  const entries: ParsedCapnEntry[] = [];
-  try {
-    const files = fs.readdirSync(entriesDir);
-    for (const file of files) {
-      if (!file.endsWith(".md")) continue;
-      const fullPath = path.join(entriesDir, file);
-      try {
-        const content = fs.readFileSync(fullPath, "utf8");
-        if (!content.startsWith("---\n")) continue;
-        const closeIdx = content.indexOf("\n---\n", 4);
-        if (closeIdx === -1) continue;
-
-        const frontmatter = content.slice(4, closeIdx);
-        const body = content.slice(closeIdx + 5);
-
-        let id = path.basename(file, ".md");
-        let at: string | undefined;
-        const fileList: string[] = [];
-
-        const fmLines = frontmatter.split("\n");
-        let inFilesSection = false;
-
-        for (const line of fmLines) {
-          if (line.startsWith("id: ")) {
-            id = line.slice(4).trim();
-          } else if (line.startsWith("at: ")) {
-            at = line.slice(4).trim();
-          } else if (line.startsWith("files:")) {
-            inFilesSection = true;
-          } else if (inFilesSection) {
-            if (line.startsWith("  ")) {
-              const trimmed = line.trim();
-              const colonIdx = trimmed.indexOf(":");
-              if (colonIdx !== -1) {
-                let filePath = trimmed.slice(0, colonIdx).trim();
-                if (filePath.startsWith('"') && filePath.endsWith('"')) {
-                  try {
-                    filePath = JSON.parse(filePath);
-                  } catch {
-                    filePath = filePath.slice(1, -1);
-                  }
-                }
-                if (filePath) fileList.push(filePath);
-              }
-            } else if (line.trim().length > 0) {
-              inFilesSection = false;
-            }
-          }
-        }
-
-        // Parse Question and Details from body
-        let question = "";
-        let details = "";
-
-        const trimmedBody = body.trim();
-        if (trimmedBody.startsWith("# ")) {
-          const firstNewline = trimmedBody.indexOf("\n");
-          if (firstNewline !== -1) {
-            question = trimmedBody.slice(2, firstNewline).trim();
-            details = trimmedBody.slice(firstNewline + 1).trim();
-          } else {
-            question = trimmedBody.slice(2).trim();
-          }
-        } else {
-          question = trimmedBody;
-        }
-
-        entries.push({
-          id,
-          at,
-          files: fileList,
-          question,
-          details,
-        });
-      } catch {
-        // Skip unparseable files
-      }
-    }
-  } catch {
-    return [];
-  }
-  return entries;
+export function isNotApplicableAnswer(text: string): boolean {
+  const trimmed = text.trim();
+  // Quotes are spelled \x22/\x27: codedb-core 2.1.1 reads a quote inside a regex literal as a
+  // string opener and stretches this function to the end of the file in the call graph.
+  return /^\s*status\s*:\s*[\x22\x27]?not_applicable[\x22\x27]?\s*$/imu.test(trimmed)
+    || /^\[?not_applicable\]?(?:\s*$|\s*[:\-—.]|\s+-\s)/iu.test(trimmed);
 }
 
 export interface FacetStatus {
@@ -188,6 +106,8 @@ export interface FacetStatus {
   details?: string;
   files: string[];
   missingFiles?: string[];
+  /** Cited files whose contents changed since charting; capn deletes the entry on its next read. */
+  staleFiles?: string[];
   rationale?: string;
 }
 
@@ -257,7 +177,7 @@ export function getSemanticMapStatus(root: string): SemanticMapStatus {
       facets: emptyFacets,
       missing: [...ALL_FACET_IDS],
       drifted: [],
-      message: `Consensus memory store (${MEMORY_STORE_LABEL}) is uninitialized. Run 'waymark memory init' to initialize it; bootstrap only collects unverified source-evidence drafts.`,
+      message: `Consensus memory store (${MEMORY_STORE_LABEL}) is uninitialized. Run 'waymark memory init' (MCP: waymark_memory(action: "init")) to initialize it; bootstrap only collects unverified source-evidence drafts.`,
     };
   }
 
@@ -271,7 +191,7 @@ export function getSemanticMapStatus(root: string): SemanticMapStatus {
     const def = SEMANTIC_FACETS[fid];
     const tagUpper = def.tag.toUpperCase();
 
-    // Match by [FACET:<ID>] in question
+    // Match by [FACET:<ID>] in question; entries are newest first, so a re-charted facet wins.
     const matchedEntry = entries.find((e) => e.question.toUpperCase().includes(tagUpper));
 
     if (!matchedEntry) {
@@ -286,20 +206,12 @@ export function getSemanticMapStatus(root: string): SemanticMapStatus {
       continue;
     }
 
-    const detailsLower = matchedEntry.details.toLowerCase();
-    const isNotApplicable =
-      detailsLower.includes("status: not_applicable") ||
-      detailsLower.includes("status: 'not_applicable'") ||
-      detailsLower.includes('status: "not_applicable"') ||
-      detailsLower.includes("not_applicable");
+    const isNotApplicable = isNotApplicableAnswer(matchedEntry.details);
 
-    // Check backing files
-    const missingFiles: string[] = [];
-    for (const f of matchedEntry.files) {
-      try { resolveRepositoryFile(root, f); } catch { missingFiles.push(f); }
-    }
+    // Backing files must exist and still hash to what capn recorded; capn prunes a changed one.
+    const { missingFiles, staleFiles } = entryFreshness(root, matchedEntry);
 
-    if (matchedEntry.files.length === 0 || missingFiles.length > 0) {
+    if (matchedEntry.files.length === 0 || missingFiles.length > 0 || staleFiles.length > 0) {
       facets[fid] = {
         id: fid,
         name: def.name,
@@ -310,6 +222,7 @@ export function getSemanticMapStatus(root: string): SemanticMapStatus {
         details: matchedEntry.details,
         files: matchedEntry.files,
         missingFiles,
+        ...(staleFiles.length > 0 ? { staleFiles } : {}),
       };
       drifted.push(fid);
     } else if (isNotApplicable) {
@@ -370,7 +283,7 @@ export function getSemanticMapStatus(root: string): SemanticMapStatus {
 /**
  * Render token-minimal plain text formatted Semantic Map health.
  */
-export function renderSemanticMapStatus(status: SemanticMapStatus): string {
+export function renderSemanticMapStatus(status: SemanticMapStatus, options?: { recommendation?: boolean }): string {
   const lines: string[] = [];
   lines.push(`[semantic-map: ${status.completion} facets active (${status.percentage}%)]`);
 
@@ -382,42 +295,55 @@ export function renderSemanticMapStatus(status: SemanticMapStatus): string {
     } else if (f.status === "not_applicable") {
       lines.push(`- ${fid}: not_applicable (${f.files.join(", ")})`);
     } else if (f.status === "drifted") {
-      const missingDesc = f.missingFiles && f.missingFiles.length > 0 ? ` [missing: ${f.missingFiles.join(", ")}]` : " [no files cited]";
-      lines.push(`- ${fid}: drifted${missingDesc}`);
+      const reasons = [
+        ...(f.missingFiles && f.missingFiles.length > 0 ? [`[missing: ${f.missingFiles.join(", ")}]`] : []),
+        ...(f.staleFiles && f.staleFiles.length > 0 ? [`[changed: ${f.staleFiles.join(", ")}]`] : []),
+      ];
+      lines.push(`- ${fid}: drifted ${reasons.length > 0 ? reasons.join(" ") : "[no files cited]"}`);
     } else {
       lines.push(`- ${fid}: missing`);
     }
   }
 
-  if (status.status === "uninitialized") {
-    lines.push(`Recommendation: Run 'waymark memory init' to initialize lexical recall; bootstrap only collects unverified drafts.`);
+  if (options?.recommendation === false) {
+    // The caller prints its own next step (bootstrap and heal output).
+  } else if (status.status === "uninitialized") {
+    lines.push(`Recommendation: Run 'waymark memory init' (MCP: waymark_memory(action: "init")) to initialize lexical recall; bootstrap only collects unverified drafts.`);
+  } else if (status.status === "drifted") {
+    lines.push(`Recommendation: Run 'waymark memory heal' (MCP: waymark_memory(action: "heal")) to prune drifted facets and collect replacement drafts, verify them, then chart supported claims with 'waymark memory chart' (MCP: waymark_memory(action: "chart", facet: "<id>")).`);
   } else if (status.status !== "healthy") {
-    lines.push(`Recommendation: Run 'waymark memory bootstrap' to collect unverified drafts, verify them, then chart supported claims with 'waymark memory chart'.`);
+    lines.push(`Recommendation: Run 'waymark memory bootstrap' (MCP: waymark_memory(action: "bootstrap")) to collect unverified drafts, verify them, then chart supported claims with 'waymark memory chart' (MCP: waymark_memory(action: "chart", facet: "<id>")).`);
   }
 
   return lines.join("\n");
+}
+
+export interface ScaffoldedFacetDraft {
+  id: SemanticFacetId;
+  question: string;
+  answer: string;
+  files: string[];
+  status: "draft";
+  evidence: Array<{ file: string; line: number; excerpt: string }>;
 }
 
 export interface BootstrapResult {
   waymark: 1;
   kind: "bootstrap";
   ok: boolean;
-  dryRun: boolean;
   status: SemanticMapStatus;
-  scaffolded: Array<{
-    id: SemanticFacetId;
-    question: string;
-    answer: string;
-    files: string[];
-    status: "draft";
-    evidence: Array<{ file: string; line: number; excerpt: string }>;
-  }>;
+  scaffolded: ScaffoldedFacetDraft[];
   published: false;
   chartErrors?: string[];
 }
 
 const MAX_DRAFT_EVIDENCE = 6;
 const MAX_EXCERPT_LENGTH = 240;
+/** Most candidate files a facet draft cites. */
+const MAX_DRAFT_FILES = 3;
+/** Most source files bootstrap reads when it ranks candidates. */
+const MAX_SCANNED_SOURCES = 400;
+const MAX_SCANNED_BYTES = 256 * 1024;
 
 /** Imports, re-exports, and module headers: they name dependencies but show no behavior. */
 const IMPORT_LINE = /^(?:import\b|export\s+(?:type\s+)?[*{]|from\s+\S+\s+import\b|use\s|package\s|#include\b|(?:const|let|var)\s+[^=]+=\s*require\s*\(|require\s*\()/u;
@@ -440,14 +366,27 @@ function countChar(text: string, char: string): number {
   return text.split(char).length - 1;
 }
 
+interface EvidenceLine {
+  line: number;
+  excerpt: string;
+  hits: number;
+  score: number;
+}
+
 /**
- * Picks the lines of a file that bear on a facet: the lines naming the most facet keywords,
- * exported declarations first among equals. A file with no keyword line falls back to its
- * exported declarations. Imports, comments, and blank lines never count as evidence.
- * Returns at most `limit` lines, in file order.
+ * A line's code with its regex, string, and template literals blanked, so a keyword spelled inside
+ * a literal (an error message, a keyword table, a pattern) is not evidence. Quotes are written as
+ * \x22/\x27/\x60 because codedb-core 2.1.1 misreads a quote inside a regex literal.
  */
-function selectFacetEvidence(text: string, keywords: string[], limit: number): Array<{ line: number; excerpt: string }> {
-  const matches: Array<{ line: number; excerpt: string; hits: number; score: number }> = [];
+function codeOnly(line: string): string {
+  return line
+    .replace(/(^|[=(:,[!&|?;{}]|\breturn)\s*\/(?![/*])(?:\\.|\[(?:\\.|[^\]\\])*\]|[^/\\])+\/[a-z]*/gu, "$1 ")
+    .replace(/\x22(?:\\.|[^\x22\\])*\x22|\x27(?:\\.|[^\x27\\])*\x27|\x60(?:\\.|[^\x60\\])*\x60/gu, " ");
+}
+
+/** Every code line of a file that names a facet keyword or is an exported declaration. */
+function scanFacetLines(text: string, keywords: string[]): EvidenceLine[] {
+  const matches: EvidenceLine[] = [];
   const seen = new Set<string>();
   let importCloser: string | undefined;
   text.split(/\r?\n/u).forEach((raw, index) => {
@@ -463,7 +402,7 @@ function selectFacetEvidence(text: string, keywords: string[], limit: number): A
       else if (countChar(trimmed, "(") > countChar(trimmed, ")")) importCloser = ")";
       return;
     }
-    const words = lineWords(trimmed);
+    const words = lineWords(codeOnly(trimmed));
     const hits = keywords.filter((keyword) => words.some((word) => word.startsWith(keyword))).length;
     const exported = EXPORTED_DECLARATION.some((pattern) => pattern.test(raw));
     if (hits === 0 && !exported) return;
@@ -472,8 +411,19 @@ function selectFacetEvidence(text: string, keywords: string[], limit: number): A
     seen.add(excerpt);
     matches.push({ line: index + 1, excerpt, hits, score: hits + (exported ? 2 : 0) });
   });
-  const keywordLines = matches.filter((match) => match.hits > 0);
-  return (keywordLines.length > 0 ? keywordLines : matches)
+  return matches;
+}
+
+/**
+ * Picks the lines of a file that bear on a facet: the lines naming the most facet keywords,
+ * exported declarations first among equals. A file with no keyword line falls back to its
+ * exported declarations. Imports, comments, and blank lines never count as evidence.
+ * Returns at most `limit` lines, in file order.
+ */
+function selectFacetEvidence(lines: EvidenceLine[], limit: number): Array<{ line: number; excerpt: string }> {
+  const keywordLines = lines.filter((match) => match.hits > 0);
+  return (keywordLines.length > 0 ? keywordLines : lines)
+    .slice()
     .sort((a, b) => b.score - a.score || a.line - b.line)
     .slice(0, limit)
     .sort((a, b) => a.line - b.line)
@@ -481,96 +431,137 @@ function selectFacetEvidence(text: string, keywords: string[], limit: number): A
 }
 
 /**
- * Collects source excerpts as unverified candidates. Only an agent or developer
- * can validate these excerpts and chart an architectural claim.
+ * File-name hints per facet, matched against the words of a path (`src/stateDir.ts` -> src, state,
+ * dir). A hinted file ranks higher, and is a candidate even without keyword lines.
  */
-export async function bootstrapSemanticMap(
-  root: string,
-  options?: { dryRun?: boolean; subsystem?: string; executable?: string }
-): Promise<BootstrapResult> {
-  const dryRun = Boolean(options?.dryRun);
-  const executable = options?.executable ?? "";
-  if (options?.subsystem?.trim()) throw new WaymarkError("UNSUPPORTED_SUBSYSTEM", "Subsystem-scoped semantic maps are not supported; bootstrap the repository root or omit --subsystem.");
+const FACET_PATH_HINTS: Record<SemanticFacetId, Set<string>> = {
+  lifecycle: new Set(["bin", "cmd", "index", "main", "cli", "app", "daemon", "start", "boot", "bootstrap", "entry", "lifecycle"]),
+  data_state: new Set(["store", "stores", "storage", "db", "database", "cache", "state", "persist", "persistence", "repo", "repository", "model", "models", "schema", "migration", "migrations", "memory"]),
+  boundaries: new Set(["server", "client", "api", "ipc", "rpc", "http", "https", "socket", "daemon", "mcp", "route", "routes", "router", "handler", "handlers", "transport", "protocol", "net", "bridge", "gateway"]),
+  invariants: new Set(["path", "paths", "integrity", "security", "valid", "validate", "validation", "validator", "validators", "guard", "guards", "sanitize", "sanitizer", "auth", "util", "utils", "normalize", "invariant", "invariants"]),
+  failure: new Set(["error", "errors", "exception", "exceptions", "types", "fail", "failure", "retry", "recover", "recovery", "fallback"]),
+};
+/** How many keyword lines a file named for the facet is worth. */
+const PATH_HINT_WEIGHT = 3;
 
+function pathHinted(fid: SemanticFacetId, file: string): boolean {
+  const hints = FACET_PATH_HINTS[fid];
+  return lineWords(file.slice(0, file.length - path.extname(file).length)).some((word) => hints.has(word));
+}
+
+const SOURCE_EXTENSIONS = new Set([
+  ".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs", ".py", ".go", ".rs", ".java", ".kt",
+  ".rb", ".php", ".cs", ".swift", ".c", ".h", ".cpp", ".hpp", ".cc", ".scala", ".lua", ".zig", ".ex", ".exs",
+  ".sol", ".sh", ".bash",
+]);
+
+function isTestSource(file: string): boolean {
+  return /(?:^|\/)(?:tests?|__tests__|spec|testing|benchmarks?|benches|examples|fixtures|testdata)\//iu.test(file)
+    || /(?:[._-]test|[._-]spec|[._-]bench)\.[^/]+$/iu.test(file);
+}
+
+/** Entry files the package manifest names (`main`, `module`, every `bin`, string `exports`), in that order. */
+function manifestEntries(root: string): string[] {
+  const pkgPath = path.join(root, "package.json");
+  if (!fs.existsSync(pkgPath)) return [];
+  let pkg: { main?: unknown; bin?: unknown; exports?: unknown; module?: unknown };
+  try {
+    pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
+  } catch {
+    return [];
+  }
+  const out: string[] = [];
+  const add = (value: unknown) => {
+    if (typeof value === "string") out.push(value.replace(/^\.\//u, ""));
+    else if (value && typeof value === "object") for (const inner of Object.values(value)) add(inner);
+  };
+  add(pkg.main);
+  add(pkg.module);
+  add(pkg.bin);
+  add(pkg.exports);
+  return [...new Set(out)];
+}
+
+interface CandidateFile {
+  file: string;
+  text: string;
+  depth: number;
+  isEntry: boolean;
+}
+
+/**
+ * The repository's own source files, entry files first: manifest entries, conventional entry
+ * names, then every other non-test source file by depth. Test files and dependency or build
+ * folders never qualify.
+ */
+async function collectCandidateSources(root: string, isRepositoryFile: (file: string) => boolean): Promise<CandidateFile[]> {
+  const { collectRepoPaths } = await import("./discoveryRouter.js");
+  const conventional = ["src/index.ts", "src/cli.ts", "src/main.ts", "index.ts", "index.js", "main.go", "app.py", "main.py", "src/lib.rs", "src/main.rs"];
+  const entries = [...manifestEntries(root), ...conventional].filter(isRepositoryFile);
+  const entrySet = new Set(entries);
+  const sources = collectRepoPaths(root)
+    .filter((file) => SOURCE_EXTENSIONS.has(path.extname(file).toLowerCase()) && !file.endsWith(".d.ts") && !isTestSource(file))
+    .sort((a, b) => a.split("/").length - b.split("/").length || a.localeCompare(b));
+  const ordered = [...new Set([...entries, ...sources])].slice(0, MAX_SCANNED_SOURCES);
+  const out: CandidateFile[] = [];
+  for (const file of ordered) {
+    if (!isRepositoryFile(file)) continue;
+    try {
+      const real = resolveRepositoryFile(root, file).real;
+      if (fs.statSync(real).size > MAX_SCANNED_BYTES) continue;
+      out.push({ file, text: fs.readFileSync(real, "utf8"), depth: file.split("/").length, isEntry: entrySet.has(file) });
+    } catch {
+      // unreadable: not a candidate
+    }
+  }
+  return out;
+}
+
+/**
+ * Up to MAX_DRAFT_FILES files for a facet. Files whose code names the facet's keywords win, the
+ * most keyword lines first, with a file named for the facet worth PATH_HINT_WEIGHT more (an entry
+ * file breaks ties). With no keyword line anywhere, files named for the facet are cited by their
+ * exported declarations, or, when no file is named for it, the entry files.
+ */
+function rankFacetFiles(fid: SemanticFacetId, sources: CandidateFile[]): Array<{ file: string; lines: EvidenceLine[] }> {
+  const keywords = SEMANTIC_FACETS[fid].evidenceKeywords;
+  const scanned = sources.map((source) => {
+    const lines = scanFacetLines(source.text, keywords);
+    const keywordLines = lines.filter((line) => line.hits > 0).length;
+    const hinted = pathHinted(fid, source.file);
+    return { ...source, lines, keywordLines, hinted, rank: keywordLines + (hinted ? PATH_HINT_WEIGHT : 0) };
+  });
+  const byKeywords = scanned
+    .filter((s) => s.keywordLines > 0)
+    .sort((a, b) =>
+      b.rank - a.rank
+      || Number(b.hinted) - Number(a.hinted)
+      || Number(b.isEntry) - Number(a.isEntry)
+      || a.depth - b.depth
+      || a.file.localeCompare(b.file));
+  if (byKeywords.length > 0) return byKeywords.slice(0, MAX_DRAFT_FILES);
+  const hinted = scanned.filter((s) => s.hinted && s.lines.length > 0);
+  return (hinted.length > 0 ? hinted : scanned.filter((s) => s.isEntry && s.lines.length > 0)).slice(0, MAX_DRAFT_FILES);
+}
+
+/** Drafts for `facets`, each citing the facet's best candidate files and their evidence lines. */
+async function scaffoldFacetDrafts(root: string, facets: SemanticFacetId[]): Promise<ScaffoldedFacetDraft[]> {
+  if (facets.length === 0) return [];
   const isRepositoryFile = (file: string): boolean => {
     try { resolveRepositoryFile(root, file); return true; } catch { return false; }
   };
-
-  const currentStatus = getSemanticMapStatus(root);
-  const missingFacets = currentStatus.missing;
-
-  // Pass 1: Harvest repository metadata & inspect file layout
-  let pkgInfo: { name?: string; description?: string; main?: string; bin?: Record<string, string> | string } = {};
-  const pkgPath = path.join(root, "package.json");
-  if (fs.existsSync(pkgPath)) {
-    try {
-      pkgInfo = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
-    } catch {
-      // Ignore JSON error
-    }
-  }
-
-  const candidateEntries = [
-    pkgInfo.main,
-    typeof pkgInfo.bin === "string" ? pkgInfo.bin : (pkgInfo.bin ? Object.values(pkgInfo.bin)[0] : undefined),
-    "src/index.ts",
-    "src/cli.ts",
-    "src/main.ts",
-    "index.ts",
-    "main.go",
-    "app.py",
-    "src/lib.rs",
-  ].filter((f): f is string => typeof f === "string" && isRepositoryFile(f));
-
-  const candidateStorage = [
-    "src/capnAdapter.ts",
-    "src/storage.ts",
-    "src/db.ts",
-    "src/database.ts",
-    "src/store.ts",
-  ].filter(isRepositoryFile);
-
-  const candidateBoundaries = [
-    "src/daemon.ts",
-    "src/mcp/server.ts",
-    "src/server.ts",
-    "src/ipc.ts",
-    "src/api.ts",
-  ].filter(isRepositoryFile);
-
-  const candidateInvariants = [
-    "src/paths.ts",
-    "src/integrity.ts",
-    "src/security.ts",
-    "src/utils.ts",
-  ].filter(isRepositoryFile);
-
-  const candidateFailures = [
-    "src/types.ts",
-    "src/errors.ts",
-    "src/error.ts",
-  ].filter(isRepositoryFile);
-
-  const candidates: Record<SemanticFacetId, string[]> = {
-    lifecycle: candidateEntries.length ? candidateEntries.slice(0, 3) : (isRepositoryFile("package.json") ? ["package.json"] : []),
-    data_state: candidateStorage.length ? candidateStorage.slice(0, 3) : (isRepositoryFile("package.json") ? ["package.json"] : []),
-    boundaries: candidateBoundaries.length ? candidateBoundaries.slice(0, 3) : (isRepositoryFile("package.json") ? ["package.json"] : []),
-    invariants: candidateInvariants.length ? candidateInvariants.slice(0, 3) : candidateEntries.slice(0, 2),
-    failure: candidateFailures.length ? candidateFailures.slice(0, 3) : candidateEntries.slice(0, 2),
-  };
-  const scaffolded: BootstrapResult["scaffolded"] = [];
-
+  const sources = await collectCandidateSources(root, isRepositoryFile);
+  const scaffolded: ScaffoldedFacetDraft[] = [];
   // Collect evidence only; filenames and package metadata do not establish architecture.
-  for (const fid of missingFacets) {
+  for (const fid of facets) {
     const def = SEMANTIC_FACETS[fid];
-    const candidateFiles = [...new Set(candidates[fid])].filter(isRepositoryFile);
-    const perFile = Math.ceil(MAX_DRAFT_EVIDENCE / Math.max(1, candidateFiles.length));
-    const evidence = candidateFiles.flatMap((file) => {
-      const text = fs.readFileSync(resolveRepositoryFile(root, file).real, "utf8");
-      return selectFacetEvidence(text, def.evidenceKeywords, perFile).map((line) => ({ file, ...line }));
-    }).slice(0, MAX_DRAFT_EVIDENCE);
+    const ranked = rankFacetFiles(fid, sources);
+    const perFile = Math.ceil(MAX_DRAFT_EVIDENCE / Math.max(1, ranked.length));
+    const evidence = ranked
+      .flatMap(({ file, lines }) => selectFacetEvidence(lines, perFile).map((line) => ({ file, ...line })))
+      .slice(0, MAX_DRAFT_EVIDENCE);
     // A candidate file with nothing relevant to the facet is not cited.
-    const files = candidateFiles.filter((file) => evidence.some((line) => line.file === file));
+    const files = ranked.map((r) => r.file).filter((file) => evidence.some((line) => line.file === file));
     if (evidence.length > 0) {
       scaffolded.push({
         id: fid,
@@ -582,16 +573,196 @@ export async function bootstrapSemanticMap(
       });
     }
   }
+  return scaffolded;
+}
 
-  const updatedStatus = getSemanticMapStatus(root);
+/**
+ * Collects source excerpts as unverified candidates for every missing or drifted facet. Read-only:
+ * it never charts, prunes, or writes a memory entry. Only an agent or developer can validate the
+ * excerpts and chart an architectural claim.
+ */
+export async function bootstrapSemanticMap(
+  root: string,
+  options?: { subsystem?: string; executable?: string }
+): Promise<BootstrapResult> {
+  if (options?.subsystem?.trim()) throw new WaymarkError("UNSUPPORTED_SUBSYSTEM", "Subsystem-scoped semantic maps are not supported; bootstrap the repository root or omit --subsystem.");
+
+  const currentStatus = getSemanticMapStatus(root);
+  const scaffolded = await scaffoldFacetDrafts(root, [...currentStatus.missing, ...currentStatus.drifted]);
 
   return {
     waymark: 1,
     kind: "bootstrap",
     ok: true,
-    dryRun,
-    status: updatedStatus,
+    status: getSemanticMapStatus(root),
     scaffolded,
     published: false,
   };
+}
+
+export interface HealResult {
+  waymark: 1;
+  kind: "heal";
+  ok: boolean;
+  dryRun: boolean;
+  /** Drifted facet entries removed (or, with dryRun, that would be removed). */
+  pruned: Array<{ facet: SemanticFacetId; id: string; missingFiles: string[]; staleFiles: string[] }>;
+  status: SemanticMapStatus;
+  scaffolded: ScaffoldedFacetDraft[];
+  published: false;
+  errors?: string[];
+}
+
+/**
+ * Repairs the map's drift: unchart each drifted facet entry (its backing files vanished or
+ * changed, so it no longer answers), then collect replacement drafts for every missing or drifted
+ * facet. With `dryRun`, reports what would be uncharted and changes nothing. Never charts a claim.
+ */
+export async function healSemanticMap(
+  root: string,
+  options?: { dryRun?: boolean; subsystem?: string; executable?: string }
+): Promise<HealResult> {
+  if (options?.subsystem?.trim()) throw new WaymarkError("UNSUPPORTED_SUBSYSTEM", "Subsystem-scoped semantic maps are not supported; heal the repository root or omit --subsystem.");
+  const dryRun = Boolean(options?.dryRun);
+  const before = getSemanticMapStatus(root);
+  const pruned: HealResult["pruned"] = [];
+  const errors: string[] = [];
+  for (const fid of before.drifted) {
+    const facet = before.facets[fid];
+    if (!facet.entryId) continue;
+    if (!dryRun) {
+      const removed = await unchart(root, options?.executable ?? "", facet.entryId, true);
+      if (!removed.ok) {
+        errors.push(`${fid} (${facet.entryId}): ${String(removed.error ?? removed.output ?? "unchart failed")}`);
+        continue;
+      }
+    }
+    pruned.push({ facet: fid, id: facet.entryId, missingFiles: facet.missingFiles ?? [], staleFiles: facet.staleFiles ?? [] });
+  }
+  const scaffolded = await scaffoldFacetDrafts(root, [...before.missing, ...before.drifted]);
+  return {
+    waymark: 1,
+    kind: "heal",
+    ok: errors.length === 0,
+    dryRun,
+    pruned,
+    status: getSemanticMapStatus(root),
+    scaffolded,
+    published: false,
+    ...(errors.length > 0 ? { errors } : {}),
+  };
+}
+
+/** Longest charted question and answer, shared by the CLI and MCP chart paths. */
+export const MAX_CHART_QUESTION_CHARS = 240;
+export const MAX_CHART_ANSWER_CHARS = 4000;
+
+const FACET_TAG = /\[FACET:([^\]]*)\]/giu;
+
+/**
+ * The charted question with exactly one canonical `[FACET:<ID>]` tag, and that facet. A `facet`
+ * argument and a tag embedded in the question are matched case-insensitively and must name the
+ * same facet from ALL_FACET_IDS.
+ */
+export function normalizeFacetQuestion(question: string, facet?: string): { question: string; facet?: SemanticFacetId } {
+  const embedded = [...question.matchAll(FACET_TAG)].map((m) => (m[1] ?? "").trim().toLowerCase());
+  const requested = facet?.trim().toLowerCase() || undefined;
+  const named = [...new Set([...(requested ? [requested] : []), ...embedded])];
+  for (const id of named) {
+    if (!ALL_FACET_IDS.includes(id as SemanticFacetId)) {
+      throw new WaymarkError("INVALID_ARGUMENT", `Unknown facet "${id}". Allowed facets: ${ALL_FACET_IDS.join(", ")}.`);
+    }
+  }
+  if (named.length > 1) {
+    throw new WaymarkError("INVALID_ARGUMENT", `A chart entry belongs to one facet; got ${named.join(", ")}.`);
+  }
+  const id = named[0] as SemanticFacetId | undefined;
+  const bare = question.replace(FACET_TAG, " ").replace(/\s+/gu, " ").trim();
+  if (!id) return { question: bare };
+  return { question: `${SEMANTIC_FACETS[id].tag} ${bare}`.trim(), facet: id };
+}
+
+function boundedChartText(value: string, maximum: number, label: string): string {
+  if (value.length === 0 || Array.from(value).length > maximum) {
+    throw new WaymarkError("TEXT_LIMIT", `${label} must contain 1 to ${maximum} characters`);
+  }
+  return value;
+}
+
+export interface ChartMemoryResult {
+  waymark: 1;
+  kind: "chart";
+  published: boolean;
+  adapter: AdapterProfile;
+  output: string;
+  error?: string;
+  question: string;
+  facet?: SemanticFacetId;
+  /** Earlier entries for the same facet that this chart replaced. */
+  replaced?: string[];
+}
+
+/**
+ * Chart one entry the way both `waymark memory chart` and `waymark_memory(action: "chart")` do:
+ * bounded text, a validated facet tag, backing files that exist inside the repository, and, for a
+ * facet, the facet's earlier entries uncharted once the new entry is published, so the map holds
+ * one answer per facet.
+ */
+export async function chartMemoryEntry(
+  root: string,
+  profile: AdapterProfile,
+  executable: string,
+  input: { question: string; answer: string; facet?: string; files: string[] },
+): Promise<ChartMemoryResult> {
+  const normalized = normalizeFacetQuestion(input.question.trim(), input.facet);
+  const bareQuestion = normalized.question.replace(FACET_TAG, "").trim();
+  // A facet tag alone is a valid question; otherwise the question text is bounded like the CLI.
+  if (!normalized.facet || bareQuestion) boundedChartText(bareQuestion, MAX_CHART_QUESTION_CHARS, "question");
+  const answer = boundedChartText(input.answer.trim(), MAX_CHART_ANSWER_CHARS, "answer");
+  const question = normalized.question;
+
+  // Anti-Hallucination Guard for facets
+  if (normalized.facet) validateFacetBackingFiles(root, input.files, isNotApplicableAnswer(answer));
+
+  const result = await publish(root, profile, executable, question, answer, input.files);
+  const base: ChartMemoryResult = {
+    waymark: 1,
+    kind: "chart",
+    published: result.published,
+    adapter: result.adapter,
+    output: result.output,
+    ...(result.error ? { error: result.error } : {}),
+    question,
+    ...(normalized.facet ? { facet: normalized.facet } : {}),
+  };
+  if (!result.published || !normalized.facet) return base;
+
+  const tag = SEMANTIC_FACETS[normalized.facet].tag.toUpperCase();
+  const previous = readChartedEntries(root).filter((e) => e.question.toUpperCase().includes(tag) && e.question !== question);
+  const replaced: string[] = [];
+  for (const entry of previous) {
+    const removed = await unchart(root, executable, entry.id, true);
+    if (removed.ok) replaced.push(entry.id);
+  }
+  return replaced.length > 0 ? { ...base, replaced } : base;
+}
+
+/** The Markdown architecture report of `waymark memory export` / `waymark_memory(action: "export")`. */
+export function renderSemanticMapExport(status: SemanticMapStatus): string {
+  const lines = [
+    `# Architecture Consensus Map`,
+    `**Generated by Waymark Engine** | Status: ${status.status} (${status.completion} facets active)`,
+    "",
+  ];
+  for (const [id, f] of Object.entries(status.facets)) {
+    lines.push(`## Facet: ${f.name} (\`${id}\`)`);
+    lines.push(`- **Status**: ${f.status}`);
+    lines.push(`- **Files**: ${f.files.join(", ") || "None"}`);
+    if (f.details) {
+      lines.push("");
+      lines.push(f.details);
+      lines.push("");
+    }
+  }
+  return lines.join("\n");
 }

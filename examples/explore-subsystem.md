@@ -1,6 +1,6 @@
 # `explore-subsystem`
 
-Explores one concept or symbol across all four tiers: call graph, fuzzy junction, file outline, then a charted finding.
+Explores one concept or symbol across the tiers: definition, call graph, fuzzy junction, file outline, then a charted finding.
 
 ## Invoke
 
@@ -13,16 +13,35 @@ Explores one concept or symbol across all four tiers: call graph, fuzzy junction
 | `query` | yes | `getResidentClient` |
 | `root` | no | not set |
 
+Without `query`, the prompt fails with JSON-RPC `-32602` instead of exploring a placeholder.
+
 ## What the prompt sends
 
-> Please explore the codebase using waymark-engine MCP tools for: "getResidentClient". First use waymark_ask to check Tier 1 AST call graphs or Tier 3 Discovery Junction recommendations, inspect relevant file AST outlines with waymark_ask (argument: path), and chart architectural findings into consensus memory via waymark_memory (action: "chart", or waymark_chart).
+> Explore the repository with the waymark-engine MCP tools for: "getResidentClient".
+> 1. Locate it: waymark_ask(question: "getResidentClient", plain: true). Tier 1 answers symbol definitions and call graphs, Tier 2 file paths, Tier 3 fuzzy symbol matches, Tier 4 charted memory. Pass auto_resolve: false to see the Discovery Junction options instead of the auto-resolved top answer.
+> 2. Outline each relevant file: waymark_ask(path: "&lt;file&gt;", outline: true, plain: true); add query: "&lt;name&gt;" to filter its symbols.
+> 3. Trace relationships: waymark_ask(query: "&lt;symbol&gt;", depth: 2, direction: "callers", plain: true) (direction: "callees" | "both").
+> 4. Chart only verified findings: waymark_memory(action: "chart", question: "&lt;focused question&gt;", answer: "&lt;what the files show&gt;", files: ["&lt;backing file&gt;", ...]).
 
-## 1. Tier 1: call graph
+## 1. Tier 1: definition
 
 `waymark_ask`:
 
 ```json
-{ "question": "Who calls getResidentClient?", "depth": 2, "direction": "both", "exclude_tests": true, "plain": true }
+{ "question": "getResidentClient", "plain": true }
+```
+
+```text
+[hit: codedb] (confidence: exact)
+total: 1
+results: 1 (cols: qn label file lines)
+  getResidentClient function src/residentCodedb.ts 404
+```
+
+## 2. Tier 1: call graph
+
+```json
+{ "query": "getResidentClient", "depth": 2, "direction": "both", "exclude_tests": true, "plain": true }
 ```
 
 ```text
@@ -31,16 +50,15 @@ getResidentClient (src/residentCodedb.ts:404)
   ↳ callers:
       - runJson (src/codedbAdapter.ts:148)
       ↳ callers:
-          - queryMultiHopCallGraph (src/codedbAdapter.ts:270)
-          - queryStructural (src/codedbAdapter.ts:487)
-          - queryFuzzyCandidates (src/codedbAdapter.ts:654)
-          - queryMultiSymbols (src/codedbAdapter.ts:744)
+          - lookupSymbolDefinitions (src/codedbAdapter.ts:264)
+          - queryMultiHopCallGraph (src/codedbAdapter.ts:353)
+          - queryStructural (src/codedbAdapter.ts:579)
+          - queryFuzzyCandidates (src/codedbAdapter.ts:770)
           - discoverSymbolsViaCodedbOutline (src/astExtractor.ts:752)
-          - discoverSymbolsInRepo (src/astExtractor.ts:822)
       - WaymarkDaemon.start [method] (src/daemon.ts:483)
       ↳ callers:
           - runCommand (src/cli.ts:150)
-          - McpServer.runWarmup [method] (src/mcp/server.ts:604)
+          - McpServer.runWarmup [method] (src/mcp/server.ts:622)
           - <module> [module] (src/daemon.ts:1)
   ↳ callees:
       - normalizeKeyRoot (src/residentCodedb.ts:382)
@@ -52,9 +70,9 @@ getResidentClient (src/residentCodedb.ts:404)
           - unregisterResidentClient (src/residentCodedb.ts:387)
 ```
 
-`[method]` marks a class or object method, named after its class, such as `WaymarkDaemon.start`. `<module> [module]` is a file's top-level code.
+`[method]` marks a class or object method, named after its class, such as `WaymarkDaemon.start`. `<module> [module]` is a file's top-level code. Symbol lookups (`queryMultiSymbols`, `discoverSymbolsInRepo`) reach `runJson` one hop further out, through `lookupSymbolDefinitions`.
 
-## 2. Tier 3: Discovery Junction
+## 3. Tier 3: Discovery Junction
 
 The same symbol, misspelled, with `auto_resolve` off so the junction is visible:
 
@@ -69,7 +87,7 @@ Result: getResidentClient in src/residentCodedb.ts:404 (score: 100)
 Tip: To query charted semantic memory instead: waymark-ask "getResidntClient" --tier capn
 ```
 
-## 3. File outline
+## 4. File outline
 
 ```json
 { "path": "src/residentCodedb.ts", "outline": true, "plain": true }
@@ -105,9 +123,9 @@ closeAllResidentClients: function L451-L456
 listResidentClients: function L458-L464
 ```
 
-The outline points to the ranges worth reading: `getResidentClient` (L404–L436), the constructor (L64–L71), `resetIdleTimer` (L104–L110) and the process hooks after L464.
+The outline points to the ranges worth reading: `getResidentClient` (L404–L436), the constructor (L64–L71), `resetIdleTimer` (L104–L110) and the process hooks after L464. Adding `query: "close"` would narrow it to the symbols whose names contain `close`, and a path with no matching symbol returns a `SYMBOL_NOT_FOUND` miss.
 
-## 4. Verify against the source
+## 5. Verify against the source
 
 | Claim | Source | Result |
 | :--- | :--- | :--- |
@@ -118,7 +136,7 @@ The outline points to the ranges worth reading: `getResidentClient` (L404–L436
 | `runJson` tries the daemon socket before the resident client | `src/codedbAdapter.ts:155-185` | Confirmed |
 | `WaymarkDaemon.start` shares the same resident client | `src/daemon.ts:498` | Confirmed |
 
-## 5. Chart the finding
+## 6. Chart the finding
 
 `waymark_memory`:
 
@@ -133,5 +151,13 @@ The outline points to the ranges worth reading: `getResidentClient` (L404–L436
 ```
 
 ```json
-{ "published": true, "adapter": "capn-cli", "output": "charted acf462ce\n" }
+{
+  "waymark": 1,
+  "kind": "chart",
+  "published": true,
+  "adapter": "capn-cli",
+  "output": "charted acf462ce\n",
+  "question": "[FACET:LIFECYCLE] How many resident codedb processes does Waymark keep, and when do they exit?",
+  "facet": "lifecycle"
+}
 ```

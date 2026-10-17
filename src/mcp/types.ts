@@ -53,9 +53,17 @@ export interface McpToolCallResult {
   isError?: boolean;
 }
 
+/** Server services a tool handler may use; absent when a handler is called outside McpServer. */
+export interface McpToolContext {
+  /** Stop the server's warm daemon for the repository `root` resolves to; true when one was stopped. */
+  releaseWarmRoot?: (root: string) => Promise<boolean>;
+  /** Stop every warm daemon the server holds; returns how many were stopped. */
+  releaseAllWarmRoots?: () => Promise<number>;
+}
+
 export interface McpToolHandler {
   definition: McpToolDefinition;
-  handler: (args: Record<string, unknown>) => Promise<McpToolCallResult>;
+  handler: (args: Record<string, unknown>, context?: McpToolContext) => Promise<McpToolCallResult>;
 }
 
 export interface McpResourceDefinition {

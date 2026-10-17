@@ -54,7 +54,7 @@ export const waymarkAskTool: McpToolHandler = {
         },
         path: {
           type: "string",
-          description: "Repository-relative or absolute source file path. If provided alone or without question, performs file AST extraction.",
+          description: "Repository-relative or absolute source file path. Without question (query then filters symbol names), returns the file's AST outline; with question, answers from that file's symbols only. A file with no matching symbols is a SYMBOL_NOT_FOUND miss.",
         },
         outline: {
           type: "boolean",
@@ -182,33 +182,26 @@ export const waymarkAskTool: McpToolHandler = {
         return jsonResult(res);
       }
 
-      // 3. File AST outline discovery (Mode A) when path provided without question or outline requested
-      if ((rawPath && !question && !facet) || (args.outline === true && rawPath)) {
-        const queryToUse = rawQuery || question || undefined;
-        const requestedLang = typeof args.language === "string" ? args.language.trim() : undefined;
-        if (args.outline === true) {
-          const res = await ask(root, resolveProfile(args), resolveExecutable(args), queryToUse ?? "", {
-            path: rawPath,
-            outline: true,
-            language: requestedLang,
-          });
-          if (plain) {
-            return {
-              content: [{ type: "text", text: renderPlainText(res) }],
-              isError: false,
-            };
-          }
-          if (res.status === "hit") {
-            return jsonResult(res.result);
-          }
-          return jsonResult(res);
-        }
-        const res = await discoverSymbolsInFile(root, rawPath, requestedLang, queryToUse);
+      // 3. File AST outline discovery (Mode A): a path with no question (`query` only filters the
+      // file's symbol names), or any path with outline: true. Both modes share one envelope, so a
+      // file with no matching symbols is a SYMBOL_NOT_FOUND miss either way. A path with a
+      // `question` is answered by the router, scoped to that file.
+      const requestedLang = typeof args.language === "string" ? args.language.trim() : undefined;
+      if ((rawPath && !rawQuestion && !facet) || (args.outline === true && rawPath)) {
+        const queryToUse = rawQuery || rawQuestion || undefined;
+        const res = await ask(root, resolveProfile(args), resolveExecutable(args), queryToUse ?? "", {
+          path: rawPath,
+          outline: true,
+          language: requestedLang,
+        });
         if (plain) {
           return {
             content: [{ type: "text", text: renderPlainText(res) }],
             isError: false,
           };
+        }
+        if (res.status === "hit") {
+          return jsonResult(res.result);
         }
         return jsonResult(res);
       }
@@ -230,6 +223,7 @@ export const waymarkAskTool: McpToolHandler = {
         dev,
         facet,
         path: rawPath,
+        language: requestedLang,
       });
 
       if (plain) {
@@ -245,6 +239,7 @@ export const waymarkAskTool: McpToolHandler = {
         provider: result.provider ?? "waymark-engine",
         status: result.status,
       };
+      if ("memoryPruned" in result && Array.isArray(result.memoryPruned)) payload.memoryPruned = result.memoryPruned;
       if (result.status === "hit") {
         payload.result = result.result;
         if (result.timings) payload.timings = result.timings;
@@ -291,12 +286,12 @@ export const waymarkMemoryTool: McpToolHandler = {
         },
         answer: {
           type: "string",
-          description: "The conclusive charted answer adhering to <= 100 token budget (required for action='chart').",
+          description: "The conclusive charted answer, 1-4000 characters; aim for <= 100 tokens (required for action='chart'). Start it with 'not_applicable' (or a 'status: not_applicable' line) to mark a facet as not applicable.",
         },
         facet: {
           type: "string",
           enum: ["lifecycle", "data_state", "boundaries", "invariants", "failure"],
-          description: "Optional architectural facet tag when charting an entry in the Semantic Repo Map.",
+          description: "Optional architectural facet when charting a Semantic Repo Map entry. The question is tagged [FACET:<ID>], at least one backing file is required, and the facet's earlier entry is replaced.",
         },
         files: {
           type: "array",
@@ -317,7 +312,11 @@ export const waymarkMemoryTool: McpToolHandler = {
         },
         dry_run: {
           type: "boolean",
-          description: "Inspect without writing changes (for action='bootstrap').",
+          description: "For action='heal': report the drifted facet entries heal would unchart, without removing them. (bootstrap never writes.)",
+        },
+        all: {
+          type: "boolean",
+          description: "For action='evict' or 'close': release every resident codedb instance and warm daemon, not only the root's.",
         },
         subsystem: {
           type: "string",
@@ -349,7 +348,7 @@ export const waymarkMemoryTool: McpToolHandler = {
       required: ["action"],
     },
   },
-  handler: async (args) => {
+  handler: async (args, toolContext) => {
     try {
       const root = resolveRoot(args);
       if (typeof args.subsystem === "string" && args.subsystem.trim()) {
@@ -361,30 +360,19 @@ export const waymarkMemoryTool: McpToolHandler = {
       const profile = resolveProfile(args);
 
       if (action === "chart") {
-        let question = typeof args.question === "string" ? args.question.trim() : "";
+        const question = typeof args.question === "string" ? args.question.trim() : "";
         const answer = typeof args.answer === "string" ? args.answer.trim() : "";
-        const rawFacet = typeof args.facet === "string" ? args.facet.trim().toLowerCase() : undefined;
+        const rawFacet = typeof args.facet === "string" ? args.facet.trim() : undefined;
         const files = Array.isArray(args.files)
           ? args.files.filter((f): f is string => typeof f === "string" && f.trim().length > 0)
           : [];
 
-        if (rawFacet) {
-          const facetTag = `[FACET:${rawFacet.toUpperCase()}]`;
-          if (!question.toUpperCase().includes(facetTag)) {
-            question = `${facetTag} ${question}`.trim();
-          }
-        }
-
-        if (!question) throw new WaymarkError("MISSING_ARGUMENT", "chart requires a question");
+        if (!question && !rawFacet) throw new WaymarkError("MISSING_ARGUMENT", "chart requires a question");
         if (!answer) throw new WaymarkError("MISSING_ARGUMENT", "chart requires an answer");
 
-        // Anti-Hallucination Guard for facets
-        if (rawFacet || question.includes("[FACET:")) {
-          const { validateFacetBackingFiles } = await import("../semanticMap.js");
-          validateFacetBackingFiles(root, files, answer.toLowerCase().includes("not_applicable"));
-        }
-
-        const res = await publish(root, profile, executable, question, answer, files);
+        // Same bounds, facet validation, backing-file guard, and facet replacement as the CLI.
+        const { chartMemoryEntry } = await import("../semanticMap.js");
+        const res = await chartMemoryEntry(root, profile, executable, { question, answer, facet: rawFacet, files });
         if (plain) {
           return { content: [{ type: "text", text: renderPlainText(res) }], isError: !res.published };
         }
@@ -393,9 +381,8 @@ export const waymarkMemoryTool: McpToolHandler = {
 
       if (action === "bootstrap") {
         const { bootstrapSemanticMap } = await import("../semanticMap.js");
-        const dryRun = args.dry_run === true || args.dryRun === true;
         const subsystem = typeof args.subsystem === "string" ? args.subsystem : undefined;
-        const res = await bootstrapSemanticMap(root, { dryRun, subsystem, executable });
+        const res = await bootstrapSemanticMap(root, { subsystem, executable });
         if (plain) {
           return { content: [{ type: "text", text: renderPlainText(res) }], isError: !res.ok };
         }
@@ -467,54 +454,51 @@ export const waymarkMemoryTool: McpToolHandler = {
       }
 
       if (action === "heal") {
-        const { bootstrapSemanticMap, renderSemanticMapStatus } = await import("../semanticMap.js");
+        const { healSemanticMap } = await import("../semanticMap.js");
         const subsystem = typeof args.subsystem === "string" ? args.subsystem.trim() : undefined;
-        const res = await bootstrapSemanticMap(root, { dryRun: false, subsystem, executable });
+        const dryRun = args.dry_run === true || args.dryRun === true;
+        const res = await healSemanticMap(root, { dryRun, subsystem, executable });
         if (plain) {
-          return { content: [{ type: "text", text: `[healed: ${renderSemanticMapStatus(res.status)}]` }], isError: !res.ok };
+          return { content: [{ type: "text", text: renderPlainText(res) }], isError: !res.ok };
         }
         return jsonResult(res, !res.ok);
       }
 
       if (action === "export") {
-        const { getSemanticMapStatus } = await import("../semanticMap.js");
+        const { getSemanticMapStatus, renderSemanticMapExport } = await import("../semanticMap.js");
         const status = getSemanticMapStatus(root);
-        const format = args.format === "json" ? "json" : (plain ? "md" : (args.format || "md"));
-        if (format === "json" && !plain) {
+        // An explicit format wins over plain: JSON stays JSON, and Markdown is already plain text.
+        if (args.format === "json") {
           return jsonResult(status);
         }
-        const lines = [
-          `# Architecture Consensus Map`,
-          `**Generated by Waymark Engine** | Status: ${status.status} (${status.completion} facets active)`,
-          "",
-        ];
-        for (const [id, f] of Object.entries(status.facets)) {
-          lines.push(`## Facet: ${f.name} (\`${id}\`)`);
-          lines.push(`- **Status**: ${f.status}`);
-          lines.push(`- **Files**: ${f.files.join(", ") || "None"}`);
-          if (f.details) {
-            lines.push("");
-            lines.push(f.details);
-            lines.push("");
-          }
-        }
-        return { content: [{ type: "text", text: lines.join("\n") }], isError: false };
+        return { content: [{ type: "text", text: renderSemanticMapExport(status) }], isError: false };
       }
 
       if (action === "evict" || action === "close") {
         const { closeResidentClient, closeAllResidentClients } = await import("../residentCodedb.js");
-        const target = typeof args.root === "string" && args.root.trim() ? args.root.trim() : root;
         const all = args.all === true;
+        // The MCP server's warm daemons hold their own resident codedb; release them too.
+        const daemonsStopped = all
+          ? (toolContext?.releaseAllWarmRoots ? await toolContext.releaseAllWarmRoots() : 0)
+          : (toolContext?.releaseWarmRoot ? Number(await toolContext.releaseWarmRoot(root)) : 0);
         if (all) {
           closeAllResidentClients();
-          const msg = "Closed all resident codedb instances.";
-          return plain ? { content: [{ type: "text", text: msg }], isError: false } : jsonResult({ ok: true, message: msg });
+          const res = { waymark: 1, kind: action, ok: true, all: true, daemonsStopped, message: "Closed all resident codedb instances." };
+          return plain ? { content: [{ type: "text", text: renderPlainText(res) }], isError: false } : jsonResult(res);
         }
-        const closed = closeResidentClient(target);
-        const msg = closed
-          ? `Closed resident codedb instance for ${target}.`
-          : `No active resident codedb instance found for ${target}.`;
-        return plain ? { content: [{ type: "text", text: msg }], isError: false } : jsonResult({ ok: true, closed, root: target });
+        const closed = closeResidentClient(root);
+        const res = {
+          waymark: 1,
+          kind: action,
+          ok: true,
+          closed: closed || daemonsStopped > 0,
+          daemonsStopped,
+          root,
+          message: closed || daemonsStopped > 0
+            ? `Closed resident codedb instance for ${root}.`
+            : `No active resident codedb instance found for ${root}.`,
+        };
+        return plain ? { content: [{ type: "text", text: renderPlainText(res) }], isError: false } : jsonResult(res);
       }
 
       throw new WaymarkError("UNKNOWN_COMMAND", `Unknown memory action: ${action}. Allowed: chart, bootstrap, bust, prune, list, unchart, init, context, status, heal, export, evict, close.`);

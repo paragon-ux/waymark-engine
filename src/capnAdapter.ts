@@ -9,6 +9,7 @@ import { queryStructural } from "./codedbAdapter.js";
 import { resolveWindowsExecutable } from "./executable.js";
 import { normalizeRelativePath, resolveRepositoryFile } from "./paths.js";
 import { ensureStateDir, memoryStoreDir, LEGACY_STORE_DIR_NAME, MEMORY_STORE_LABEL } from "./stateDir.js";
+import { entryFreshness, readChartedEntries, staleChartedEntries } from "./memoryEntries.js";
 
 export { resolveWindowsExecutable };
 
@@ -249,60 +250,41 @@ export async function publish(
   }
 }
 
+/**
+ * An entry whose question matches `query` exactly, newest first. Only a fresh entry answers: one
+ * whose backing files vanished or changed is left to `capn ask`, which prunes it, so this shortcut
+ * never returns an answer capn itself would refuse.
+ */
 function lookupExactCapnEntry(root: string, query: string): unknown | null {
   try {
-    const entriesDir = path.join(memoryStoreDir(root), "entries");
-    if (!fs.existsSync(entriesDir)) return null;
-
-    const files = fs.readdirSync(entriesDir).filter((f) => f.endsWith(".md"));
-    if (files.length === 0) return null;
-
     const normQuery = query.trim().toLowerCase().replace(/[?.,!]+$/g, "");
-
-    for (const f of files) {
-      const fullPath = path.join(entriesDir, f);
-      const content = fs.readFileSync(fullPath, "utf8");
-
-      // Extract H1 question
-      const h1Match = content.match(/^#\s+(.+)$/m);
-      if (!h1Match) continue;
-
-      const chartedQuestion = h1Match[1]?.trim() ?? "";
-      const normCharted = chartedQuestion.toLowerCase().replace(/[?.,!]+$/g, "");
-
-      if (normQuery === normCharted) {
-        // Extract frontmatter fields
-        const idMatch = content.match(/^id:\s*([a-f0-9]+)/m);
-        const id = idMatch ? idMatch[1] : path.basename(f, ".md");
-
-        // Extract files from frontmatter
-        const filesList: string[] = [];
-        const filesBlockMatch = content.match(/^files:\s*\n([\s\S]*?)(?=\n---\n|\n[a-z]+:)/m);
-        if (filesBlockMatch && filesBlockMatch[1]) {
-          const fileLines = filesBlockMatch[1].split("\n");
-          for (const line of fileLines) {
-            const m = line.match(/^\s+([^:]+):/);
-            if (m && m[1]) filesList.push(m[1].trim());
-          }
-        }
-
-        // Extract details (body after H1)
-        const h1Index = content.indexOf(h1Match[0]);
-        const body = content.slice(h1Index + h1Match[0].length).trim();
-
-        return {
-          id,
-          question: chartedQuestion,
-          files: filesList.sort(),
-          score: 100,
-          ...(body ? { details: body } : {}),
-        };
-      }
+    for (const entry of readChartedEntries(root)) {
+      const normCharted = entry.question.toLowerCase().replace(/[?.,!]+$/g, "");
+      if (normQuery !== normCharted) continue;
+      if (!entryFreshness(root, entry).fresh) continue;
+      return {
+        id: entry.id,
+        question: entry.question,
+        files: [...entry.files].sort(),
+        score: 100,
+        ...(entry.details ? { details: entry.details } : {}),
+      };
     }
     return null;
   } catch {
     return null;
   }
+}
+
+/** One line per entry capn is about to prune, for results that would otherwise lose them silently. */
+function describeStaleEntries(stale: ReturnType<typeof staleChartedEntries>): string[] {
+  return stale.map((entry) => {
+    const reasons = [
+      ...(entry.missingFiles.length > 0 ? [`missing: ${entry.missingFiles.join(", ")}`] : []),
+      ...(entry.staleFiles.length > 0 ? [`changed: ${entry.staleFiles.join(", ")}`] : []),
+    ];
+    return `${entry.id} "${entry.question}" (${reasons.join("; ")})`;
+  });
 }
 
 const MEMORY_QUERY_STOPWORDS = new Set([
@@ -330,14 +312,14 @@ async function queryCapnMemory(
   root: string,
   executable: string,
   question: string,
-): Promise<{ hit: boolean; result: unknown; error?: string; reason?: string; note?: string }> {
+): Promise<{ hit: boolean; result: unknown; error?: string; reason?: string; note?: string; pruned?: string[] }> {
   const config = readCapnConfig(root);
   if (config === null) {
     return {
       hit: false,
       result: null,
       reason: "STORE_UNINITIALIZED",
-      note: `Repository consensus memory is not initialized (${MEMORY_STORE_LABEL} missing). Run waymark_init to enable Tier 4.`,
+      note: `Repository consensus memory is not initialized (${MEMORY_STORE_LABEL} missing). Run waymark_memory(action: "init") (CLI: waymark memory init) to enable Tier 4.`,
     };
   }
   if (config.embedding !== false) {
@@ -352,6 +334,10 @@ async function queryCapnMemory(
   if (exactHit !== null) {
     return { hit: true, result: exactHit };
   }
+  // `capn ask` deletes every entry whose backing files changed before it answers; name them so
+  // the deletion is never silent.
+  const stale = describeStaleEntries(staleChartedEntries(root));
+  const prunedFields = stale.length > 0 ? { pruned: stale } : {};
   try {
     const result = await execute(root, resolveCapnCommand(executable), ["ask", question]);
     const stdout = (result.stdout || "").trim();
@@ -363,9 +349,9 @@ async function queryCapnMemory(
         } catch { return []; }
       });
       const relevant = candidates.find((candidate) => isRelevantMemoryCandidate(question, candidate));
-      if (relevant) return { hit: true, result: relevant };
+      if (relevant) return { hit: true, result: relevant, ...prunedFields };
     }
-    return { hit: false, result: null };
+    return { hit: false, result: null, ...prunedFields };
   } catch (error) {
     if (error instanceof WaymarkError) {
       return { hit: false, result: null, error: `${error.code}: ${error.message}` };
@@ -373,7 +359,7 @@ async function queryCapnMemory(
     const candidate = error as { message?: string; stderr?: string; stdout?: string; code?: string | number };
     const combined = `${candidate.stdout || ""}\n${candidate.stderr || ""}`;
     if (combined.includes("No charted answer.")) {
-      return { hit: false, result: null };
+      return { hit: false, result: null, ...prunedFields };
     }
     return {
       hit: false,
@@ -407,7 +393,8 @@ export async function ask(
       retryable: false,
     };
   }
-  if (options?.outline && options?.path) {
+  // A path with no question (or with outline) is a file outline; `question` then filters symbol names.
+  if ((options?.path && !question.trim() && !options?.facet) || (options?.outline && options?.path)) {
     const { discoverSymbolsInFile } = await import("./astExtractor.js");
     const symbolsResult = await discoverSymbolsInFile(root, options.path, options.language, question || undefined);
     if (symbolsResult.symbols.length === 0) {
@@ -506,11 +493,21 @@ export async function listEntries(root: string, executable: string): Promise<Rec
       exitCode: 0,
       count: 0,
       entries: [],
-      output: "No charted entries (store uninitialized). Run waymark_init or waymark_chart to create consensus memory.",
+      output: `No charted entries (store uninitialized). Run waymark_memory(action: "init") or chart an entry with waymark_memory(action: "chart") (CLI: waymark memory init / waymark memory chart) to create consensus memory.`,
     };
   }
+  // `capn list` first deletes every entry whose backing files changed; report which ones.
+  const stale = describeStaleEntries(staleChartedEntries(root));
   const result = await runCapnSimple(root, executable, ["list"]);
-  return { waymark: 1, kind: "list", ok: result.ok, exitCode: result.exitCode, ...(result.ok ? { output: result.output } : { error: result.output }) };
+  const notice = stale.length > 0 ? `Pruned ${stale.length} stale entr${stale.length === 1 ? "y" : "ies"} whose backing files changed or vanished:\n${stale.map((line) => `  - ${line}`).join("\n")}\n\n` : "";
+  return {
+    waymark: 1,
+    kind: "list",
+    ok: result.ok,
+    exitCode: result.exitCode,
+    ...(stale.length > 0 ? { pruned: stale } : {}),
+    ...(result.ok ? { output: `${notice}${result.output}` } : { error: result.output }),
+  };
 }
 
 /** Print the ask-first charting contract. */
@@ -532,7 +529,8 @@ export async function context(root: string, executable: string): Promise<Record<
     "    Any conceptual question, e.g. \"How does authentication work?\"",
     "",
     "  <name> must be an exact identifier (case-sensitive). If no codedb hit, the query falls",
-    "  through to semantic. Use waymark-context to see this contract again.",
+    "  through to semantic. Call waymark_memory(action: \"context\") (CLI: waymark memory context)",
+    "  to see this contract again.",
     "</waymark-engine>",
     "",
   ].join("\n");
@@ -544,11 +542,32 @@ export async function context(root: string, executable: string): Promise<Record<
       ok: true,
       exitCode: 0,
       store: "uninitialized",
-      output: routingHints + `Store is currently uninitialized (${MEMORY_STORE_LABEL} missing). Run waymark_init to enable Tier 4 semantic memory.`,
+      output: routingHints + `Store is currently uninitialized (${MEMORY_STORE_LABEL} missing). Run waymark_memory(action: "init") (CLI: waymark memory init) to enable Tier 4 semantic memory.`,
     };
   }
   const result = await runCapnSimple(root, executable, ["context"]);
-  return { waymark: 1, kind: "context", ok: result.ok, exitCode: result.exitCode, ...(result.ok ? { output: routingHints + result.output } : { error: result.output }) };
+  return { waymark: 1, kind: "context", ok: result.ok, exitCode: result.exitCode, ...(result.ok ? { output: routingHints + waymarkChartingContract(result.output) } : { error: result.output }) };
+}
+
+/**
+ * capn's own contract tells the agent to run `capn ask` / `capn chart`, which without
+ * `--store-dir` would write to the shared `.capn` folder instead of Waymark's store. The commands
+ * are rewritten to the Waymark calls that pass the store arguments.
+ */
+export function waymarkChartingContract(capnContext: string): string {
+  return capnContext
+    .replace(/<capn-hook>/gu, "<waymark-memory>")
+    .replace(/<\/capn-hook>/gu, "</waymark-memory>")
+    .replace(/Ask the capn first:/gu, "Ask Waymark first:")
+    .replace(/when the capn answers/gu, "when Waymark answers")
+    .replace(/^(\s*)capn ask "([^"\n]*)"\s*$/gmu, '$1waymark_ask(question: "$2")    (CLI: waymark ask "$2")')
+    .replace(
+      /^(\s*)capn chart "<question>" --files <comma-separated files backing it> \[--details "<line numbers or gotchas>"\]\s*$/gmu,
+      '$1waymark_memory(action: "chart", question: "<question>", answer: "<line numbers or gotchas>", files: [<files backing it>])\n$1(CLI: waymark memory chart --question "<question>" --answer "<details>" --files <comma-separated files>)',
+    )
+    .replace(/\bcapn chart\b/gu, "waymark_memory(action: \"chart\")")
+    .replace(/\bcapn ask\b/gu, "waymark_ask")
+    .replace(/--details\b/gu, "answer");
 }
 
 /** Initialize the repository's lexical memory store (`.waymark/memory`) using the bundled fork. */

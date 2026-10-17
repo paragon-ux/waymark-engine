@@ -88,8 +88,44 @@ const PROMPT_ROOT_ARGUMENT = {
 /** Prompt sentence that keeps every tool call on the repository named by the prompt's `root` argument. */
 function promptRootDirective(root: unknown): string {
   if (typeof root !== "string" || !root.trim()) return "";
-  return ` Pass root: ${JSON.stringify(root.trim())} on every waymark_ask, waymark_memory, and waymark_chart call.`;
+  return ` Pass root: ${JSON.stringify(root.trim())} on every waymark_ask and waymark_memory call.`;
 }
+
+/** The five Semantic Repo Map facet ids, as the bootstrap prompt lists them. */
+const FACET_IDS_TEXT = `"lifecycle", "data_state", "boundaries", "invariants", "failure"`;
+
+/** Prompt bodies, keyed by prompt name; `arg` is the prompt's validated required argument. */
+const PROMPT_TEXT: Record<string, (arg: string) => string> = {
+  "explore-subsystem": (query) => [
+    `Explore the repository with the waymark-engine MCP tools for: ${JSON.stringify(query)}.`,
+    `1. Locate it: waymark_ask(question: ${JSON.stringify(query)}, plain: true). Tier 1 answers symbol definitions and call graphs, Tier 2 file paths, Tier 3 fuzzy symbol matches, Tier 4 charted memory. Pass auto_resolve: false to see the Discovery Junction options instead of the auto-resolved top answer.`,
+    `2. Outline each relevant file: waymark_ask(path: "<file>", outline: true, plain: true); add query: "<name>" to filter its symbols.`,
+    `3. Trace relationships: waymark_ask(query: "<symbol>", depth: 2, direction: "callers", plain: true) (direction: "callees" | "both").`,
+    `4. Chart only verified findings: waymark_memory(action: "chart", question: "<focused question>", answer: "<what the files show>", files: ["<backing file>", ...]).`,
+  ].join("\n"),
+  "architectural-map": (topic) => [
+    `Map the architectural call chain and execution flow for: ${JSON.stringify(topic)}.`,
+    `1. Find the entry symbols: waymark_ask(question: ${JSON.stringify(topic)}, plain: true), and waymark_ask(query: "architecture", plain: true) for the repository layout.`,
+    `2. Trace each symbol: waymark_ask(query: "<symbol>", depth: 2, direction: "both", plain: true). A bare symbol with depth or direction is traced as a call graph; "who calls <symbol>" or "trace <symbol>" also works.`,
+    `3. Verify exact file paths and spans: waymark_ask(path: "<file>", outline: true, plain: true).`,
+    `4. Chart the verified flow: waymark_memory(action: "chart", question: "<focused question>", answer: "<summary>", files: ["<backing file>", ...]).`,
+  ].join("\n"),
+  "bootstrap-semantic-map": () => [
+    `Build the repository-wide Semantic Repo Map (subsystem-scoped maps are unsupported).`,
+    `1. Inspect it: waymark_memory(action: "status", plain: true) lists each facet as active, missing, drifted, or not_applicable.`,
+    `2. Collect drafts: waymark_memory(action: "bootstrap", plain: true) returns unverified source excerpts for every missing or drifted facet. It never publishes. If facets are drifted, waymark_memory(action: "heal", plain: true) also uncharts their stale entries.`,
+    `3. Verify each draft against its cited lines (waymark_ask(path: "<file>", outline: true, plain: true)); a draft is not a claim.`,
+    `4. Chart each supported facet: waymark_memory(action: "chart", facet: "<id>", question: "<question>", answer: "<verified answer>", files: ["<backing file>", ...]), where <id> is one of ${FACET_IDS_TEXT}. A facet with nothing to describe is charted with an answer starting "not_applicable" and the file that shows it.`,
+    `5. Confirm: waymark_memory(action: "status", plain: true).`,
+  ].join("\n"),
+};
+
+/** The required argument each prompt needs, if any. */
+const PROMPT_REQUIRED_ARGUMENT: Record<string, string | undefined> = {
+  "explore-subsystem": "query",
+  "architectural-map": "topic",
+  "bootstrap-semantic-map": undefined,
+};
 
 export const CAPN_RESOURCES: McpResourceDefinition[] = [
   {
@@ -377,11 +413,16 @@ export class McpServer {
       }
 
       // Fire and forget: this call takes the cold path; later calls on the root find it warm.
+      // A call that releases resident state must not start the daemon it is about to stop.
       const targetRoot = typeof toolArgs.root === "string" && toolArgs.root.trim() ? toolArgs.root.trim() : this.root;
-      void this.warmRoot(targetRoot);
+      const releasing = toolName === "waymark_memory" && (toolArgs.action === "close" || toolArgs.action === "evict");
+      if (!releasing) void this.warmRoot(targetRoot);
 
       try {
-        const result = await handler.handler(toolArgs);
+        const result = await handler.handler(toolArgs, {
+          releaseWarmRoot: (root) => this.releaseRoot(root),
+          releaseAllWarmRoots: async () => this.releaseAllRoots(),
+        });
         return {
           jsonrpc: "2.0",
           id,
@@ -487,56 +528,33 @@ export class McpServer {
       const name = String(params?.name ?? "");
       const args = (params?.arguments && typeof params.arguments === "object" ? params.arguments : {}) as Record<string, unknown>;
       const rootDirective = promptRootDirective(args.root);
-      if (name === "explore-subsystem") {
-        const query = String(args.query ?? "unknown");
+      const prompt = this.prompts.find((p) => p.name === name);
+      const render = PROMPT_TEXT[name];
+      if (prompt && render) {
+        const required = PROMPT_REQUIRED_ARGUMENT[name];
+        const value = required ? args[required] : undefined;
+        if (required && (typeof value !== "string" || !value.trim())) {
+          return {
+            jsonrpc: "2.0",
+            id,
+            error: {
+              code: -32602,
+              message: `Invalid params: prompt "${name}" requires a non-empty "${required}" argument.`,
+              data: { prompt: name, missing: required },
+            },
+          };
+        }
         return {
           jsonrpc: "2.0",
           id,
           result: {
-            description: "Guide repository-wide discovery for a subsystem concept or symbol; filesystem-scoped queries are unsupported.",
+            description: prompt.description,
             messages: [
               {
                 role: "user",
                 content: {
                   type: "text",
-                  text: `Please explore the codebase using waymark-engine MCP tools for: "${query}". First use waymark_ask to check Tier 1 AST call graphs or Tier 3 Discovery Junction recommendations, inspect relevant file AST outlines with waymark_ask (argument: path), and chart architectural findings into consensus memory via waymark_memory (action: "chart", or waymark_chart).${rootDirective}`,
-                },
-              },
-            ],
-          },
-        };
-      }
-      if (name === "architectural-map") {
-        const topic = String(args.topic ?? "unknown");
-        return {
-          jsonrpc: "2.0",
-          id,
-          result: {
-            description: "Generate an architectural call-graph map and consensus memory summary for a feature.",
-            messages: [
-              {
-                role: "user",
-                content: {
-                  type: "text",
-                  text: `Trace the architectural call chain and execution flow for: "${topic}". Use waymark_ask to resolve callers and callees (arguments: depth, direction), verify exact file paths, and summarize the consensus policy in long-term memory via waymark_memory (action: "chart", or waymark_chart).${rootDirective}`,
-                },
-              },
-            ],
-          },
-        };
-      }
-      if (name === "bootstrap-semantic-map") {
-        return {
-          jsonrpc: "2.0",
-          id,
-          result: {
-            description: "Collect source excerpts as unverified drafts; a human must verify and explicitly chart each claim.",
-            messages: [
-              {
-                role: "user",
-                content: {
-                  type: "text",
-                  text: `Inspect the repository-wide Semantic Repo Map with waymark_memory(action="status"). Bootstrap may collect source excerpts as unverified drafts but never publishes claims. Verify each claim against its cited source and publish only supported conclusions with waymark_memory(action="chart"). Subsystem-scoped maps are unsupported.${rootDirective}`,
+                  text: `${render(typeof value === "string" ? value.trim() : "")}${rootDirective}`,
                 },
               },
             ],
@@ -656,6 +674,39 @@ export class McpServer {
       }
       entry.daemon = null;
     }
+  }
+
+  /**
+   * Stops the warm daemon (or warm-up in flight) for the repository `root` resolves to, as
+   * `waymark_memory(action: "close" | "evict")` asks. The root can warm again on a later call.
+   */
+  public async releaseRoot(root: string): Promise<boolean> {
+    const keys = new Set([canonicalRoot(root)]);
+    try {
+      keys.add(canonicalRoot(await repoRootAsync(root)));
+    } catch {
+      // an unresolvable root only matches its canonical form
+    }
+    let released = false;
+    for (const key of keys) {
+      const entry = this.warmRoots.get(key);
+      if (!entry) continue;
+      this.warmRoots.delete(key);
+      if (entry.state === "warm" || entry.state === "warming") released = true;
+      this.releaseWarmRoot(entry);
+    }
+    return released;
+  }
+
+  /** Stops every warm daemon without closing the server; returns how many were holding a root. */
+  public releaseAllRoots(): number {
+    let released = 0;
+    for (const entry of this.warmRoots.values()) {
+      if (entry.state === "warm" || entry.state === "warming") released++;
+      this.releaseWarmRoot(entry);
+    }
+    this.warmRoots.clear();
+    return released;
   }
 
   public close(): void {

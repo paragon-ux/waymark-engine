@@ -156,6 +156,8 @@ export interface AskHitResult {
   result: unknown;
   timings?: Record<string, number>;
   dev?: DevDiagnostics;
+  /** Charted entries capn deleted while answering, because their backing files changed or vanished. */
+  memoryPruned?: string[];
 }
 
 export interface AskJunctionResult {
@@ -176,6 +178,8 @@ export interface AskJunctionResult {
   tip?: string;
   timings?: Record<string, number>;
   dev?: DevDiagnostics;
+  /** Charted entries capn deleted while answering, because their backing files changed or vanished. */
+  memoryPruned?: string[];
 }
 
 export interface AskMissResult {
@@ -189,6 +193,8 @@ export interface AskMissResult {
   candidates?: string[];
   timings?: Record<string, number>;
   dev?: DevDiagnostics;
+  /** Charted entries capn deleted while answering, because their backing files changed or vanished. */
+  memoryPruned?: string[];
 }
 
 export interface AskErrorResult {

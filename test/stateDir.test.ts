@@ -87,7 +87,7 @@ async function exerciseEverySurface(repo: string): Promise<void> {
   const paths = collectRepoPaths(repo);
   assert.ok(paths.includes("src/app.ts"));
   assert.ok(!paths.some((p) => p.startsWith(".capn/") || p.startsWith(".waymark/")));
-  assert.equal(fs.existsSync(path.join(stateDir(repo), "paths.v2.cache")), true);
+  assert.equal(fs.existsSync(path.join(stateDir(repo), "paths.v3.cache")), true);
 
   const telemetry = process.env.WAYMARK_TELEMETRY;
   process.env.WAYMARK_TELEMETRY = "1";

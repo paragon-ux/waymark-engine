@@ -129,7 +129,7 @@ test("collectRepoPathsBounded matches collectRepoPaths and gives up over budget"
 });
 
 test("detectLiteralIntent classifies literal queries and leaves natural language alone", () => {
-  assert.deepEqual(detectLiteralIntent("sample.ts"), { isLiteral: true, normalized: "sample.ts", isExplicitPath: false });
+  assert.deepEqual(detectLiteralIntent("sample.ts"), { isLiteral: true, normalized: "sample.ts", isExplicitPath: false, couldBeSymbol: true });
   assert.equal(detectLiteralIntent("src/auth/utils.ts").isLiteral, true);
   assert.equal(detectLiteralIntent("src/auth/utils.ts").isExplicitPath, true);
   assert.equal(detectLiteralIntent("./README.md").isExplicitPath, true);

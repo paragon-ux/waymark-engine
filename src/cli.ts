@@ -169,7 +169,8 @@ async function runCommand(command: string, rawArgs: readonly string[]): Promise<
         "  symbols <symbol1> [symbol2 ...] [--plain] (batch query symbol definitions across repo)",
         "  ask <question> [--symbols a,b] [--facet <f>] [--tier auto|ast|path|fuzzy|capn] [--timing] [--json|--plain]",
         "  memory <chart|bootstrap|bust|prune|list|unchart|init|status|context|heal|export> [options]",
-        "  bootstrap [--dry-run] [--subsystem <s>] (subsystem scope is currently unsupported)",
+        "  bootstrap [--subsystem <s>] (read-only: collects unverified drafts; subsystem scope is currently unsupported)",
+        "  memory heal [--dry-run] (uncharts drifted facets and collects replacement drafts; --dry-run only reports)",
         "  map [status|show|heal|export] (inspect and manage Semantic Repo Map)",
         "  chart --question <q> --answer <a> --files <a,b> [--profile capn-cli|none] [--capn-executable <path>]",
         "  unchart <id> [--if-exists] | bust <path> | prune | list | context",
@@ -295,22 +296,19 @@ async function runCommand(command: string, rawArgs: readonly string[]): Promise<
     if ((rawPath && !posText && !rawFacet) || (isOutline && rawPath)) {
       const queryToUse = parsed.values.get("query") ?? parsed.values.get("symbol") ?? (posText || undefined);
       const requestedLang = parsed.values.get("language");
-      if (isOutline) {
-        const { ask } = await import("./capnAdapter.js");
-        const profile = (parsed.values.get("profile") as AdapterProfile) ?? "none";
-        const executable = parsed.values.get("capn-executable") ?? "";
-        const res = await ask(root, profile, executable, queryToUse ?? "", { path: rawPath, outline: true, language: requestedLang });
-        if (parsed.values.has("plain")) {
-          const { renderPlainText } = await import("./renderPlainText.js");
-          return { value: renderPlainText(res) };
-        }
-        if (res.status === "hit") {
-          return { value: res.result };
-        }
-        return { value: res };
+      // With or without --outline, a file outline shares one envelope: 0 matching symbols is a miss.
+      const { ask } = await import("./capnAdapter.js");
+      const profile = (parsed.values.get("profile") as AdapterProfile) ?? "none";
+      const executable = parsed.values.get("capn-executable") ?? "";
+      const res = await ask(root, profile, executable, queryToUse ?? "", { path: rawPath, outline: true, language: requestedLang });
+      if (parsed.values.has("plain")) {
+        const { renderPlainText } = await import("./renderPlainText.js");
+        return { value: renderPlainText(res) };
       }
-      const { discoverSymbolsInFile } = await import("./astExtractor.js");
-      return { value: await discoverSymbolsInFile(root, rawPath, requestedLang, queryToUse) };
+      if (res.status === "hit") {
+        return { value: res.result };
+      }
+      return { value: res };
     }
     if (rawFacet === "status") {
       const { getSemanticMapStatus } = await import("./semanticMap.js");
@@ -348,33 +346,21 @@ async function runCommand(command: string, rawArgs: readonly string[]): Promise<
     const profile = resolveProfile(parsed);
 
     if (action === "chart") {
-      let question = parsed.values.get("question") ?? (parsed.positionals[1] ? parsed.positionals.slice(1).join(" ") : "");
-      question = boundedText(question, 240, "question");
-      const answer = boundedText(requiredValue(parsed, "answer"), 4000, "answer");
-      const rawFacet = parsed.values.get("facet")?.toLowerCase();
-      const files = (parsed.values.get("files") ?? "").split(",").map((f) => f.trim()).filter(Boolean);
-
-      if (rawFacet) {
-        const facetTag = `[FACET:${rawFacet.toUpperCase()}]`;
-        if (!question.toUpperCase().includes(facetTag)) {
-          question = `${facetTag} ${question}`.trim();
-        }
-      }
-
-      if (rawFacet || question.includes("[FACET:")) {
-        const { validateFacetBackingFiles } = await import("./semanticMap.js");
-        validateFacetBackingFiles(root, files, answer.toLowerCase().includes("not_applicable"));
-      }
-
-      const result = await publish(root, profile, executable, question, answer, files);
+      const question = parsed.values.get("question") ?? (parsed.positionals[1] ? parsed.positionals.slice(1).join(" ") : "");
+      const { chartMemoryEntry } = await import("./semanticMap.js");
+      const result = await chartMemoryEntry(root, profile, executable, {
+        question,
+        answer: requiredValue(parsed, "answer"),
+        facet: parsed.values.get("facet"),
+        files: (parsed.values.get("files") ?? "").split(",").map((f) => f.trim()).filter(Boolean),
+      });
       return { value: result, exitCode: result.published === false && profile === "capn-cli" ? 3 : 0 };
     }
 
     if (action === "bootstrap") {
       const { bootstrapSemanticMap } = await import("./semanticMap.js");
-      const dryRun = parsed.values.has("dry-run");
       const subsystem = parsed.values.get("subsystem");
-      const res = await bootstrapSemanticMap(root, { dryRun, subsystem, executable });
+      const res = await bootstrapSemanticMap(root, { subsystem, executable });
       return { value: res, exitCode: res.ok ? 0 : 1 };
     }
 
@@ -422,35 +408,20 @@ async function runCommand(command: string, rawArgs: readonly string[]): Promise<
     }
 
     if (action === "heal") {
-      const { bootstrapSemanticMap } = await import("./semanticMap.js");
+      const { healSemanticMap } = await import("./semanticMap.js");
       const subsystem = parsed.values.get("subsystem");
-      const res = await bootstrapSemanticMap(root, { dryRun: false, subsystem, executable });
+      const res = await healSemanticMap(root, { dryRun: parsed.values.has("dry-run"), subsystem, executable });
       return { value: res, exitCode: res.ok ? 0 : 1 };
     }
 
     if (action === "export") {
-      const { getSemanticMapStatus } = await import("./semanticMap.js");
+      const { getSemanticMapStatus, renderSemanticMapExport } = await import("./semanticMap.js");
       const status = getSemanticMapStatus(root);
       const format = parsed.values.get("format") || "md";
       if (format === "json") {
         return { value: status };
       }
-      const lines = [
-        `# Architecture Consensus Map`,
-        `**Generated by Waymark Engine** | Status: ${status.status} (${status.completion} facets active)`,
-        "",
-      ];
-      for (const [id, f] of Object.entries(status.facets)) {
-        lines.push(`## Facet: ${f.name} (\`${id}\`)`);
-        lines.push(`- **Status**: ${f.status}`);
-        lines.push(`- **Files**: ${f.files.join(", ") || "None"}`);
-        if (f.details) {
-          lines.push("");
-          lines.push(f.details);
-          lines.push("");
-        }
-      }
-      return { value: lines.join("\n") };
+      return { value: renderSemanticMapExport(status) };
     }
 
     if (action === "evict" || action === "close") {
@@ -458,10 +429,10 @@ async function runCommand(command: string, rawArgs: readonly string[]): Promise<
       const target = parsed.positionals[1] || root;
       if (parsed.values.has("all")) {
         closeAllResidentClients();
-        return { value: { waymark: 1, ok: true, message: "Closed all resident codedb instances." } };
+        return { value: { waymark: 1, kind: action, ok: true, all: true, message: "Closed all resident codedb instances." } };
       }
       const closed = closeResidentClient(target);
-      return { value: { waymark: 1, ok: true, closed, root: target } };
+      return { value: { waymark: 1, kind: action, ok: true, closed, root: target } };
     }
 
     throw new WaymarkError("UNKNOWN_COMMAND", `Unknown memory action: ${action}. Use chart, bootstrap, bust, prune, list, unchart, init, context, status, heal, export, evict, or close.`);
@@ -488,33 +459,18 @@ async function runCommand(command: string, rawArgs: readonly string[]): Promise<
       return { value: status };
     }
     if (subAction === "heal") {
-      const { bootstrapSemanticMap } = await import("./semanticMap.js");
-      const res = await bootstrapSemanticMap(root, { dryRun: false, executable: resolveCapnExecutable(parsed) });
-      return { value: res };
+      const { healSemanticMap } = await import("./semanticMap.js");
+      const res = await healSemanticMap(root, { dryRun: parsed.values.has("dry-run"), executable: resolveCapnExecutable(parsed) });
+      return { value: res, exitCode: res.ok ? 0 : 1 };
     }
     if (subAction === "export") {
-      const { getSemanticMapStatus } = await import("./semanticMap.js");
+      const { getSemanticMapStatus, renderSemanticMapExport } = await import("./semanticMap.js");
       const status = getSemanticMapStatus(root);
       const format = parsed.values.get("format") || "md";
       if (format === "json") {
         return { value: status };
       }
-      const lines = [
-        `# Architecture Consensus Map`,
-        `**Generated by Waymark Engine** | Status: ${status.status} (${status.completion} facets active)`,
-        "",
-      ];
-      for (const [id, f] of Object.entries(status.facets)) {
-        lines.push(`## Facet: ${f.name} (\`${id}\`)`);
-        lines.push(`- **Status**: ${f.status}`);
-        lines.push(`- **Files**: ${f.files.join(", ") || "None"}`);
-        if (f.details) {
-          lines.push("");
-          lines.push(f.details);
-          lines.push("");
-        }
-      }
-      return { value: lines.join("\n") };
+      return { value: renderSemanticMapExport(status) };
     }
     throw new WaymarkError("UNKNOWN_COMMAND", `Unknown map subcommand: ${subAction}. Use status, show, heal, or export.`);
   }

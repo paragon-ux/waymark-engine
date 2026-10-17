@@ -12,7 +12,7 @@ The examples ran in table order and build on each other. Bootstrap starts at 2/5
 
 ## Capture details
 
-- Recorded on 2026-10-17 at commit `8036771` with codedb-core 2.1.1, on Windows.
+- Recorded on 2026-10-17 with the review fixes on top of commit `f859003`, with codedb-core 2.1.1, on Windows.
 - Every tool call also passed `"root"` set to the repository path. It is left out of the examples.
 - Line numbers and call graphs reflect that commit and drift as the code changes.
 
@@ -58,6 +58,10 @@ Running the prompts turned up these gaps:
 | Tier 1 call graph | Missed a call made from a class method: `WaymarkDaemon.start` → `getResidentClient`. | Fixed in codedb-core 2.1.0. |
 | Tier 1 lookup | In codedb-core 2.1.0, a name was ambiguous when test files had mock methods with the same name, so the `queryCapnMemory` hop in [architectural-map](architectural-map.md#1-callers) stopped. | Fixed in codedb-core 2.1.1: a name resolves to its one definition outside test files. |
 | Bootstrap drafts | Each draft's evidence was the first lines of a file, usually imports, so drafts pointed to files but didn't support any claim. | Fixed in `16449e4`: evidence is now the lines that name the facet's keywords, and never imports or comments. |
+| Prompts | `explore-subsystem` and `architectural-map` filled a missing argument with `"unknown"`, pointed agents at the hidden `waymark_chart` tool, and never showed `plain`, `outline` or the facet ids. `bootstrap-semantic-map` never said to call `bootstrap`. | Fixed with the review fixes: a missing argument is JSON-RPC `-32602`, and each prompt spells out the canonical `waymark_ask` / `waymark_memory` calls. |
+| Bootstrap drafts | Candidate files were Waymark's own `src/*.ts` names, so other repositories got `package.json` drafts. | Fixed with the review fixes: candidates come from the repository's manifest entries and source files. |
+| Bootstrap drafts | The first re-recording cited `semanticMap.ts`'s own keyword table and patterns as evidence, and missed `stateDir.ts` because path hints didn't split camelCase. | Fixed with the review fixes: keywords inside string, template and regex literals don't count, and path hints match camelCase words. |
+| Tier 1 call graph | codedb-core 2.1.1 reads a `"` or `'` inside a regex literal as the start of a string, so the enclosing function runs to the end of the file. `isNotApplicableAnswer` showed up as a caller of `publish`. | Worked around in Waymark by writing those quotes as `\x22`/`\x27`. Still open in codedb-core. |
 
 Every gap except the prompt `root` handling was caught by a verify step or by re-recording. That's why each prompt has the agent check results against the source before charting.
 

@@ -50,6 +50,62 @@ export function renderCallGraph(graph: CallGraphData): string {
   return out.trimEnd();
 }
 
+const MEMORY_TEXT_KINDS = new Set(["init", "list", "bust", "prune", "unchart", "context", "migrate"]);
+
+/** One line naming the charted entries capn deleted while answering, or "". */
+function prunedLine(record: Record<string, unknown>): string {
+  return Array.isArray(record.memoryPruned) && record.memoryPruned.length > 0
+    ? `\n[memory] pruned stale entries: ${(record.memoryPruned as string[]).join("; ")}`
+    : "";
+}
+
+/** A codedb name from a CRLF file can end in \r; never let it split the output line. */
+function cleanName(value: unknown): string {
+  return String(value ?? "").replace(/[\r\n]+$/u, "").replace(/[\r\n]+/gu, " ");
+}
+
+/** Bootstrap and heal: the drafts with their evidence, what heal uncharted, then the map status. */
+function renderMapRepair(record: Record<string, unknown>): string {
+  const lines: string[] = [];
+  const heal = record.kind === "heal";
+  lines.push(`[${record.kind}] Status: ${record.ok ? "OK" : "Failed"}${record.dryRun ? " (dry-run)" : ""}`);
+
+  const pruned = Array.isArray(record.pruned) ? record.pruned as Array<{ facet: string; id: string; missingFiles?: string[]; staleFiles?: string[] }> : [];
+  if (heal) {
+    if (pruned.length === 0) {
+      lines.push("No drifted facet entries to unchart.");
+    } else {
+      lines.push(`${record.dryRun ? "Would unchart" : "Uncharted"} ${pruned.length} drifted entr${pruned.length === 1 ? "y" : "ies"}:`);
+      for (const p of pruned) {
+        const reasons = [
+          ...(p.missingFiles?.length ? [`missing: ${p.missingFiles.join(", ")}`] : []),
+          ...(p.staleFiles?.length ? [`changed: ${p.staleFiles.join(", ")}`] : []),
+        ];
+        lines.push(`- ${p.facet} (${p.id})${reasons.length ? ` [${reasons.join("; ")}]` : ""}`);
+      }
+    }
+    if (Array.isArray(record.errors)) for (const e of record.errors as string[]) lines.push(`error: ${e}`);
+  }
+
+  const drafts = Array.isArray(record.scaffolded) ? record.scaffolded as Array<{ id: string; question: string; files: string[]; evidence: Array<{ file: string; line: number; excerpt: string }> }> : [];
+  if (drafts.length === 0) {
+    lines.push("No unverified drafts: no missing or drifted facet has source evidence.");
+  } else {
+    lines.push(`Unverified drafts (${drafts.length}); verify each against its cited lines before charting:`);
+    for (const d of drafts) {
+      lines.push(`## ${d.id}: ${d.question}`);
+      lines.push(`files: ${d.files.join(", ") || "None"}`);
+      for (const e of d.evidence) lines.push(`  ${e.file}:${e.line}: ${e.excerpt}`);
+    }
+    lines.push(`Next: chart each verified facet with waymark_memory(action: "chart", facet: "<id>", question, answer, files) (CLI: waymark memory chart --facet <id> --question <q> --answer <a> --files <a,b>).`);
+  }
+
+  if (record.status && typeof record.status === "object") {
+    lines.push(renderSemanticMapStatus(record.status as any, { recommendation: false }));
+  }
+  return lines.join("\n").trimEnd();
+}
+
 export function renderPlainText(value: unknown): string {
   if (!value || typeof value !== "object") return String(value);
   const record = value as Record<string, unknown>;
@@ -58,10 +114,31 @@ export function renderPlainText(value: unknown): string {
     return renderSemanticMapStatus(record as any);
   }
 
-  if (record.kind === "bootstrap") {
-    const statusStr = record.status ? renderSemanticMapStatus(record.status as any) : "";
-    const prefix = `[bootstrap] Status: ${record.ok ? "OK" : "Failed"}${record.dryRun ? " (dry-run)" : ""}`;
-    return `${prefix}\n${statusStr}`.trimEnd();
+  if (record.kind === "bootstrap" || record.kind === "heal") {
+    return renderMapRepair(record);
+  }
+
+  if (record.kind === "chart" && "published" in record) {
+    const facet = record.facet ? ` [facet: ${record.facet}]` : "";
+    if (!record.published) {
+      return `[chart] not published${facet}: ${String(record.error || record.output || "publication failed").trim()}`;
+    }
+    const replaced = Array.isArray(record.replaced) && record.replaced.length > 0 ? `\nreplaced: ${(record.replaced as string[]).join(", ")}` : "";
+    const output = typeof record.output === "string" && record.output.trim() ? `\n${record.output.trim()}` : "";
+    return `[chart] published${facet}: ${String(record.question ?? "").trim()}${replaced}${output}`;
+  }
+
+  if ((record.kind === "evict" || record.kind === "close") && typeof record.ok === "boolean") {
+    const stopped = typeof record.daemonsStopped === "number" && record.daemonsStopped > 0 ? ` (${record.daemonsStopped} warm daemon${record.daemonsStopped === 1 ? "" : "s"} stopped)` : "";
+    return `[memory:${record.kind}] ${String(record.message ?? (record.closed ? `closed ${record.root}` : `nothing to close for ${record.root}`))}${stopped}`;
+  }
+
+  // init, list, bust, prune, unchart, context, migrate: capn's own output is already plain text.
+  if (typeof record.kind === "string" && MEMORY_TEXT_KINDS.has(record.kind) && typeof record.ok === "boolean") {
+    const pruned = Array.isArray(record.pruned) && record.kind !== "list" ? `\npruned: ${(record.pruned as string[]).join("; ")}` : "";
+    if (!record.ok) return `[memory:${record.kind}] failed: ${String(record.error ?? record.output ?? "").trim()}`;
+    const text = String(record.output ?? "").trim();
+    return `[memory:${record.kind}] ok${text ? `\n${text}` : ""}${pruned}`;
   }
 
   if (record.tool === "call_graph") {
@@ -91,7 +168,7 @@ export function renderPlainText(value: unknown): string {
       const lineStr = s.start && s.end
         ? `L${s.start.line}${s.end.line !== s.start.line ? `-L${s.end.line}` : ""}`
         : `L${s.line ?? 1}`;
-      out += `${s.name}: ${s.kind} ${lineStr}\n`;
+      out += `${cleanName(s.name)}: ${s.kind} ${lineStr}\n`;
     }
     return out.trimEnd();
   }
@@ -104,7 +181,7 @@ export function renderPlainText(value: unknown): string {
     }
     let out = `[symbols: '${query}'] (${results.length} match${results.length === 1 ? "" : "es"})\n`;
     for (const r of results) {
-      out += `${r.name}: ${r.kind} ${r.path}:${r.line}\n`;
+      out += `${cleanName(r.name)}: ${r.kind} ${r.path}:${r.line}\n`;
     }
     return out.trimEnd();
   }
@@ -125,7 +202,7 @@ export function renderPlainText(value: unknown): string {
       detail = String(record.result ?? "");
     } else if (provider === "fuzzy-lexical") {
       const res = record.result as Record<string, unknown>;
-      detail = `${res.name} -> ${res.path}:${res.line}${res.score !== undefined ? ` (score: ${res.score})` : ""}`;
+      detail = `${cleanName(res.name)} -> ${res.path}:${res.line}${res.score !== undefined ? ` (score: ${res.score})` : ""}`;
     } else if (record.result && typeof record.result === "object" && (record.result as any).kind === "semantic_map") {
       detail = renderSemanticMapStatus(record.result as any);
     } else {
@@ -133,7 +210,7 @@ export function renderPlainText(value: unknown): string {
     }
     const timingStr = record.timings ? `\n[timing] ${formatTimings(record.timings as Record<string, number>)}` : "";
     const devStr = record.dev ? `\n${formatDevDiagnostics(record.dev as Record<string, unknown>)}` : "";
-    return `[hit: ${provider}]${confidence}\n${detail}${timingStr}${devStr}`;
+    return `[hit: ${provider}]${confidence}\n${detail}${timingStr}${devStr}${prunedLine(record)}`;
   }
 
   if (record.status === "junction") {
@@ -147,7 +224,7 @@ export function renderPlainText(value: unknown): string {
     if (execOpt?.result && typeof execOpt.result === "object") {
       const res = execOpt.result as Record<string, unknown>;
       if (res.name) {
-        resStr = `Result: ${res.name} in ${res.path}:${res.line}${res.score !== undefined ? ` (score: ${res.score})` : ""}\n`;
+        resStr = `Result: ${cleanName(res.name)} in ${res.path}:${res.line}${res.score !== undefined ? ` (score: ${res.score})` : ""}\n`;
       } else {
         resStr = `Result: ${JSON.stringify(res)}\n`;
       }
@@ -160,14 +237,14 @@ export function renderPlainText(value: unknown): string {
     const timingStr = record.timings ? `[timing] ${formatTimings(record.timings as Record<string, number>)}\n` : "";
     const devStr = record.dev ? `${formatDevDiagnostics(record.dev as Record<string, unknown>)}\n` : "";
 
-    return `[junction] Recommended: ${rec}\n${shapeStr}${resStr}${tipStr}${timingStr}${devStr}`.trimEnd();
+    return `[junction] Recommended: ${rec}\n${shapeStr}${resStr}${tipStr}${timingStr}${devStr}`.trimEnd() + prunedLine(record);
   }
 
   if (record.status === "miss") {
     const reason = record.reason ?? record.missCode ?? "No match";
     const timingStr = record.timings ? `\n[timing] ${formatTimings(record.timings as Record<string, number>)}` : "";
     const devStr = record.dev ? `\n${formatDevDiagnostics(record.dev as Record<string, unknown>)}` : "";
-    return `[miss] ${reason}${timingStr}${devStr}`;
+    return `[miss] ${reason}${timingStr}${devStr}${prunedLine(record)}`;
   }
 
   if (record.kind === "daemon") {

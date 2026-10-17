@@ -116,7 +116,7 @@ test("prompts tell the agent to pass the given root on every tool call", async (
   for (const [name, args] of ROOT_PROMPTS) {
     const text = await promptText(server, name, { ...args, root: `  ${root}  ` });
     assert.ok(
-      text.endsWith(` Pass root: ${JSON.stringify(root)} on every waymark_ask, waymark_memory, and waymark_chart call.`),
+      text.endsWith(` Pass root: ${JSON.stringify(root)} on every waymark_ask and waymark_memory call.`),
       `${name}: ${text}`,
     );
   }

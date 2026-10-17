@@ -11,6 +11,7 @@ Traces a feature's call chain with the AST tier, checks it against the source, a
 | Argument | Required | Value |
 | :--- | :--- | :--- |
 | `topic` | yes | `capnStoreArgs` |
+| `root` | no | not set (added in `16449e4`, after this run) |
 
 ## What the prompt sends
 

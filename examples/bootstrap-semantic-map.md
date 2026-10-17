@@ -62,6 +62,8 @@ It scaffolds one draft per missing facet. This is the `data_state` draft:
 
 The drafts pick plausible files, but their evidence is each file's first lines. So the answers come from reading the source, not from the drafts.
 
+This run predates `16449e4`. Since that commit, drafts cite the lines that name each facet's keywords instead of a file's first lines. A new run gets different evidence, and still has to verify it.
+
 ## 2. Verify each draft
 
 | Facet | What the source shows | Backing files charted |

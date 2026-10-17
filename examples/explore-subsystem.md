@@ -11,7 +11,7 @@ Explores one concept or symbol across all four tiers: call graph, fuzzy junction
 | Argument | Required | Value |
 | :--- | :--- | :--- |
 | `query` | yes | `getResidentClient` |
-| `root` | no | not set (see [Findings](README.md#findings)) |
+| `root` | no | not set |
 
 ## What the prompt sends
 

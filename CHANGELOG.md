@@ -6,7 +6,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Bundled codedb-core ^2.1.1 (`package.json`)**: TS/JS class methods, object-literal functions, arrow consts and per-file module code are call-graph nodes, with `kind` and `qualified` names. A name resolves to its one definition outside test files. Calls without a receiver never reach a method, and calls through a global or a package import never reach repository code.
+
 ### Added
+- **Re-recordable Examples (`examples/record.mjs`)**: Replays the three prompt examples' tool calls against a checkout and prints each result. The examples are re-recorded with codedb-core 2.1.1.
 - **`root` Argument on `architectural-map` (`src/mcp/server.ts`)**: All three prompts now declare an optional `root`.
 - **Qualified and module call-graph nodes (`src/codedbAdapter.ts`, `src/discoveryRouter.ts`, `src/renderPlainText.ts`)**: These need a codedb-core that emits `qualified` and `kind`.
   - Root questions keep their qualifier: `Who calls WaymarkDaemon.start?` queries `WaymarkDaemon.start`. Waymark falls back to the last segment only when codedb reports that the qualified name doesn't exist (`symbol_exists: false`), so `Who calls path.join?` still answers for `join`, and so does any dotted question on an older codedb. A qualified name that exists is never widened to its bare name. If it is ambiguous, such as a getter and setter both named `Shapes.size`, the answer lists those candidates only.

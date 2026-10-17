@@ -78,7 +78,7 @@
   },
   "dependencies": {
     "@paragon-ux/capn-hook": "^2.0.0",
-    "@paragon-ux/codedb-core": "^2.0.2",
+    "@paragon-ux/codedb-core": "^2.1.1",
     "markdown-it": "^15.0.2",
     "tree-sitter-wasms": "0.1.13",
     "web-tree-sitter": "0.24.0"

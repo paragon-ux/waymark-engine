@@ -29,18 +29,30 @@ Explores one concept or symbol across all four tiers: call graph, fuzzy junction
 [call-graph: depth 2]
 getResidentClient (src/residentCodedb.ts:404)
   ↳ callers:
-      - runJson (src/codedbAdapter.ts:131)
+      - runJson (src/codedbAdapter.ts:148)
       ↳ callers:
-          - queryMultiHopCallGraph (src/codedbAdapter.ts:222)
-          - queryStructural (src/codedbAdapter.ts:433)
-          - queryFuzzyCandidates (src/codedbAdapter.ts:596)
-          - queryMultiSymbols (src/codedbAdapter.ts:686)
+          - queryMultiHopCallGraph (src/codedbAdapter.ts:270)
+          - queryStructural (src/codedbAdapter.ts:487)
+          - queryFuzzyCandidates (src/codedbAdapter.ts:654)
+          - queryMultiSymbols (src/codedbAdapter.ts:744)
           - discoverSymbolsViaCodedbOutline (src/astExtractor.ts:752)
           - discoverSymbolsInRepo (src/astExtractor.ts:822)
+      - WaymarkDaemon.start [method] (src/daemon.ts:483)
+      ↳ callers:
+          - runCommand (src/cli.ts:150)
+          - McpServer.runWarmup [method] (src/mcp/server.ts:604)
+          - <module> [module] (src/daemon.ts:1)
   ↳ callees:
       - normalizeKeyRoot (src/residentCodedb.ts:382)
+      - ResidentCodedbClient.touch [method] (src/residentCodedb.ts:73)
       - getMaxResidentClients (src/residentCodedb.ts:396)
+      - ResidentCodedbClient.closeSync [method] (src/residentCodedb.ts:358)
+      ↳ callees:
+          - ResidentCodedbClient.clearIdleTimer [method] (src/residentCodedb.ts:112)
+          - unregisterResidentClient (src/residentCodedb.ts:387)
 ```
+
+`[method]` marks a class or object method, named after its class, such as `WaymarkDaemon.start`. `<module> [module]` is a file's top-level code.
 
 ## 2. Tier 3: Discovery Junction
 
@@ -103,10 +115,8 @@ The outline points to the ranges worth reading: `getResidentClient` (L404–L436
 | At most `WAYMARK_MAX_RESIDENT_CLIENTS` clients (default 2), least recently used evicted | `src/residentCodedb.ts:396-436` | Confirmed |
 | A client closes after 60 s idle (`WAYMARK_IDLE_TIMEOUT`) | `src/residentCodedb.ts:67-70`, `:104-110` | Confirmed |
 | Every client closes on `exit`, `SIGINT` and `SIGTERM` | `src/residentCodedb.ts:466-474` | Confirmed |
-| `runJson` tries the daemon socket before the resident client | `src/codedbAdapter.ts:138-168` | Confirmed |
-| `runJson` is the only caller | `src/daemon.ts:498` (`WaymarkDaemon.start`) | **Missed by the graph** |
-
-`WaymarkDaemon.start` is a class method. The AST tier didn't report it as a caller, but it creates and shares the same resident client.
+| `runJson` tries the daemon socket before the resident client | `src/codedbAdapter.ts:155-185` | Confirmed |
+| `WaymarkDaemon.start` shares the same resident client | `src/daemon.ts:498` | Confirmed |
 
 ## 5. Chart the finding
 

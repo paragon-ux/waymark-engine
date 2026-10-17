@@ -11,7 +11,7 @@ Traces a feature's call chain with the AST tier, checks it against the source, a
 | Argument | Required | Value |
 | :--- | :--- | :--- |
 | `topic` | yes | `capnStoreArgs` |
-| `root` | no | not set (added in `16449e4`, after this run) |
+| `root` | no | not set |
 
 ## What the prompt sends
 
@@ -36,19 +36,33 @@ capnStoreArgs (src/capnAdapter.ts:100)
               - runCommand (src/cli.ts:150)
               ↳ callers:
                   - runCli (src/cli.ts:720)
+              - waymarkMemoryTool.handler [method] (src/mcp/capnTools.ts:352)
+              - waymarkChartTool.handler [method] (src/mcp/capnTools.ts:564)
           - queryCapnMemory (src/capnAdapter.ts:329)
           ↳ callers:
-              - routeDiscoveryCore (src/discoveryRouter.ts:475)
+              - routeDiscoveryCore (src/discoveryRouter.ts:478)
               ↳ callers:
-                  - routeDiscovery (src/discoveryRouter.ts:1112)
+                  - routeDiscovery (src/discoveryRouter.ts:1115)
           - runCapnSimple (src/capnAdapter.ts:453)
           ↳ callers:
               - unchart (src/capnAdapter.ts:472)
+              ↳ callers:
+                  - waymarkUnchartTool.handler [method] (src/mcp/capnTools.ts:709)
               - bust (src/capnAdapter.ts:487)
+              ↳ callers:
+                  - waymarkBustTool.handler [method] (src/mcp/capnTools.ts:746)
               - prune (src/capnAdapter.ts:494)
+              ↳ callers:
+                  - waymarkPruneTool.handler [method] (src/mcp/capnTools.ts:777)
               - listEntries (src/capnAdapter.ts:500)
+              ↳ callers:
+                  - waymarkListTool.handler [method] (src/mcp/capnTools.ts:806)
               - context (src/capnAdapter.ts:517)
+              ↳ callers:
+                  - waymarkContextTool.handler [method] (src/mcp/capnTools.ts:835)
               - initCapn (src/capnAdapter.ts:555)
+              ↳ callers:
+                  - waymarkInitTool.handler [method] (src/mcp/capnTools.ts:927)
               - migrateMemoryStore (src/capnAdapter.ts:571)
 ```
 
@@ -70,16 +84,16 @@ capnStoreArgs (src/capnAdapter.ts:100)
 
 ## 3. Verify against the source
 
-The prompt asks for exact file paths, so each edge was checked by reading the code. A text search for each callee's call sites showed:
+The prompt asks for exact file paths, so each edge was checked against the code:
 
 | Claim | Source | Result |
 | :--- | :--- | :--- |
 | `execute` is the only caller of `capnStoreArgs` | `src/capnAdapter.ts:133` | Confirmed |
 | `execute` runs capn with the symlink-resolved root as its working directory | `src/capnAdapter.ts:134` | Confirmed |
-| Both `queryCapnMemory` call sites are in `routeDiscoveryCore` | `src/discoveryRouter.ts:754`, `:918` | Confirmed |
-| `publish` is called only from the CLI | `src/mcp/capnTools.ts:387` (`waymark_memory`), `:584` (`waymark_chart`) | **Missed by the graph** |
+| Both `queryCapnMemory` call sites are in `routeDiscoveryCore` | `src/discoveryRouter.ts:757`, `:921` | Confirmed |
+| The `waymark_memory` and `waymark_chart` handlers call `publish` | `src/mcp/capnTools.ts:387`, `:584` | Confirmed |
 
-The MCP tools call `publish` from anonymous `handler` functions, and the AST tier only reports named callers. A call graph alone would have suggested that charting is CLI-only.
+`[method]` marks a class or object method. A method node is named after the object that holds it, such as `waymarkMemoryTool.handler`.
 
 ## 4. Chart the result
 
@@ -127,9 +141,10 @@ The `details` field, which holds the charted answer, is omitted here. The entry 
 ```mermaid
 flowchart LR
   runCli --> runCommand --> publish
-  mcp["MCP handlers (capnTools.ts)"] -.-> publish
+  mcp["MCP tool handlers (capnTools.ts)"] --> publish
+  mcp --> wrappers["init / list / context / bust / prune / unchart"]
   routeDiscovery --> routeDiscoveryCore --> queryCapnMemory
-  init["init / list / context / bust / prune / unchart"] --> runCapnSimple
+  wrappers --> runCapnSimple
   publish --> execute
   queryCapnMemory --> execute
   runCapnSimple --> execute
@@ -137,5 +152,3 @@ flowchart LR
   capnStoreArgs --> capnRoot
   capnStoreArgs --> memoryStoreDir --> stateDir
 ```
-
-The dashed edge was found by reading the source. The call graph doesn't report it.

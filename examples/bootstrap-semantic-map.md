@@ -44,33 +44,36 @@ It scaffolds one draft per missing facet. This is the `data_state` draft:
   "id": "data_state",
   "question": "[FACET:DATA_STATE] How is data, state, or cache stored, synchronized, and persisted on disk?",
   "answer": "Unverified draft. Review the cited source excerpts and replace this note before charting.",
-  "files": ["src/capnAdapter.ts"],
+  "files": [
+    "src/capnAdapter.ts"
+  ],
   "status": "draft",
   "evidence": [
-    { "file": "src/capnAdapter.ts", "line": 1, "excerpt": "import path from \"node:path\";" },
-    { "file": "src/capnAdapter.ts", "line": 2, "excerpt": "import fs from \"node:fs\";" },
-    { "file": "src/capnAdapter.ts", "line": 3, "excerpt": "import { execFile } from \"node:child_process\";" }
+    {"file": "src/capnAdapter.ts", "line": 100, "excerpt": "export function capnStoreArgs(root: string): string[] {"},
+    {"file": "src/capnAdapter.ts", "line": 102, "excerpt": "return [\"--root\", resolved, \"--store-dir\", memoryStoreDir(resolved)];"},
+    {"file": "src/capnAdapter.ts", "line": 127, "excerpt": "`The capn executable does not accept --root/--store-dir, so it could only use the shared ${LEGACY_STORE_DIR_NAME} folder. Waymark refuses to run it; its memory store lives in ${MEMORY_STORE_LABEL}. Upgrade @paragon-ux/capn-hook to a release"},
+    {"file": "src/capnAdapter.ts", "line": 165, "excerpt": "return path.join(memoryStoreDir(root), \"config.json\");"},
+    {"file": "src/capnAdapter.ts", "line": 191, "excerpt": "export function assertLexicalStore(root: string): void {"},
+    {"file": "src/capnAdapter.ts", "line": 571, "excerpt": "export async function migrateMemoryStore(root: string, executable: string, from = LEGACY_STORE_DIR_NAME): Promise<Record<string, unknown>> {"}
   ]
 }
 ```
 
 | Facet | Draft files | Draft evidence |
 | :--- | :--- | :--- |
-| `data_state` | `src/capnAdapter.ts` | Lines 1–3 (imports) |
-| `invariants` | `src/paths.ts`, `src/integrity.ts` | Lines 1–3 of each (imports) |
-| `failure` | `src/types.ts` | Lines 1, 3 and 5 (type declarations) |
+| `data_state` | `src/capnAdapter.ts` | `capnAdapter.ts:100`, `capnAdapter.ts:102`, `capnAdapter.ts:127`, `capnAdapter.ts:165`, `capnAdapter.ts:191`, `capnAdapter.ts:571` |
+| `invariants` | `src/paths.ts`, `src/integrity.ts` | `paths.ts:62`, `paths.ts:88`, `paths.ts:99`, `integrity.ts:20`, `integrity.ts:27`, `integrity.ts:66` |
+| `failure` | `src/types.ts` | `types.ts:50`, `types.ts:53`, `types.ts:100`, `types.ts:113`, `types.ts:181`, `types.ts:194` |
 
-The drafts pick plausible files, but their evidence is each file's first lines. So the answers come from reading the source, not from the drafts.
-
-This run predates `16449e4`. Since that commit, drafts cite the lines that name each facet's keywords instead of a file's first lines. A new run gets different evidence, and still has to verify it.
+The evidence lines name each facet's keywords, so they're a useful start, but they don't answer the question. The `data_state` draft cites only `src/capnAdapter.ts`, while the state layout lives in `src/stateDir.ts`. The `failure` draft cites type declarations, not the code that fails closed. So the answers come from reading the source.
 
 ## 2. Verify each draft
 
 | Facet | What the source shows | Backing files charted |
 | :--- | :--- | :--- |
-| `data_state` | `stateDir` is the only in-repo location. The memory store, path cache (`src/discoveryRouter.ts:234`) and telemetry (`src/sessionLogger.ts:37`) are all under it. The daemon socket, PID record and registry use `os.tmpdir()` (`src/daemon.ts:36-50`). | `src/stateDir.ts`, `src/discoveryRouter.ts`, `src/sessionLogger.ts`, `src/daemon.ts` |
+| `data_state` | `stateDir` is the only in-repo location. The memory store, path cache (`src/discoveryRouter.ts:237`) and telemetry (`src/sessionLogger.ts:37`) are all under it. The daemon socket, PID record and registry use `os.tmpdir()` (`src/daemon.ts:36-50`). | `src/stateDir.ts`, `src/discoveryRouter.ts`, `src/sessionLogger.ts`, `src/daemon.ts` |
 | `invariants` | `resolveRepositoryFile` (`src/paths.ts:88-103`) rejects escaping, missing, symlink-escaping and non-file paths. Its callers include `publish`, `verifyHop` and the Semantic Repo Map. | `src/paths.ts`, `src/capnAdapter.ts`, `src/integrity.ts` |
-| `failure` | `assertLexicalStore` (`src/capnAdapter.ts:191`) throws on charting. `queryCapnMemory` (`:329`) returns a reason on recall, and `routeDiscoveryCore` turns that into a `miss` (`src/discoveryRouter.ts:806-822`). | `src/capnAdapter.ts`, `src/discoveryRouter.ts` |
+| `failure` | `assertLexicalStore` (`src/capnAdapter.ts:191`) throws on charting. `queryCapnMemory` (`:329`) returns a reason on recall, and `routeDiscoveryCore` turns that into a `miss` (`src/discoveryRouter.ts:809-825`). | `src/capnAdapter.ts`, `src/discoveryRouter.ts` |
 
 `src/types.ts`, from the `failure` draft, only declares types (the error codes among them), so it isn't charted.
 

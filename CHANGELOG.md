@@ -6,6 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Qualified and module call-graph nodes (`src/codedbAdapter.ts`, `src/renderPlainText.ts`)**: These need a codedb-core that emits `qualified` and `kind`.
+  - Hop nodes are named by their qualified name, such as `WaymarkDaemon.start` or `waymarkMemoryTool.handler`, and the next hop queries that name. Traversal now continues past methods whose bare names collide.
+  - `<module>` nodes are a TS/JS file's top-level code, with kind `module` at line 1. They appear as callers and are never expanded, and `exclude_tests` drops test-file modules.
+  - Plain-text trees tag `[method]` and `[module]` nodes, and the depth-less caller list shows `<module> (path)`.
+
 ### Removed
 - **`migrateMemoryStore` Export (`src/index.ts`)**: Store migration is an internal maintainer command, not public API. `waymark memory migrate` still runs but is no longer listed in help or the docs.
 

@@ -99,8 +99,8 @@ Waymark Engine combines three extraction layers with explicit fail-closed bounda
 | **TypeScript** | `.ts`, `.tsx`, `.mts`, `.cts` | Native Tree-Sitter (`tree-sitter-typescript.wasm`) | Exact line + column spans for classes, methods, functions (including arrow functions), interfaces, and type aliases |
 | **JavaScript** | `.js`, `.jsx`, `.mjs`, `.cjs` | Native Tree-Sitter (`tree-sitter-javascript.wasm`) | Exact line + column spans for classes, methods, functions, and arrow/function expressions (filters out local variable noise) |
 | **Python** | `.py` | Native Tree-Sitter (`tree-sitter-python.wasm`) | Exact line + column spans for classes, methods, and functions |
-| **Markdown** | `.md`, `.markdown`, `.mdx` | Native `markdown-it` AST Parser | Monotonic stack extraction of sections, headings, and code blocks with exact line/column spans |
-| **JSON** | `.json` | Native Tree-Sitter (`tree-sitter-json.wasm`) | Object properties, escaped & unicode key decoding, exact value coordinates |
+| **Markdown** | `.md`, `.markdown`, `.mdx` | Native `markdown-it` AST Parser | Monotonic stack extraction of `h1`–`h6` sections, headings, and code blocks with exact line/column spans |
+| **JSON** | `.json` | Native Tree-Sitter (`tree-sitter-json.wasm`) | Object properties, top-level array items (`[...]`), escaped & unicode key decoding, exact value coordinates |
 | **TOML** | `.toml` | Native Tree-Sitter (`tree-sitter-toml.wasm`) | Table headers, array-of-tables (`[[plugins]]`), and nested key-value coordinates |
 | **YAML** | `.yaml`, `.yml` | Native Tree-Sitter (`tree-sitter-yaml.wasm`) | Multi-document streams, flow mappings, and scalar structures with recursion guard |
 | **Bash** | `.sh`, `.bash`, `.zsh` | Native Tree-Sitter (`tree-sitter-bash.wasm`) | Shell functions, exported routines, and script blocks |
@@ -124,7 +124,7 @@ Waymark Engine combines three extraction layers with explicit fail-closed bounda
 
 ### 2. Repo-Wide Call Graph & Symbol Search (`waymark ask "<symbol>"` / `waymark_ask(query | symbols)`)
 - **Indexed by `@paragon-ux/codedb-core`**: `.ts`, `.tsx`, `.js`, `.jsx`, `.py`, `.rs`, `.go`, `.java`, `.rb`, `.swift`, `.kt` (plus partial `.c`/`.cpp`/`.php`).
-- **Module Extension Note (`.mjs`, `.cjs`, `.mts`, `.cts`)**: The upstream `codedb` Rust scanner indexes `.ts`/`.tsx`/`.js`/`.jsx` for repo-wide call graphs but skips `.mjs`/`.cjs`/`.mts`/`.cts`. For those files, use **Single-File Tree-Sitter AST** (`waymark_ask(path="scripts/hook.mjs")`), **Tier 2 Path Router**, **Tier 3 Fuzzy Matcher**, or **Tier 4 Charted Consensus Memory**.
+- **In-Process Tree-Sitter Repo-Wide Fallback (`.mjs`, `.cjs`, `.mts`, `.cts`, `.toml`)**: Because the upstream `codedb` scanner only indexes `.ts`/`.tsx`/`.js`/`.jsx`, Waymark automatically supplements repo-wide symbol search, call graphs, architecture summaries, batch `--symbols`, and fuzzy candidates with in-process `web-tree-sitter` indexing across `.mjs`, `.cjs`, `.mts`, `.cts`, and `.toml`.
 
 ### 3. Tiers 2, 3, and 4 (100% Language-Agnostic)
 - **Tier 2 (`PrefixTrie` Path Router)**: Resolves exact and basename paths for **any** file extension in `<1ms`.

@@ -5,7 +5,7 @@
 [![npm version](https://img.shields.io/npm/v/waymark-engine)](https://www.npmjs.com/package/waymark-engine)
 [![CI](https://github.com/paragon-ux/waymark-engine/actions/workflows/verify.yml/badge.svg)](https://github.com/paragon-ux/waymark-engine/actions/workflows/verify.yml)
 [![Docs](https://img.shields.io/badge/docs-Zensical-purple.svg)](https://paragon-ux.github.io/waymark-engine/)
-[![tests](https://img.shields.io/badge/tests-74%2F74-brightgreen)](https://github.com/paragon-ux/waymark-engine)
+[![tests](https://img.shields.io/badge/tests-160%2F160-brightgreen)](https://github.com/paragon-ux/waymark-engine)
 [![node](https://img.shields.io/badge/node-%3E%3D22-339933?logo=node.js)](https://nodejs.org)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![recall](https://img.shields.io/badge/recall-lexical%20BM25%20(no%20embeddings)-informational)](https://github.com/paragon-ux/capn-hook)
@@ -90,11 +90,11 @@ On Windows, `WAYMARK_CODEDB_EXECUTABLE` must name a native executable. `.cmd` an
 
 - **Single-File AST Outlines (`waymark ask --outline --path <file>`)**:
   - **In-Process `web-tree-sitter` (Exact line + column spans)**: TypeScript (`.ts`, `.tsx`, `.mts`, `.cts`), JavaScript (`.js`, `.jsx`, `.mjs`, `.cjs`), Python (`.py`), JSON (`.json`), TOML (`.toml`), YAML (`.yaml`, `.yml`), Bash (`.sh`, `.bash`, `.zsh`), C# (`.cs`), Scala (`.scala`), Lua (`.lua`), Zig (`.zig`), Elixir (`.ex`, `.exs`), Solidity (`.sol`), Rust (`.rs`), Go (`.go`), Java (`.java`), C (`.c`, `.h`), C++ (`.cpp`, `.hpp`, `.cc`, `.cxx`), Ruby (`.rb`), Swift (`.swift`), Kotlin (`.kt`), and PHP (`.php`).
-  - **Native Markdown Parser (`markdown-it`)**: Markdown (`.md`, `.markdown`, `.mdx`) document structure (sections, headings, code blocks).
+  - **Native Markdown Parser (`markdown-it`)**: Markdown (`.md`, `.markdown`, `.mdx`) document structure (`h1`–`h6` sections, headings, code blocks).
   - **Polyglot `codedb outline` Fallback**: Secondary fail-safe for supported compiled languages (`.rs`, `.go`, `.java`, `.c`, `.cpp`, `.rb`, `.swift`, `.kt`, `.php`) if WASM grammar is unavailable in host environment.
   - **Fail-Closed Boundary**: Unsupported extensions (e.g. `.dart` due to ABI 15 incompatibility, `.sql`) and dialect extensions (`.jsonc`, `.json5`) fail closed with `UNSUPPORTED_LANGUAGE`.
 - **Repo-Wide Call Graph & Symbol Search (`waymark ask "<symbol>"`)**:
-  - Indexed via `@paragon-ux/codedb-core` across `.ts`, `.tsx`, `.js`, `.jsx`, `.py`, `.rs`, `.go`, `.java`, `.rb`, `.swift`, `.kt` (plus partial `.c`/`.cpp`/`.php`). Note: `.mjs`, `.cjs`, `.mts`, and `.cts` are supported via Single-File Tree-Sitter AST (`--path`) and Tiers 2–4.
+  - Indexed via `@paragon-ux/codedb-core` across `.ts`, `.tsx`, `.js`, `.jsx`, `.py`, `.rs`, `.go`, `.java`, `.rb`, `.swift`, `.kt` (plus partial `.c`/`.cpp`/`.php`), supplemented by in-process `web-tree-sitter` repo-wide indexing for `.mjs`, `.cjs`, `.mts`, `.cts`, and `.toml`.
 - **Language-Agnostic Tiers (Tiers 2, 3, and 4)**:
   - **Tier 2 (`PrefixTrie` Path Router)**, **Tier 3 (`fzf` Fuzzy Matcher)**, and **Tier 4 (`.waymark/memory` BM25 Consensus Memory & 5-Facet Semantic Repo Map)** operate across **all** repository files regardless of language.
 

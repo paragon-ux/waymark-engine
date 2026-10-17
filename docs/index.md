@@ -4,7 +4,7 @@
 
 [![npm version](https://img.shields.io/npm/v/waymark-engine)](https://www.npmjs.com/package/waymark-engine)
 [![CI](https://github.com/paragon-ux/waymark-engine/actions/workflows/verify.yml/badge.svg)](https://github.com/paragon-ux/waymark-engine/actions/workflows/verify.yml)
-[![tests](https://img.shields.io/badge/tests-110%2F110-brightgreen)](https://github.com/paragon-ux/waymark-engine)
+[![tests](https://img.shields.io/badge/tests-160%2F160-brightgreen)](https://github.com/paragon-ux/waymark-engine)
 [![node](https://img.shields.io/badge/node-%3E%3D22-339933?logo=node.js)](https://nodejs.org)
 [![license](https://img.shields.io/badge/license-MIT-blue)](https://github.com/paragon-ux/waymark-engine/blob/main/LICENSE)
 [![recall](https://img.shields.io/badge/recall-lexical%20BM25%20(no%20embeddings)-informational)](https://github.com/paragon-ux/capn-hook)

@@ -4,7 +4,7 @@ All notable changes to `waymark-engine` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [4.0.1] - 2026-10-17
 
 ### Changed
 - **Bundled codedb-core ^2.1.1 (`package.json`)**: TS/JS class methods, object-literal functions, arrow consts and per-file module code are call-graph nodes, with `kind` and `qualified` names. A name resolves to its one definition outside test files. Calls without a receiver never reach a method, and calls through a global or a package import never reach repository code.
@@ -18,16 +18,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Hop nodes are named by their qualified name, such as `WaymarkDaemon.start` or `waymarkMemoryTool.handler`, and the next hop queries that name. Traversal now continues past methods whose bare names collide.
   - `<module>` nodes are a TS/JS file's top-level code, with kind `module` at line 1. They appear as callers and are never expanded, and `exclude_tests` drops test-file modules.
   - Plain-text trees tag `[method]` and `[module]` nodes, and the depth-less caller list shows `<module> (path)`.
+- **Repo-Wide Tree-Sitter Fallback Index (`src/treeSitterIndex.ts`, `src/codedbAdapter.ts`)**: Files that `codedb-core` does not index (`.mjs`, `.cjs`, `.mts`, `.cts`, `.toml`) are indexed in-process with `web-tree-sitter` across `search_graph`, `trace_path` call graphs, `get_architecture` file/symbol counts, `queryMultiSymbols`, and `queryFuzzyCandidates`.
+- **Expanded Single-File AST Outlines (`src/symbolDiscovery.ts`)**: Extracts lexical arrow/function expressions (`const fn = () => {}`) in JS/TS, top-level JSON array items (`[...]`), Markdown `h5`/`h6` headings (`#####`/`######`), and qualified `Class.method` symbol filtering.
+- **`waymark_memory` Schema & Plain-Text Parity (`src/mcp/capnTools.ts`, `src/renderPlainText.ts`)**: Added `all` (`boolean`) for `close`/`evict`, `not_applicable` (`boolean`) for `chart`, and `renderMemoryActionPlain` so `plain: true` returns concise plain text across all 9 `waymark_memory` actions (including `scaffolded` drafts on `bootstrap` and `heal`).
 
 ### Fixed
-- **Prompts Pass `root` to the Agent (`src/mcp/server.ts`)**: `explore-subsystem` and `bootstrap-semantic-map` declared `root` but left it out of the prompt text, so a root given by the user never reached the agent. When `root` is set, every prompt now ends with `Pass root: "<value>" on every waymark_ask, waymark_memory, and waymark_chart call.`
-- **Bootstrap Draft Evidence (`src/semanticMap.ts`)**: Drafts cited each candidate file's first lines, usually imports. Evidence is now the lines that name the facet's keywords (new `evidenceKeywords` on each `SEMANTIC_FACETS` entry), ranked by keyword count with exported declarations first among equals. A file with no keyword line falls back to its exported declarations. Imports, multi-line import lists, and comments are never evidence, and a candidate file with no evidence is no longer cited. Drafts stay unverified and bootstrap still never charts.
-- **Cold codedb Runs Take Turns (`src/codedbAdapter.ts`)**: With the resident client off (`WAYMARK_DISABLE_RESIDENT=1`, or after a resident error), each query starts a one-shot codedb, which indexes the repository on `CODEDB_MAX_THREADS` threads. A multi-symbol batch started them all at once: 10 symbols ran 10 codedb processes side by side. Cold runs in one process now run one at a time, which keeps a core free as `CODEDB_MAX_THREADS` intends. Resident mode already used a single process.
+- **Prompts Pass `root` to the Agent & Validate Required Arguments (`src/mcp/server.ts`)**: `explore-subsystem` and `bootstrap-semantic-map` declared `root` but left it out of the prompt text, so a root given by the user never reached the agent. When `root` is set, every prompt now ends with `Pass root: "<value>" on every waymark_ask and waymark_memory call.` Missing or blank required prompt arguments (`query` on `explore-subsystem`, `topic` on `architectural-map`) return JSON-RPC `-32602`.
+- **Bootstrap Draft Evidence & Dynamic Repo Discovery (`src/semanticMap.ts`)**: Drafts discover candidate files dynamically from the repository's manifest entries and source files (never falling back to `package.json`), and cite lines that name the facet's keywords (`evidenceKeywords` on `SEMANTIC_FACETS`), ranked by keyword count with exported declarations first among equals. Keywords inside string, template, or regex literals are ignored, and imports and comments are never cited.
+- **Unified Memory Entry Parser & SHA-256 Drift Detection (`src/memoryEntries.ts`, `src/semanticMap.ts`, `src/capnAdapter.ts`)**: Consolidated `readMemoryEntries` into `src/memoryEntries.ts` with CRLF (`\r\n`) normalization, YAML quote stripping, and newest-first sorting. `entryFreshness` verifies stored `file_hashes` SHA-256 digests before falling back to `mtimeMs`, `chart` replaces prior entries for the same facet, `heal` uncharts drifted facet entries (honoring `dry_run: true`), and `waymark_ask(facet)` auto-prunes drifted entries.
+- **Router Scoped Path, Traversal Upgrades & Dotted Symbols (`src/discoveryRouter.ts`, `src/codedbAdapter.ts`, `src/mcp/capnTools.ts`)**: `waymark_ask` with `path` + `query` (without `outline: true`) scopes symbol discovery to that file; setting `depth` or `direction` on a bare symbol upgrades to `trace_path`; `architecture of <subsystem>` no longer triggers a repo-wide file dump; dotted method identifiers (`db.sql`, `mutex.lock`, `response.json`) fall back to symbol lookup when no literal file matches; CRLF `\r` is stripped from fuzzy candidates.
+- **Daemon Close Warm-Up & Multi-Symbol Concurrency (`src/mcp/server.ts`, `src/mcp/capnTools.ts`, `src/codedbAdapter.ts`)**: `waymark_memory(action: "close" | "evict")` skips `warmRoot()` and stops warm daemons tracked in `warmRoots`; `queryMultiSymbols` runs with bounded concurrency (`4`) when warm while keeping cold `codedb` runs serialized (`8036771`).
 - **Path Discovery Skips `.claude/` (`src/discoveryRouter.ts`, `src/baselineSearch.ts`)**: Claude Code keeps whole checkouts in `.claude/worktrees/`, so every basename lookup (`package.json`, `AGENTS.md`) failed with `AMBIGUOUS_PATH_COLLISION` in a repository that had one.
 - **Stale Prompt-Battery Anchor (`docs/prompts/CATALOGUE_MANIFEST.jsonl`)**: `[10-04]` hashed `package.json` lines 1–10, which include `"version"`, so it failed after every release. It now anchors lines 5–10 and is renamed `anchor_package_entrypoints`.
 
 ### Removed
 - **`migrateMemoryStore` Export (`src/index.ts`)**: Store migration is an internal maintainer command, not public API. `waymark memory migrate` still runs but is no longer listed in help or the docs.
+
+### Tests
+- `test/reviewRegressions.test.ts`: 21 regression subtests covering all Review 2 (`#1`–`#15`) and Review 3 (`P-1`–`P-7`, `M-1`–`M-12`) findings.
+
+---
 
 ## [4.0.0] - 2026-10-17
 

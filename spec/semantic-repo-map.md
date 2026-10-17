@@ -100,16 +100,16 @@ flowchart TD
     
     subgraph Operational Interface
         Interface --> ToolAsk["waymark_ask / waymark ask --facet <f>"]
-        Interface --> ToolChart["waymark_chart / waymark chart"]
-        Interface --> ToolBootstrap["waymark_bootstrap / waymark bootstrap"]
-        Interface --> ToolStatus["waymark_map_status / waymark map status"]
+        Interface --> ToolChart["waymark_memory(action='chart') / waymark memory chart"]
+        Interface --> ToolBootstrap["waymark_memory(action='bootstrap') / waymark memory bootstrap (Read-only drafts)"]
+        Interface --> ToolStatus["waymark_memory(action='status') / waymark memory status"]
     end
     
     subgraph Single SQLite Storage Engine
         ToolChart --> SQLite[".waymark/memory SQLite Consensus Ledger (FTS5)"]
-        ToolBootstrap --> SQLite
         SQLite --> ToolAsk
         SQLite --> ToolStatus
+        SQLite -.-> ToolBootstrap
     end
 ```
 
@@ -163,7 +163,7 @@ A verified `not_applicable` entry satisfies the completion requirements for 100%
 | `waymark bootstrap`<br>`waymark-bootstrap` | **Stable** | `[--dry-run]` | Collects source excerpts as unverified drafts. It does not initialize the memory store or publish architectural claims; a human must verify and chart supported conclusions. `--subsystem` is rejected with `UNSUPPORTED_SUBSYSTEM`. |
 | `waymark map status` | **Stable** | `[--plain]` | Reports health of Semantic Repo Map (e.g. `5/5 Facets Active`, drift status, stale anchors in SQLite). |
 | `waymark map show [facet]` | **Stable** | `[facet_name]`<br>`[--plain]` | Prints compact summary and backing files for one or all charted facets. |
-| `waymark map heal` | **Stable** | None | Recollects source-backed, unverified draft candidates; established consensus entries are not automatically rewritten. |
+| `waymark map heal` | **Stable** | `[--dry-run]` | Uncharts drifted facet entries (backing file vanished or SHA-256 changed) and recollects source-backed, unverified replacement drafts; active entries are unchanged. |
 | `waymark map export` | **Stable** | `[--format md\|json]` | Exports charted facets from SQLite into human-readable markdown (`docs/ARCHITECTURE_MAP.md`). |
 
 ### 4.2 Query Routing Parity (`waymark ask`)
@@ -181,12 +181,12 @@ When `--facet <name>` is provided, the query router prioritizes documents tagged
 
 ### 5.1 Tools
 
-#### `waymark_memory` (Subcommands: `bootstrap` & `status`)
-* **Description**: Consolidates semantic map initialization, two-pass bootstrapping, and health inspection.
+#### `waymark_memory` (Subcommands: `bootstrap`, `status`, `chart`, `heal`, `export`)
+* **Description**: Consolidates semantic map initialization, draft collection, charting, drift healing, and health inspection.
 * **Arguments**:
-  - `action`: `"bootstrap"` | `"status"`
-  - `dry_run` (boolean, optional): Inspect bootstrap without writing changes (for `action="bootstrap"`).
-  - `subsystem` (string, optional): Target subsystem name in monorepos.
+  - `action`: `"bootstrap"` | `"status"` | `"chart"` | `"heal"` | `"export"`
+  - `dry_run` (boolean, optional): Inspect `bootstrap` or `heal` without writing changes.
+  - `subsystem` (string, optional): Unsupported; requests fail closed with `UNSUPPORTED_SUBSYSTEM`.
   - `plain` (boolean, optional): Emit token-minimal plain text formatted result.
   - `root` (string, optional): Target repository root.
 * **Returns**: JSON object detailing completion ratio (`active_facets / total_facets`), list of missing facets, and drift warnings (or token-minimal formatted text when `plain: true`).

@@ -68,12 +68,14 @@ import {
 await assertLexicalStore(root);
 
 // Publish architectural consensus memory entry
-const hexId = await publish(root, {
-  question: "IPC Architecture",
-  answer: "Windows Named Pipes, Unix domain sockets on POSIX",
-  facet: "boundaries",
-  files: ["src/daemon.ts"],
-});
+const result = await publish(
+  root,
+  "capn-cli",
+  "",
+  "[FACET:BOUNDARIES] IPC Architecture",
+  "Windows Named Pipes, Unix domain sockets on POSIX",
+  ["src/daemon.ts"],
+);
 
 // Invalidate memories backed by a changed file
 await bust(root, "src/daemon.ts");
@@ -95,30 +97,32 @@ Validates that a recorded code span still exists at the expected location:
 - Returns **`STALE`**: Content has been modified or deleted.
 
 ```ts
-import { verifyHop } from "waymark-engine";
+import { anchorForRange, verifyHop } from "waymark-engine";
 
-const status = await verifyHop(root, {
+const anchor = anchorForRange(root, "src/repl.ts", [12, 45]);
+const check = verifyHop(root, {
+  from: "startRepl",
+  to: "runReplScript",
   file: "src/repl.ts",
-  startLine: 12,
-  endLine: 45,
-  expectedHash: "a1b2c3d4...",
+  lines: [12, 45],
+  anchor,
 });
 
-if (status.state === "FRESH") {
+if (check.status === "FRESH") {
   console.log("Span is verified tamper-free.");
 }
 ```
 
 ### 2. `anchorForRange(root, path, range)`
-Generates a tripartite integrity anchor for any range of lines:
+Generates a tripartite integrity anchor (`sha256:...;span:...;sig:...`) for any range of lines:
 1. **File SHA-256**: Pins the entire file state.
 2. **Normalized Span Hash**: SHA-256 of the whitespace-normalized code span.
-3. **Structural Signature**: Tree-sitter AST signature pinning syntax integrity.
+3. **Structural Signature**: AST structural signature pinning syntax integrity.
 
 ```ts
 import { anchorForRange } from "waymark-engine";
 
-const anchor = await anchorForRange(root, "src/daemon.ts", { start: 1, end: 50 });
+const anchor = anchorForRange(root, "src/daemon.ts", { start: 1, end: 50 });
 console.log("Integrity Anchor:", anchor);
 ```
 

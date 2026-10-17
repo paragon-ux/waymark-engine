@@ -69,14 +69,14 @@ waymark ask "verifyHop" --plain
 ### 3. Maintain Architectural Consensus (`waymark memory`)
 
 ```bash
-# Bootstrap 5-facet architectural consensus into SQLite
+# Collect source-backed unverified drafts for the 5 architectural facets (read-only)
 waymark memory bootstrap
 
 # Check map completion ratio and file drift
 waymark memory status
 
-# Chart architectural decisions
-waymark memory chart --question "IPC Protocol" --answer "Named pipes on Windows, Unix sockets on POSIX" --files "src/daemon.ts"
+# Chart verified architectural decisions into SQLite
+waymark memory chart --facet boundaries --question "IPC Protocol" --answer "Named pipes on Windows, Unix sockets on POSIX" --files "src/daemon.ts"
 
 # Invalidate stale memories when files change
 waymark memory bust src/daemon.ts

@@ -28,7 +28,7 @@ Consolidates all discovery operations into a unified query interface:
 {
   "name": "waymark_ask",
   "arguments": {
-    "question": "Who calls verifyHop?",
+    "query": "Who calls verifyHop?",
     "plain": true
   }
 }
@@ -39,7 +39,7 @@ Consolidates all discovery operations into a unified query interface:
 {
   "name": "waymark_ask",
   "arguments": {
-    "question": "verifyHop",
+    "query": "verifyHop",
     "depth": 2,
     "direction": "callers",
     "exclude_tests": true,
@@ -77,7 +77,7 @@ Consolidates all discovery operations into a unified query interface:
   "name": "waymark_ask",
   "arguments": {
     "facet": "invariants",
-    "question": "path normalization rules",
+    "query": "path normalization rules",
     "plain": true
   }
 }
@@ -93,7 +93,7 @@ Dispatches consensus memory and lifecycle operations using the **`action`** para
 | :--- | :--- | :--- |
 | **`bootstrap`** | `{"action": "bootstrap", "plain": true}` | Collect source excerpts as unverified drafts for every missing or drifted facet, from the repository's own entry and source files. Each excerpt is a line that names the facet's keywords, or an exported declaration when the file has none; imports and comments are skipped. It does not initialize the memory store or publish claims; verify and chart supported conclusions explicitly. |
 | **`status`** | `{"action": "status", "plain": true}` | Inspect Semantic Repo Map completion ratio, active facets, and file drift. |
-| **`chart`** | `{"action": "chart", "facet": "boundaries", "question": "IPC Protocol", "answer": "Named pipes on Windows...", "files": ["src/daemon.ts"]}` | Record architectural knowledge into consensus memory. Same bounds and facet rules as the CLI: question 1-240 characters, answer 1-4000, a facet from the five ids (also accepted as a `[FACET:<ID>]` tag in any case) with at least one backing file; charting a facet replaces its earlier entry. Returns `{ waymark: 1, kind: "chart", published, ... }`. |
+| **`chart`** | `{"action": "chart", "facet": "boundaries", "question": "IPC Protocol", "answer": "Named pipes on Windows...", "files": ["src/daemon.ts"]}` | Record architectural knowledge into consensus memory. Same bounds and facet rules as the CLI: question 1-240 characters, answer 1-4000, a facet from the five ids (also accepted as a `[FACET:<ID>]` tag in any case) with at least one backing file (unless `not_applicable: true`); charting a facet replaces its earlier entry. Returns `{ waymark: 1, kind: "chart", published, ... }`. |
 | **`heal`** | `{"action": "heal", "dry_run": true}` | Unchart drifted facet entries (backing file vanished or changed) and collect replacement drafts; `dry_run: true` only reports what it would unchart. Active entries are unchanged. |
 | **`export`** | `{"action": "export", "format": "md"}` | Export consensus architecture map as Markdown or JSON. |
 | **`bust`** | `{"action": "bust", "file": "src/daemon.ts"}` | Invalidate all consensus memories backed by a changed file. |
@@ -163,7 +163,7 @@ When an agent runs `waymark-engine` via stdio, the server defaults to its curren
 {
   "name": "waymark_ask",
   "arguments": {
-    "question": "Who calls execute_command?",
+    "query": "Who calls execute_command?",
     "root": "/path/to/target/repository"
   }
 }

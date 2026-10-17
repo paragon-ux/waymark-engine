@@ -89,25 +89,31 @@ The resident stdio MCP server (`waymark-mcp`) provides two modes of tool exposur
 ### 4.1 `waymark_ask`
 - **Identifier**: `waymark_ask`
 - **Stability**: **Stable**
-- **Description**: Query repository memory and tiered discovery (AST structural, literal path, deterministic fuzzy, charted consensus) or multi-symbol batches without hallucination.
+- **Description**: Query repository memory and tiered discovery (AST structural, literal path, deterministic fuzzy, charted consensus), single-file AST outlines, or multi-symbol batches without hallucination.
 - **Input Schema**:
   ```json
   {
     "type": "object",
     "properties": {
       "question": { "type": "string", "description": "The question to look up." },
+      "query": { "type": "string", "description": "Symbol name, substring, or alias for question." },
+      "path": { "type": "string", "description": "Repository-relative or absolute source file path. Without question (query then filters symbol names), returns the file's AST outline; with question, answers from that file's symbols only. A file with no matching symbols is a SYMBOL_NOT_FOUND miss." },
+      "outline": { "type": "boolean", "description": "Optional. When true, returns the structural AST coordinate map outline of the specified path. Note: with outline: true, 'question' or 'query' filters symbol names rather than initiating semantic QA." },
+      "language": { "type": "string", "description": "Optional source language override when file extension is not sufficient (23 supported languages)." },
+      "subsystem": { "type": "string", "description": "Unsupported: all discovery currently covers the selected repository root; omit this value." },
       "symbols": { "type": "array", "items": { "type": "string" }, "description": "Optional list of multiple symbol identifiers to inspect concurrently across the AST call graph." },
       "tier": { "type": "string", "enum": ["auto", "ast", "path", "fuzzy", "capn"], "description": "Optional forced discovery tier: auto | ast | path | fuzzy | capn. Defaults to auto." },
       "depth": { "type": "integer", "description": "Call graph traversal depth (1-5) for structural AST queries. Defaults to 1." },
       "direction": { "type": "string", "enum": ["callers", "callees", "both"], "description": "Call graph traversal direction: callers | callees | both. Defaults to both." },
       "exclude_tests": { "type": "boolean", "description": "Optional. Filter out test files (e.g. tests/, *_test.*, *.spec.*) from call graph results to reduce token noise." },
+      "dev": { "type": "boolean", "description": "Optional. Enable Dev Mode for diagnostic telemetry, tier timing breakdown, and runtime invariant assertions." },
       "auto_resolve": { "type": "boolean", "description": "Collapse junction responses directly to top recommendation. Defaults to true in MCP for agent workflows." },
       "timing": { "type": "boolean", "description": "Collect high-resolution tier execution timing metrics." },
       "plain": { "type": "boolean", "description": "Emit token-minimal plain text formatted result for LLM context efficiency (~16-38 tokens)." },
       "daemon": { "type": "boolean", "description": "Accelerate query via persistent in-memory background daemon IPC." },
       "capn_executable": { "type": "string", "description": "Optional custom path to the Capn executable." },
       "profile": { "type": "string", "enum": ["capn-cli", "none"], "description": "Optional adapter profile; defaults to capn-cli." },
-      "facet": { "type": "string", "enum": ["lifecycle", "data_state", "boundaries", "invariants", "failure"], "description": "Optional facet filter to scope query to a specific domain in the Semantic Repo Map." },
+      "facet": { "type": "string", "enum": ["lifecycle", "data_state", "boundaries", "invariants", "failure", "status"], "description": "Optional facet filter to scope query to an architectural domain in the Semantic Repo Map, or 'status' to inspect map health." },
       "root": { "type": "string", "description": "Optional repository root path. Defaults to current working directory." }
     }
   }
@@ -115,7 +121,7 @@ The resident stdio MCP server (`waymark-mcp`) provides two modes of tool exposur
 - **Output Shape**:
   - `plain: true`: Token-minimal plain text formatted result (`[hit: ...]`, `[multi-symbol]`, `[call-graph: depth N]`, `[junction]`, or `[miss]`).
   - `symbols` mode: `{ waymark: 1, kind: "multi-symbol", status: "hit" | "partial" | "miss", total: number, hits: number, misses: number, symbols: Record<string, { status: "hit" | "miss", path?: string, line?: number, kind?: string }> }`
-  - Multi-hop Call Graph mode (when `depth` is specified): `{ tool: "call_graph", function: string, path?: string, line?: number, kind?: string, depth: number, direction: "callers" | "callees" | "both", totalNodes: number, truncated: boolean, callers?: CallGraphHopNode[], callees?: CallGraphHopNode[] }`. Formatted as clean indented tree when `plain: true`.
+  - Multi-hop Call Graph mode (when `depth` or `direction` is specified): `{ tool: "call_graph", function: string, path?: string, line?: number, kind?: string, depth: number, direction: "callers" | "callees" | "both", totalNodes: number, truncated: boolean, callers?: CallGraphHopNode[], callees?: CallGraphHopNode[] }`. Formatted as clean indented tree when `plain: true`.
   - `status: "hit"`: `{ waymark: 1, kind: "ask", status: "hit", provider: "...", confidence: "...", result: ..., timings?: ... }`
   - `status: "junction"`: Full inspectable recommendation payload with executed option, alternative option, and continuation instructions.
   - `status: "miss"`: Fail-closed miss with `missCode: WaymarkMissCode` (clean miss, never guesses).
@@ -228,11 +234,11 @@ The resident stdio MCP server (`waymark-mcp`) provides two modes of tool exposur
         "description": "Consensus memory action to execute: chart | bootstrap | bust | prune | list | unchart | init | context | status | heal | export | evict | close."
       },
       "question": { "type": "string", "description": "The question or topic charted (required for action='chart')." },
-      "answer": { "type": "string", "description": "The conclusive charted answer adhering to <= 100 token budget (required for action='chart')." },
+      "answer": { "type": "string", "description": "The conclusive charted answer, 1-4000 characters; aim for <= 100 tokens (required for action='chart'). Start it with 'not_applicable' (or a 'status: not_applicable' line) to mark a facet as not applicable." },
       "facet": {
         "type": "string",
         "enum": ["lifecycle", "data_state", "boundaries", "invariants", "failure"],
-        "description": "Optional architectural facet tag when charting an entry in the Semantic Repo Map."
+        "description": "Optional architectural facet when charting a Semantic Repo Map entry. The question is tagged [FACET:<ID>], at least one backing file is required, and the facet's earlier entry is replaced."
       },
       "files": {
         "type": "array",
@@ -242,8 +248,9 @@ The resident stdio MCP server (`waymark-mcp`) provides two modes of tool exposur
       "file": { "type": "string", "description": "Repository-relative file path (required for action='bust')." },
       "id": { "type": "string", "description": "Entry hex ID to delete (required for action='unchart')." },
       "if_exists": { "type": "boolean", "description": "Idempotently succeed if entry id is already deleted (for action='unchart')." },
-      "dry_run": { "type": "boolean", "description": "Inspect without writing changes (for action='bootstrap')." },
-      "subsystem": { "type": "string", "description": "Unsupported: subsystem-scoped maps are not implemented; requests fail with UNSUPPORTED_SUBSYSTEM." },
+      "dry_run": { "type": "boolean", "description": "For action='heal': report the drifted facet entries heal would unchart, without removing them. (bootstrap never writes.)" },
+      "all": { "type": "boolean", "description": "For action='evict' or 'close': release every resident codedb instance and warm daemon, not only the root's." },
+      "subsystem": { "type": "string", "description": "Unsupported: subsystem-scoped maps are not implemented; omit this value to target the repository root." },
       "format": { "type": "string", "enum": ["md", "json"], "description": "Export format for action='export': md | json. Defaults to md." },
       "plain": { "type": "boolean", "description": "Emit token-minimal plain text formatted result for LLM context efficiency." },
       "capn_executable": { "type": "string", "description": "Optional custom path to the Capn executable." },
@@ -256,14 +263,14 @@ The resident stdio MCP server (`waymark-mcp`) provides two modes of tool exposur
 - **Subcommand Behaviors & Output Shapes**:
   - `bootstrap`: Collects source excerpts into unverified draft facets and does not write to the memory store. Each excerpt is a line naming the facet's keywords (`evidenceKeywords`), or an exported declaration when the file has none; imports and comments are never evidence, and a candidate file with no evidence is not cited. Verify claims and publish explicitly with `chart`.
   - `status`: Inspects active facets, health, and anchor drift. Output: `{ ok: true, status: "healthy" | "drifted" | "empty", completion: "N/5", facets: [...], drifted: [...] }` (or compact text when `plain: true`).
-  - `chart`: Inserts or updates architectural memory entry. Output: `{ waymark: 1, kind: "chart", published: true, adapter: string, output: string }`.
+  - `chart`: Inserts or updates architectural memory entry (replacing any prior entry for the same facet). Output: `{ waymark: 1, kind: "chart", published: true, adapter: string, output: string, replaced?: string[] }`.
   - `bust`: Invalidates all memories citing `file`. Output: `{ waymark: 1, kind: "bust", ok: true, file: string }`.
   - `prune`: Removes entries whose backing files vanished. Output: `{ waymark: 1, kind: "prune", ok: true }`.
   - `list`: Lists charted consensus memories. Output: `{ ok: true, output: string }`.
   - `unchart`: Deletes entry by `id`. Output: `{ waymark: 1, kind: "unchart", ok: true, id: string }`.
   - `init`: Initializes the `.waymark/memory` lexical store. Output: `{ waymark: 1, kind: "init", ok: true }`.
   - `context`: Retrieves charting syntax and contract. Output: `{ ok: true, output: string }`.
-  - `heal`: Recollects source-backed unverified drafts and leaves established entries unchanged.
+  - `heal`: Uncharts drifted facet entries (unless `dry_run: true`) and recollects source-backed unverified replacement drafts while leaving active entries unchanged.
   - `export`: Exports consensus map as markdown or JSON. Output: `{ ok: true, output: string }` or JSON object.
 
 ### 4.13 MCP Prompts Registry
@@ -272,7 +279,7 @@ The server registers standard prompts to orchestrate complex agentic discovery w
 - **`architectural-map`**: Generates an architectural call-graph map and consensus memory summary for a feature (`arguments: [{ name: "topic", required: true }, { name: "root", required: false }]`).
 - **`bootstrap-semantic-map`**: Repository-wide prompt that gathers unverified source-backed drafts; humans verify and explicitly chart supported claims (`arguments: [{ name: "root", required: false }]`).
 
-When `root` is a non-blank string, the prompt text ends with `Pass root: "<root>" on every waymark_ask, waymark_memory, and waymark_chart call.` The value is trimmed and written as a JSON string literal. Without it, tool calls fall back to the server's root.
+When `root` is a non-blank string, the prompt text ends with `Pass root: "<root>" on every waymark_ask and waymark_memory call.` The value is trimmed and written as a JSON string literal. Without it, tool calls fall back to the server's root.
 
 ### 4.14 MCP Resources Registry
 The server exposes resident resources for configuration inspection and capability negotiation:

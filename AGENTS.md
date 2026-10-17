@@ -2,7 +2,7 @@
 
 Waymark Engine separates code intelligence into two distinct layers for AI agents:
 1. **Core Automatic Discovery Engine (Tiers 1–3)**: Instant, zero-config discovery on raw source files.
-   - **Tier 1: AST Structural** — deterministic codedb call graph (`@paragon-ux/codedb-core` v2.0.2, resolved and fail-closed), bounded multi-hop graphs, and single-file tree-sitter AST extraction.
+   - **Tier 1: AST Structural** — deterministic codedb call graph (`@paragon-ux/codedb-core` ^2.1.1, resolved and fail-closed), bounded multi-hop graphs, and single-file/fallback tree-sitter AST extraction.
    - **Tier 2: Literal Path Router** — exact and substring path resolution with zero-hallucination fail-closed defense.
    - **Tier 3: Deterministic Fuzzy Matcher** — embedded Junegunn Choi `fzf` (`algo.go`) two-pass scoring.
 2. **Semantic Repo Map & Consensus Ledger (Tier 4)**: Frontloaded 5-facet architectural consensus memory stored in SQLite (`.waymark/memory`) and queried via lexical BM25 (`@paragon-ux/capn-hook`). Solves agent context amnesia across sessions.
@@ -15,7 +15,7 @@ When structural and literal tiers miss, the **Discovery Junction** evaluates syn
 
 ```bash
 npm ci          # install dependencies (bundled capn fork included)
-npm run verify  # build + full node test suite (67/67 passing green)
+npm run verify  # build + full node test suite (160/160 passing green)
 ```
 
 Invariants:
@@ -43,7 +43,7 @@ Waymark Engine serves as the symbolic and semantic discovery layer for coding ag
 When an agent or client editor launches `waymark-engine` via stdio, the server defaults to its current working directory. When querying a target repository located elsewhere on disk, **always pass the `root` argument** in tool calls:
 ```json
 {
-  "question": "Who calls execute_command?",
+  "query": "Who calls execute_command?",
   "root": "/path/to/target/repository"
 }
 ```
@@ -102,7 +102,7 @@ Consolidates all code intelligence, 4-tier queries, call graphs, AST symbol disc
   {
     "name": "waymark_ask",
     "arguments": {
-      "question": "Who calls verifyHop?",
+      "query": "Who calls verifyHop?",
       "plain": true
     }
   }
@@ -113,7 +113,7 @@ Consolidates all code intelligence, 4-tier queries, call graphs, AST symbol disc
   {
     "name": "waymark_ask",
     "arguments": {
-      "question": "verifyHop",
+      "query": "verifyHop",
       "depth": 2,
       "direction": "callers",
       "plain": true
@@ -138,6 +138,7 @@ Consolidates all code intelligence, 4-tier queries, call graphs, AST symbol disc
     "name": "waymark_ask",
     "arguments": {
       "path": "src/types.ts",
+      "outline": true,
       "plain": true
     }
   }
@@ -149,7 +150,7 @@ Consolidates all code intelligence, 4-tier queries, call graphs, AST symbol disc
     "name": "waymark_ask",
     "arguments": {
       "facet": "invariants",
-      "question": "path normalization rules",
+      "query": "path normalization rules",
       "plain": true
     }
   }
@@ -270,12 +271,13 @@ Consolidates all stateful operations, consensus memory management, and map maint
   }
   ```
 
-* **Subcommand `heal`** (Recollect source-backed drafts without changing established claims):
+* **Subcommand `heal`** (Unchart drifted facet entries and collect replacement drafts; active entries stay untouched):
   ```json
   {
     "name": "waymark_memory",
     "arguments": {
-      "action": "heal"
+      "action": "heal",
+      "dry_run": true
     }
   }
   ```
@@ -313,9 +315,9 @@ When running with `WAYMARK_MCP_VERBOSE=1` (or via direct invocation in `tools/ca
   * `capn://status`: Memory store configuration and adapter status.
   * `waymark://manifest`: Engine capabilities, tier metadata, and versioning.
 * **Prompts**:
-  * `explore-subsystem`: Guided 4-tier exploration workflow for a concept or module.
-  * `architectural-map`: Structured call-graph and consensus memory mapping workflow.
-  * `bootstrap-semantic-map`: Two-pass bootstrap agent prompt for repository onboarding.
+  * `explore-subsystem`: Guided 4-tier exploration workflow for a concept or module (`query`, `root`).
+  * `architectural-map`: Structured call-graph and consensus memory mapping workflow (`topic`, `root`).
+  * `bootstrap-semantic-map`: Two-pass bootstrap agent prompt for repository onboarding (`root`).
 
 ---
 
@@ -339,7 +341,7 @@ waymark ask --facet status                       # Inspect Semantic Repo Map com
 waymark memory bootstrap                         # Collect unverified source excerpts as drafts
 waymark memory status                            # Inspect 5-facet map health and completion ratio
 waymark memory chart --question "<q>" --answer "<a>" --files "<a,b>"
-waymark memory heal                              # Recollect source excerpts as drafts; established claims are unchanged
+waymark memory heal [--dry-run]                  # Unchart drifted facet entries and collect replacement drafts
 waymark memory export --format md                # Export consensus architecture map
 waymark memory bust <path>                       # Invalidate entries citing a changed file
 waymark memory prune                             # Cleanly remove stale entries whose files vanished

@@ -1,11 +1,11 @@
 # CLAUDE.md — Waymark Engine
 
 Waymark Engine is a four-tier symbolic and semantic discovery engine for one-shot code questions:
-1. **Tier 1: AST Structural** — deterministic codedb call graph (`@paragon-ux/codedb-core` v2.0.2, resolved and fail-closed).
+1. **Tier 1: AST Structural** — deterministic codedb call graph (`@paragon-ux/codedb-core` ^2.1.1, resolved and fail-closed) supplemented by in-process `web-tree-sitter` indexing for `.mjs`/`.cjs`/`.mts`/`.cts`/`.toml`.
 2. **Tier 2: Literal Path Router** — exact and substring path resolution with zero-hallucination fail-closed defense.
 3. **Tier 3: Deterministic Fuzzy Matcher** — embedded Junegunn Choi `fzf` (`algo.go`) two-pass scoring.
 4. **Tier 4: Charted Memory** — lexical BM25 repository consensus memory via `@paragon-ux/capn-hook`, stored in `.waymark/memory`.
-5. **Single-File Structured AST** — precise tree-sitter class, method, function, and type extraction for TypeScript and Python.
+5. **Single-File Structured AST** — precise in-process `web-tree-sitter` and `markdown-it` outline extraction across 23 languages and formats.
 
 When structural and literal tiers miss, the **Discovery Junction** evaluates syntactic candidate signals and emits an inspectable recommendation (`status: "junction"`) with machine-readable continuation instructions. Misses fall through cleanly; the router never guesses.
 
@@ -60,22 +60,16 @@ When Claude Desktop runs the MCP server via stdio, the server defaults its worki
 
 ```json
 {
-  "question": "Who calls handle_message?",
+  "query": "Who calls handle_message?",
   "root": "C:/path/to/target/project"
 }
 ```
 
-### Available MCP Tools & Capabilities
-* `waymark_ask` (alias: `capn_ask`): Answers questions using the 4-tier discovery pipeline. Supports full CLI flag parity: `tier` (`"auto"|"ast"|"path"|"fuzzy"|"capn"`), `auto_resolve`, `timing`, `plain` (~16 tokens), and `daemon`.
-* `waymark_discover_symbols`: Discovers structured AST symbols (classes, functions, methods, types) in a single TypeScript or Python file.
-* `waymark_chart` (alias: `capn_chart`): Publishes architectural findings and consensus summaries with backing file paths into long-term repository memory.
-* `waymark_unchart` (alias: `capn_unchart`): Deletes charted memory entry by ID.
-* `waymark_bust` (alias: `capn_bust`): Deletes every charted entry backed by a specific file.
-* `waymark_prune` (alias: `capn_prune`): Deletes every charted entry whose backing files changed or vanished.
-* `waymark_list` (alias: `capn_list`): Lists all charted consensus memory entries.
-* `waymark_context` (alias: `capn_context`): Prints the ask-first charting contract and query syntax rules.
-* `waymark_daemon_status`: Inspects resident in-memory background daemon health, PID, address, and uptime.
-* Prompts: `explore-subsystem`, `architectural-map`.
+### Available MCP Tools & Capabilities (Two-Verb Interface)
+* `waymark_ask` (alias: `capn_ask`): Consolidates 4-tier discovery, bounded call graphs (`depth`, `direction`, `exclude_tests`), batch symbol resolution (`symbols`), single-file AST outlines (`path`, `outline`, `language`), and Semantic Repo Map facet lookups (`facet`). Supports `tier` (`"auto"|"ast"|"path"|"fuzzy"|"capn"`), `auto_resolve`, `timing`, `plain`, and `daemon`.
+* `waymark_memory`: Consolidates consensus memory and Semantic Repo Map operations via `action` (`"bootstrap"`, `"status"`, `"chart"`, `"heal"`, `"export"`, `"bust"`, `"prune"`, `"list"`, `"unchart"`, `"init"`, `"context"`, `"evict"`, `"close"`). Supports `plain: true` across all actions.
+* *(Legacy verbose tools `waymark_discover_symbols`, `waymark_chart`, `waymark_unchart`, `waymark_bust`, `waymark_prune`, `waymark_list`, `waymark_context`, `waymark_init`, `waymark_map_status`, and `waymark_daemon_status` remain callable and can be listed via `WAYMARK_MCP_VERBOSE=1`)*.
+* Prompts: `explore-subsystem` (`query`, `root`), `architectural-map` (`topic`, `root`), `bootstrap-semantic-map` (`root`).
 * Resources: `capn://status`, `waymark://manifest`.
 
 ---
@@ -84,18 +78,18 @@ When Claude Desktop runs the MCP server via stdio, the server defaults its worki
 
 ```bash
 npm install -g waymark-engine
-waymark-init                                     # one-time lexical store init in .waymark/memory (or: waymark init)
+waymark memory init                              # one-time lexical store init in .waymark/memory
 
-waymark-ask "Who calls verifyHop?"               # Tier 1 AST answer, no external process
-waymark-ask "refundOrdr"                         # Discovery Junction (fuzzy recommended, ~92% match)
-waymark-ask "refundOrdr" -t fuzzy -b             # Isolate Tier 3 with high-resolution timings
-waymark-ask "refundOrdr" --plain                 # Token-minimal plain text for agents (~16 tokens)
-waymark-ask "How does authentication work?"      # Tier 4 charted-memory answer or miss
-waymark-discover --path src/index.ts
-waymark-chart --question "<q>" --answer "<a>" --files "<a,b>"
-waymark-unchart <id>   waymark-bust <path>   waymark-prune
-waymark-list           waymark-context      waymark-mcp
-waymark-daemon [start|stop|restart|status|list|ping]
+waymark ask "Who calls verifyHop?"               # Tier 1 AST answer
+waymark ask "refundOrdr"                         # Discovery Junction (fuzzy recommended, ~92% match)
+waymark ask "refundOrdr" -t fuzzy -b             # Isolate Tier 3 with high-resolution timings
+waymark ask "refundOrdr" --plain                 # Token-minimal plain text for agents (~16 tokens)
+waymark ask "How does authentication work?"      # Tier 4 charted-memory answer or miss
+waymark ask --outline --path src/index.ts        # Single-file structured AST outline
+waymark memory chart --facet boundaries --question "<q>" --answer "<a>" --files "<a,b>"
+waymark memory unchart <id>   waymark memory bust <path>   waymark memory prune
+waymark memory list           waymark memory context       waymark mcp
+waymark daemon [start|stop|restart|reload|status|list|ping]
 ```
 
 ## Library

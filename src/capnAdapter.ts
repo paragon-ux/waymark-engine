@@ -7,7 +7,7 @@ import { AdapterProfile, PublicationResult, WaymarkError, AskOptions, AskResult 
 import { collectRepoPaths, detectAstIntent, detectLiteralIntent, matchLiteralPath, routeDiscovery } from "./discoveryRouter.js";
 import { queryStructural } from "./codedbAdapter.js";
 import { resolveWindowsExecutable } from "./executable.js";
-import { resolveRepositoryFile } from "./paths.js";
+import { normalizeRelativePath, resolveRepositoryFile } from "./paths.js";
 import { ensureStateDir, memoryStoreDir, LEGACY_STORE_DIR_NAME, MEMORY_STORE_LABEL } from "./stateDir.js";
 
 export { resolveWindowsExecutable };
@@ -98,8 +98,22 @@ export function resolveCapnCommand(executable?: string): ResolvedCapnCommand {
  * an unknown command and prints usage before it touches disk.
  */
 export function capnStoreArgs(root: string): string[] {
+  const resolved = capnRoot(root);
+  return ["--root", resolved, "--store-dir", memoryStoreDir(resolved)];
+}
+
+/**
+ * capn resolves charted files against its working directory and compares them with --root.
+ * macOS reports a working directory with symlinks resolved (/var -> /private/var) while
+ * Windows keeps a junction as given, so capn gets the resolved root as both --root and cwd.
+ */
+function capnRoot(root: string): string {
   const absolute = path.resolve(root);
-  return ["--root", absolute, "--store-dir", memoryStoreDir(absolute)];
+  try {
+    return fs.realpathSync.native(absolute);
+  } catch {
+    return absolute;
+  }
 }
 
 function isUsageResponse(error: unknown): boolean {
@@ -117,11 +131,12 @@ function storeDirUnsupported(): WaymarkError {
 
 async function execute(root: string, command: ResolvedCapnCommand, args: readonly string[]): Promise<{ stdout: string; stderr: string }> {
   const fullArgs = [...command.prefix, ...capnStoreArgs(root), ...args];
+  const cwd = capnRoot(root);
   try {
     if (process.platform === "win32" && command.viaCmdShim) {
       const commandLine = [command.file, ...fullArgs].map(quoteCmdArgument).join(" ");
       return await execFileAsync(process.env.ComSpec || "cmd.exe", ["/d", "/v:off", "/s", "/c", commandLine], {
-        cwd: root,
+        cwd,
         windowsHide: true,
         shell: false,
         timeout: 15_000,
@@ -129,7 +144,7 @@ async function execute(root: string, command: ResolvedCapnCommand, args: readonl
       });
     }
     return await execFileAsync(command.file, fullArgs, {
-      cwd: root,
+      cwd,
       windowsHide: true,
       shell: false,
       timeout: 15_000,
@@ -204,7 +219,9 @@ export async function publish(
   answer: string,
   files: readonly string[],
 ): Promise<PublicationResult> {
-  const selectedFiles = uniqueFiles(files);
+  // Repo-relative paths only: an absolute path spelled through a symlink would not
+  // match the resolved --root that capn compares it against.
+  const selectedFiles = uniqueFiles(files.map((file) => normalizeRelativePath(file, root)));
   for (const file of selectedFiles) resolveRepositoryFile(root, file);
   if (profile === "none") return { published: false, adapter: profile, output: "publication disabled" };
 
@@ -468,7 +485,7 @@ export async function unchart(root: string, executable: string, id: string, ifEx
 
 /** Delete every chart entry backed by one file. */
 export async function bust(root: string, executable: string, file: string): Promise<Record<string, unknown>> {
-  const normalized = normalizeFilePath(file);
+  const normalized = normalizeRelativePath(normalizeFilePath(file), root);
   const result = await runCapnSimple(root, executable, ["bust", normalized]);
   return { waymark: 1, kind: "bust", ok: result.ok, exitCode: result.exitCode, ...(result.ok ? { output: result.output } : { error: result.output }) };
 }

@@ -34,6 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`--root <path>` (`src/mcp/capnIndex.ts`)**: Sets the default tool root for hosts that cannot set a working directory. `waymark mcp --root` now moves the working directory too, so tool calls without `root` use it.
 
 ### Fixed
+- **Charting Through Symlinked Paths (`src/capnAdapter.ts`)**: capn resolves charted files against its working directory and compares them with `--root`. macOS reports the working directory with symlinks resolved (`/var` → `/private/var`), so an unresolved `--root` made every file look outside the project, and `chart` failed. Waymark now passes the symlink-resolved root both as `--root` and as capn's working directory. It also sends capn repository-relative file paths, including for `bust`.
 - **Init Exit Code (`src/cli.ts`)**: `waymark init` and `waymark memory init` exited 0 when initialization failed.
 - **Hidden Auto-Init Failure (`src/capnAdapter.ts`)**: `publish()` threw `CAPN_STORE_UNINITIALIZED` when its automatic init failed. It now returns the init error.
 - **MCP Multi-Symbol Queries Ran capn as codedb (`src/mcp/capnTools.ts`)**: `waymark_ask` with `symbols` passed `capn_executable` / `WAYMARK_CAPN_EXECUTABLE` to codedb, so setting either broke multi-symbol queries (`spawn EFTYPE`).

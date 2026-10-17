@@ -6,7 +6,7 @@ import path from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
-import { ask, bust, context, initCapn, listEntries, migrateMemoryStore, prune, publish, unchart } from "../src/capnAdapter.js";
+import { ask, bust, capnStoreArgs, context, initCapn, listEntries, migrateMemoryStore, prune, publish, unchart } from "../src/capnAdapter.js";
 import { collectRepoPaths, invalidatePathsCache } from "../src/discoveryRouter.js";
 import { getPidFilePath } from "../src/daemon.js";
 import { getSemanticMapStatus } from "../src/semanticMap.js";
@@ -152,6 +152,29 @@ test("the bundled capn fork honors --store-dir and leaves a foreign .capn untouc
     assert.deepEqual(snapshot(path.join(repo, ".capn")), before);
     assert.equal(fs.existsSync(path.join(repo, ".gitignore")), false);
   } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("a repository reached through a symlink charts and recalls (macOS /var -> /private/var)", async () => {
+  const repo = setupRepo();
+  const linkParent = fs.mkdtempSync(path.join(os.tmpdir(), "waymark-link-"));
+  const link = path.join(linkParent, "repo");
+  fs.symlinkSync(repo, link, process.platform === "win32" ? "junction" : "dir");
+  try {
+    const real = fs.realpathSync.native(repo);
+    assert.deepEqual(capnStoreArgs(link), ["--root", real, "--store-dir", memoryStoreDir(real)]);
+    assert.equal((await initCapn(link, "")).ok, true);
+    const relative = await publish(link, "capn-cli", "", QUESTION, "In src/app.ts.", ["src/app.ts"]);
+    assert.equal(relative.published, true, relative.error);
+    const absolute = await publish(link, "capn-cli", "", "Which file holds appEntry?", "src/app.ts.", [path.join(link, "src", "app.ts")]);
+    assert.equal(absolute.published, true, absolute.error);
+    const hit = await ask(link, "capn-cli", "", "app entry declared", { tier: "capn", autoResolve: true });
+    assert.equal(hit.status, "hit", JSON.stringify(hit));
+    assert.match(String((await bust(link, "", path.join(link, "src", "app.ts"))).output), /busted 2/);
+  } finally {
+    fs.rmSync(link, { recursive: true, force: true });
+    fs.rmSync(linkParent, { recursive: true, force: true });
     fs.rmSync(repo, { recursive: true, force: true });
   }
 });

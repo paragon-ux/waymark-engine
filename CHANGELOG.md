@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - **Prompts Pass `root` to the Agent (`src/mcp/server.ts`)**: `explore-subsystem` and `bootstrap-semantic-map` declared `root` but left it out of the prompt text, so a root given by the user never reached the agent. When `root` is set, every prompt now ends with `Pass root: "<value>" on every waymark_ask, waymark_memory, and waymark_chart call.`
 - **Bootstrap Draft Evidence (`src/semanticMap.ts`)**: Drafts cited each candidate file's first lines, usually imports. Evidence is now the lines that name the facet's keywords (new `evidenceKeywords` on each `SEMANTIC_FACETS` entry), ranked by keyword count with exported declarations first among equals. A file with no keyword line falls back to its exported declarations. Imports, multi-line import lists, and comments are never evidence, and a candidate file with no evidence is no longer cited. Drafts stay unverified and bootstrap still never charts.
+- **Path Discovery Skips `.claude/` (`src/discoveryRouter.ts`, `src/baselineSearch.ts`)**: Claude Code keeps whole checkouts in `.claude/worktrees/`, so every basename lookup (`package.json`, `AGENTS.md`) failed with `AMBIGUOUS_PATH_COLLISION` in a repository that had one.
+- **Stale Prompt-Battery Anchor (`docs/prompts/CATALOGUE_MANIFEST.jsonl`)**: `[10-04]` hashed `package.json` lines 1–10, which include `"version"`, so it failed after every release. It now anchors lines 5–10 and is renamed `anchor_package_entrypoints`.
 
 ### Removed
 - **`migrateMemoryStore` Export (`src/index.ts`)**: Store migration is an internal maintainer command, not public API. `waymark memory migrate` still runs but is no longer listed in help or the docs.

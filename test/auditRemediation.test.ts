@@ -65,7 +65,7 @@ test("verifyHop validates persisted range and span before trusting a matching fi
 test("path discovery indexes supported hidden config directories and ignores runtime metadata", () => {
   const root = workspace();
   try {
-    for (const file of [".github/workflows/check.yml", ".vscode/settings.json", ".git/config", ".capn/entries/a.md", ".waymark/sessions/active.jsonl", ".codedb/projects/x/data.log", ".codedb-core/projects/x/state", ".capn-hook/entries/a.md", "node_modules/pkg/index.js"]) {
+    for (const file of [".github/workflows/check.yml", ".vscode/settings.json", ".git/config", ".capn/entries/a.md", ".waymark/sessions/active.jsonl", ".codedb/projects/x/data.log", ".codedb-core/projects/x/state", ".capn-hook/entries/a.md", ".claude/worktrees/wt/package.json", "node_modules/pkg/index.js"]) {
       const full = path.join(root, file);
       fs.mkdirSync(path.dirname(full), { recursive: true });
       fs.writeFileSync(full, "fixture\n");
@@ -77,7 +77,7 @@ test("path discovery indexes supported hidden config directories and ignores run
     assert.ok(!first.some((p) => p.startsWith(".git/")));
     assert.ok(!first.some((p) => p.startsWith(".capn/")));
     assert.ok(!first.some((p) => p.startsWith(".waymark/")));
-    for (const toolDir of [".codedb/", ".codedb-core/", ".capn-hook/"]) {
+    for (const toolDir of [".codedb/", ".codedb-core/", ".capn-hook/", ".claude/"]) {
       assert.ok(!first.some((p) => p.startsWith(toolDir)), `${toolDir} must not appear in path results`);
     }
     assert.ok(!first.some((p) => p.startsWith("node_modules/")));

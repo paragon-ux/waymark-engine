@@ -41,6 +41,7 @@ const DEFAULT_IGNORED_DIRS = new Set([
   ".codedb",
   ".codedb-core",
   ".capn-hook",
+  ".claude",
   "coverage",
 ]);
 

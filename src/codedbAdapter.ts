@@ -342,6 +342,69 @@ export function isTestFile(filePath: string): boolean {
   );
 }
 
+function languageFamily(filePath: string): string | null {
+  const ext = path.extname(filePath).toLowerCase();
+  switch (ext) {
+    case ".ts": case ".tsx": case ".js": case ".jsx":
+    case ".mjs": case ".cjs": case ".mts": case ".cts":
+      return "js";
+    case ".go":
+      return "go";
+    case ".rs":
+      return "rust";
+    case ".java": case ".kt": case ".kts": case ".scala":
+      return "jvm";
+    case ".py": case ".pyi": case ".pyx": case ".pxd": case ".pxi":
+      return "python";
+    case ".c": case ".h": case ".cc": case ".cpp": case ".cxx": case ".hpp":
+      return "c_cpp";
+    case ".cs":
+      return "csharp";
+    case ".rb":
+      return "ruby";
+    case ".php":
+      return "php";
+    case ".swift":
+      return "swift";
+    default:
+      return null;
+  }
+}
+
+function areLanguageFamiliesCompatible(famA: string | null, famB: string | null): boolean {
+  if (!famA || !famB || famA === famB) return true;
+  if ((famA === "python" && famB === "c_cpp") || (famA === "c_cpp" && famB === "python")) {
+    return true;
+  }
+  return false;
+}
+
+export function isPlausibleCallEdge(
+  callerPath: string | undefined,
+  calleePath: string | undefined,
+  calleeName: string | undefined,
+): boolean {
+  if (!callerPath || !calleePath) return true;
+  const callerFam = languageFamily(callerPath);
+  const calleeFam = languageFamily(calleePath);
+  if (!areLanguageFamiliesCompatible(callerFam, calleeFam)) {
+    return false;
+  }
+  // In Go, unexported identifiers (starting with lowercase a-z) are strictly package-private
+  // to their directory and cannot be called across different directories.
+  if (callerFam === "go" && calleeFam === "go" && calleeName) {
+    const bareCallee = calleeName.slice(calleeName.lastIndexOf(".") + 1);
+    if (/^[a-z]/.test(bareCallee)) {
+      const callerDir = path.posix.dirname(callerPath.replace(/\\/g, "/"));
+      const calleeDir = path.posix.dirname(calleePath.replace(/\\/g, "/"));
+      if (callerDir !== calleeDir) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
 /**
  * Bounded Multi-Hop BFS Subgraph Traversal (LEDGER-08 / DOD-11).
  * Traverses caller/callee relationships level by level with:
@@ -447,6 +510,7 @@ export async function queryMultiHopCallGraph(
   if (direction === "callers" || direction === "both") {
     for (const c of callerItems) {
       if (excludeTests && isTestFile(c.path)) continue;
+      if (!isPlausibleCallEdge(c.path, rootPath, fn)) continue;
       const key = `${c.path}:${c.line}:${c.qualified || c.name}`;
       if (!visited.has(key)) {
         if (totalNodes >= 50) {
@@ -465,6 +529,7 @@ export async function queryMultiHopCallGraph(
   if (direction === "callees" || direction === "both") {
     for (const c of calleeItems) {
       if (excludeTests && isTestFile(c.path)) continue;
+      if (!isPlausibleCallEdge(rootPath, c.path, c.qualified || c.name)) continue;
       const key = `${c.path}:${c.line}:${c.qualified || c.name}`;
       if (!visited.has(key)) {
         if (totalNodes >= 50) {
@@ -500,6 +565,7 @@ export async function queryMultiHopCallGraph(
           const hopCallers = ((Array.isArray(hopCallersData) ? hopCallersData : (hopCallersData as { results?: Neighbor[] })?.results) ?? []) as Neighbor[];
           for (const c of hopCallers) {
             if (excludeTests && isTestFile(c.path)) continue;
+            if (!isPlausibleCallEdge(c.path, parent.path, parent.name)) continue;
             const key = `${c.path}:${c.line}:${c.qualified || c.name}`;
             if (!visited.has(key)) {
               if (totalNodes >= 50) {
@@ -533,6 +599,7 @@ export async function queryMultiHopCallGraph(
           const hopCallees = ((Array.isArray(hopCalleesData) ? hopCalleesData : (hopCalleesData as { results?: Neighbor[] })?.results) ?? []) as Neighbor[];
           for (const c of hopCallees) {
             if (excludeTests && isTestFile(c.path)) continue;
+            if (!isPlausibleCallEdge(parent.path, c.path, c.qualified || c.name)) continue;
             const key = `${c.path}:${c.line}:${c.qualified || c.name}`;
             if (!visited.has(key)) {
               if (totalNodes >= 50) {
@@ -623,6 +690,7 @@ export async function queryStructural(
     // Fast-path ambiguity & existence check for bare identifiers (LEDGER-07)
     // If a bare identifier has >= 25 candidate definitions across the repo, return ambiguity immediately
     // rather than spending 25+ seconds computing and deduplicating massive caller sets.
+    let singleRootPath: string | undefined;
     if (!fn.includes(".") && !fn.includes(":")) {
       const symRun = await runJson(root, command, ["symbol", fn, "--json"], { autoDaemon: options?.autoDaemon });
       if (symRun.ok && symRun.payload) {
@@ -640,6 +708,9 @@ export async function queryStructural(
           const flat = await flatFallbackGraph(root, fn, Boolean(options?.excludeTests));
           if (flat) return { hit: true, output: flat };
           return { hit: false, output: `Function or method "${fn}" not found.` };
+        }
+        if (cands.length === 1) {
+          singleRootPath = cands[0]?.path;
         }
       }
     }
@@ -670,12 +741,12 @@ export async function queryStructural(
 
       const callersData = nRun.payload.callers;
       const calleesData = nRun.payload.callees;
-      const rawCallerItems = (Array.isArray(callersData) ? callersData : (callersData as { results?: Neighbor[] })?.results) ?? [];
-      const rawCalleeItems = (Array.isArray(calleesData) ? calleesData : (calleesData as { results?: Neighbor[] })?.results) ?? [];
-      const callerItems = options?.excludeTests ? rawCallerItems.filter((r: any) => !isTestFile(r.path || "")) : rawCallerItems;
-      const calleeItems = options?.excludeTests ? rawCalleeItems.filter((r: any) => !isTestFile(r.path || "")) : rawCalleeItems;
-      const callerNames = (callerItems as Neighbor[]).map(neighborLabel);
-      const calleeNames = (calleeItems as Neighbor[]).map(neighborLabel);
+      const rawCallerItems = ((Array.isArray(callersData) ? callersData : (callersData as { results?: Neighbor[] })?.results) ?? []) as Neighbor[];
+      const rawCalleeItems = ((Array.isArray(calleesData) ? calleesData : (calleesData as { results?: Neighbor[] })?.results) ?? []) as Neighbor[];
+      const callerItems = rawCallerItems.filter((r) => (!options?.excludeTests || !isTestFile(r.path || "")) && isPlausibleCallEdge(r.path, singleRootPath, fn));
+      const calleeItems = rawCalleeItems.filter((r) => (!options?.excludeTests || !isTestFile(r.path || "")) && isPlausibleCallEdge(singleRootPath, r.path, r.qualified || r.name));
+      const callerNames = callerItems.map(neighborLabel);
+      const calleeNames = calleeItems.map(neighborLabel);
       return { hit: true, output: formatFlatGraph(fn, callerNames, calleeNames) };
     }
 

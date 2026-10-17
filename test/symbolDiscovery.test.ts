@@ -1110,6 +1110,46 @@ test("Waymark structured discovery: Tier 1 in-process AST extraction across 15 m
   }
 });
 
+test("Waymark C/C++ outline extracts symbols across unexpanded macros and filters implausible call edges", async () => {
+  const { isPlausibleCallEdge } = await import("../src/codedbAdapter.js");
+  const repo = setupRepo();
+  try {
+    fs.writeFileSync(path.join(repo, "macro_heavy.cc"), [
+      "class ForwardDeclaredOnly;",
+      "class ARROW_EXPORT RecordBatchStreamReaderImpl {",
+      "public:",
+      "  Status Open(InputStream* stream) {",
+      "    ARROW_ASSIGN_OR_RAISE(auto msg, ReadMessage(stream));",
+      "    return Status::OK();",
+      "  }",
+      "};",
+      "Status ValidateBatchFull(const RecordBatch& batch) {",
+      "  ARROW_RETURN_NOT_OK(batch.Validate());",
+      "  return Status::OK();",
+      "}",
+    ].join("\n"), "utf8");
 
+    const cpp = await discoverSymbolsInFile(repo, "macro_heavy.cc");
+    assert.equal(cpp.language, "cpp");
+    const names = cpp.symbols.map((s) => `${s.name}:${s.kind}`);
+    assert.ok(names.includes("RecordBatchStreamReaderImpl:class"), `expected class in ${names.join(", ")}`);
+    assert.ok(names.includes("Open:method"), `expected method in ${names.join(", ")}`);
+    assert.ok(names.includes("ValidateBatchFull:function"), `expected function in ${names.join(", ")}`);
+    assert.ok(!names.some((n) => n.startsWith("ForwardDeclaredOnly:")), "forward declaration without body should be omitted");
 
+    fs.writeFileSync(path.join(repo, "broken_syntax.cc"), "{{{ ??? invalid;\n", "utf8");
+    await assert.rejects(() => discoverSymbolsInFile(repo, "broken_syntax.cc"), (error: any) => error.code === "PARSE_ERROR");
+
+    // Go unexported identifiers cannot cross package/directory boundaries
+    assert.equal(isPlausibleCallEdge("pkg/api/metrics.go", "pkg/services/ngalert/parse.go", "(*Tree).recover"), false);
+    assert.equal(isPlausibleCallEdge("pkg/services/query/query.go", "pkg/services/query/query.go", "ServiceImpl.queryData"), true);
+    assert.equal(isPlausibleCallEdge("pkg/api/metrics.go", "pkg/services/query/query.go", "ServiceImpl.QueryData"), true);
+
+    // Cross-language family collisions are rejected while Python <-> C/C++ bindings are allowed
+    assert.equal(isPlausibleCallEdge("pkg/api/metrics.go", "packages/grafana-data/src/index.ts", "parse"), false);
+    assert.equal(isPlausibleCallEdge("python/pyarrow/ipc.pxi", "cpp/src/arrow/ipc/reader.cc", "Open"), true);
+  } finally {
+    cleanRepo(repo);
+  }
+});
 

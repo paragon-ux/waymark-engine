@@ -4,6 +4,16 @@ All notable changes to `waymark-engine` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.0.2] - 2026-10-17
+
+### Fixed
+- **Universal Help & Version Routing (`src/cli.ts`, `src/mcp/capnIndex.ts`)**: Any `-h`, `--h`, `--help`, or `help` token and any `-v`, `-V`, `--v`, `--version`, or `version` token now routes immediately to multiline human-readable help (with complete `Commands`, `Standalone Wrapper Binaries`, `Flags`, and `Environment Variables` sections) or `waymark-engine v4.0.2` across `waymark`, `waymark-engine`, `waymark-mcp`, and all `waymark-*` wrapper binaries without stalling on `stdin` or printing JSON-escaped strings.
+- **C/C++ Macro Tolerance on `outline: true` (`src/astExtractor.ts`)**: Masks unexpanded C/C++ visibility/attribute macros (`class ARROW_EXPORT ...`) with equal-length whitespace before `web-tree-sitter` parsing (preserving exact 1-based line and column offsets), extracts valid declarations across statement-level macro `ERROR` nodes (`ARROW_ASSIGN_OR_RAISE`), skips bodyless forward declarations, supports destructor/operator declarators, and falls back to `codedb outline` before throwing `PARSE_ERROR`.
+- **Call-Graph Plausibility & Go Package-Private Filtering (`src/codedbAdapter.ts`)**: Filters implausible cross-language-family bare-identifier collisions (while preserving Python $\leftrightarrow$ C/C++ native bindings) and enforces Go's package-private visibility rule (unexported `^[a-z]` identifiers cannot cross directory/package boundaries, eliminating false-positive `recover()` collisions).
+- **Non-Destructive Monorepo Startup Indexing (`src/residentCodedb.ts`)**: Separates the background `codedb serve` startup indexing cap (`WAYMARK_CODEDB_STARTUP_TIMEOUT`, default `120000ms`) from the per-request wait budget (`WAYMARK_CODEDB_TIMEOUT`, default `45000ms`) so a first-request timeout on a 25k+ file monorepo does not kill the child indexing process before it finishes warming.
+
+---
+
 ## [4.0.1] - 2026-10-17
 
 ### Changed

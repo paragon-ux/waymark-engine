@@ -277,7 +277,13 @@ function structuredSymbol(
 
 function extractDeclaratorName(node: any): string | null {
   if (!node) return null;
-  if (node.type === "identifier" || node.type === "field_identifier" || node.type === "type_identifier") {
+  if (
+    node.type === "identifier" ||
+    node.type === "field_identifier" ||
+    node.type === "type_identifier" ||
+    node.type === "destructor_name" ||
+    node.type === "operator_name"
+  ) {
     return node.text;
   }
   const nameNode = node.childForFieldName("declarator") || node.childForFieldName("name");
@@ -287,6 +293,18 @@ function extractDeclaratorName(node: any): string | null {
     if (res) return res;
   }
   return null;
+}
+
+function extractCppSpecifierName(node: any): string | undefined {
+  const nameText = node.childForFieldName("name")?.text;
+  const errChild = node.namedChildren.find((c: any) => c.type === "ERROR");
+  if (errChild && nameText && /^[A-Z0-9_]+$/.test(nameText)) {
+    const errId =
+      errChild.namedChildren?.find((c: any) => c.type === "identifier" || c.type === "type_identifier")?.text ||
+      (/^[A-Za-z_][A-Za-z0-9_]*$/.test(errChild.text?.trim() || "") ? errChild.text.trim() : undefined);
+    if (errId) return errId;
+  }
+  return nameText || node.namedChildren.find((c: any) => c.type === "type_identifier" || c.type === "identifier")?.text;
 }
 
 function extractElixirCall(node: any): { kind: StructuredSymbolKind; name: string } | null {
@@ -368,18 +386,23 @@ function collectStructuredSymbols(rootNode: any, language?: StructuredLanguage):
       const typeNode = node.childForFieldName("type");
       if (typeNode) nextClass = typeNode.text;
     } else if (node.type === "struct_declaration" || node.type === "struct_item" || node.type === "struct_specifier") {
-      const name = node.childForFieldName("name")?.text ||
-        node.namedChildren.find((c: any) => c.type === "type_identifier" || c.type === "identifier")?.text;
-      if (name) {
-        symbols.push(structuredSymbol(node, "struct", name));
-        nextClass = name;
+      if (node.type !== "struct_specifier" || node.childForFieldName("body")) {
+        const name = node.type === "struct_specifier"
+          ? extractCppSpecifierName(node)
+          : (node.childForFieldName("name")?.text ||
+            node.namedChildren.find((c: any) => c.type === "type_identifier" || c.type === "identifier")?.text);
+        if (name) {
+          symbols.push(structuredSymbol(node, "struct", name));
+          nextClass = name;
+        }
       }
     } else if (node.type === "class_specifier") {
-      const name = node.childForFieldName("name")?.text ||
-        node.namedChildren.find((c: any) => c.type === "type_identifier" || c.type === "identifier")?.text;
-      if (name) {
-        symbols.push(structuredSymbol(node, "class", name));
-        nextClass = name;
+      if (node.childForFieldName("body")) {
+        const name = extractCppSpecifierName(node);
+        if (name) {
+          symbols.push(structuredSymbol(node, "class", name));
+          nextClass = name;
+        }
       }
     } else if (node.type === "enum_declaration" || node.type === "enum_item" || node.type === "enum_specifier") {
       const name = node.childForFieldName("name")?.text ||
@@ -1002,8 +1025,15 @@ export async function discoverSymbolsInFile(
       let tree: any;
       try {
         parser.setLanguage(grammar as any);
-        tree = parser.parse(file.text);
-        if (tree.rootNode.hasError) {
+        const allowMacroErrors = language === "c" || language === "cpp";
+        const sourceText = allowMacroErrors
+          ? file.text.replace(
+              /\b(class|struct|enum(?:\s+class)?)(\s+)([A-Z_][A-Z0-9_]*(?:\([^)\r\n]*\))?)(?=\s+[A-Za-z_][A-Za-z0-9_]*\s*(?:[:{]|final\b))/g,
+              (_m, kw: string, ws: string, macro: string) => `${kw}${ws}${" ".repeat(macro.length)}`,
+            )
+          : file.text;
+        tree = parser.parse(sourceText);
+        if (tree.rootNode.hasError && !allowMacroErrors) {
           throw new WaymarkError("PARSE_ERROR", `Malformed ${language} source: ${storedPath}`, 2);
         }
         let symbols: StructuredSymbol[];
@@ -1017,6 +1047,21 @@ export async function discoverSymbolsInFile(
           symbols = collectBashSymbols(tree.rootNode);
         } else {
           symbols = collectStructuredSymbols(tree.rootNode, language);
+        }
+        if (tree.rootNode.hasError && symbols.length === 0) {
+          if (CODEDB_OUTLINE_EXTENSIONS.has(ext)) {
+            try {
+              const fallback = await discoverSymbolsViaCodedbOutline(repoRoot, storedPath);
+              if (fallback.symbols.length > 0) {
+                symbols = fallback.symbols;
+              }
+            } catch {
+              // Fall through to PARSE_ERROR
+            }
+          }
+          if (symbols.length === 0) {
+            throw new WaymarkError("PARSE_ERROR", `Malformed ${language} source: ${storedPath}`, 2);
+          }
         }
         result = {
           ok: true,

@@ -10,9 +10,108 @@ import { ask as capnAsk, initCapn, migrateMemoryStore, publish, unchart, bust, p
 import { renderPlainText } from "./renderPlainText.js";
 import { SUPPORTED_STRUCTURED_LANGUAGES } from "./astExtractor.js";
 
+import { PACKAGE_VERSION } from "./mcp/server.js";
+
 interface ParsedArgs {
   positionals: string[];
   values: Map<string, string>;
+}
+
+const HELP_TOKENS = new Set(["help", "--help", "-h", "--h", "-help"]);
+const VERSION_TOKENS = new Set(["version", "--version", "-v", "--v", "-V", "-version"]);
+
+export function isHelpToken(token: string | undefined): boolean {
+  return token !== undefined && HELP_TOKENS.has(token);
+}
+
+export function isVersionToken(token: string | undefined): boolean {
+  return token !== undefined && VERSION_TOKENS.has(token);
+}
+
+export function formatHelpText(): string {
+  const langs = SUPPORTED_STRUCTURED_LANGUAGES.join("|");
+  return [
+    `waymark-engine v${PACKAGE_VERSION} — AST structural, path, fuzzy & consensus-memory code discovery`,
+    "",
+    "Usage:",
+    "  waymark <command> [options]",
+    "  waymark-engine [--root <dir>]          Start stdio MCP server (or pass any CLI command/flag)",
+    "",
+    "Commands:",
+    "  ask <question>                         Query 4-tier discovery router (AST -> Path -> Fuzzy -> Memory)",
+    "  symbols <s1> [s2 ...]                  Batch-resolve multiple symbol definitions across the repository",
+    "  discover-symbols                       Extract single-file AST outline (--path) or repo symbols (--query)",
+    "  memory <action>                        Manage consensus memory & Semantic Repo Map:",
+    "                                           init | status | bootstrap | chart | heal | export",
+    "                                           list | unchart | bust | prune | context | evict | close",
+    "  map [status|show|heal|export]          Inspect, repair, or export the 5-facet Semantic Repo Map",
+    "  bootstrap                              Collect read-only unverified drafts for missing/drifted map facets",
+    "  init                                   Initialize lexical BM25 memory store in .waymark/memory",
+    "  chart                                  Publish a verified architectural finding to consensus memory",
+    "  unchart <id>                           Delete a charted memory entry by hex ID",
+    "  bust <file>                            Invalidate charted entries backing a modified file",
+    "  prune                                  Prune stale memory entries whose backing files changed",
+    "  list                                   List all charted consensus memory entries",
+    "  context                                Print the Waymark agent query & charting contract",
+    "  daemon <action>                        Manage resident background daemon:",
+    "                                           start | stop | restart | reload | status | list | ping | run",
+    "  mcp                                    Start the stdio Model Context Protocol (MCP) server",
+    "  repl                                   Start interactive diagnostic REPL or run evaluation manifest",
+    "  help                                   Show this help message",
+    "  version                                Show package version",
+    "",
+    "Standalone Wrapper Binaries:",
+    "  waymark-engine | waymark-mcp | waymark | waymark-init | waymark-ask | waymark-discover",
+    "  waymark-symbols | waymark-chart | waymark-unchart | waymark-bust | waymark-prune",
+    "  waymark-list | waymark-context | waymark-bootstrap | waymark-map | waymark-daemon | waymark-repl",
+    "",
+    "Flags:",
+    "  -h, --h, --help                        Show help message (routes from any command)",
+    "  -v, -V, --v, --version                 Show package version (routes from any command)",
+    "  --root <dir>                           Target repository root directory (default: current repo)",
+    "  -p, --plain                            Emit token-minimal plain text output",
+    "  -j, --json                             Emit structured JSON output",
+    "  --path <file>                          File path for AST outline, scoped symbol query, or daemon root",
+    "  --outline                              Emit structural AST coordinate map outline of --path",
+    "  -q, --query <text>                     Symbol name or substring filter (alias for question)",
+    "  -s, --symbol <name>                    Target symbol identifier",
+    "  --symbols <a,b,...>                    Comma-separated symbol list for batch AST lookup",
+    `  --language <lang>                      Source language override (${langs})`,
+    "  -t, --tier <tier>                      Force discovery tier: auto | ast | path | fuzzy | capn",
+    "  --depth <1-5>                          Call-graph traversal depth (default: 1)",
+    "  --direction <dir>                      Call-graph direction: callers | callees | both (default: both)",
+    "  --exclude-tests                        Filter test files (*_test.*, *.spec.*, test/*) from call graphs",
+    "  --auto-resolve                         Collapse Discovery Junctions to top recommendation",
+    "  -d, --daemon                           Route query through resident in-memory daemon",
+    "  -b, --timing                           Include high-resolution per-tier execution timings",
+    "  --dev                                  Include diagnostic tier trace and invariant checks",
+    "  --facet <id>                           Target facet: lifecycle|data_state|boundaries|invariants|failure|status",
+    "  --action <action>                      Explicit memory action override",
+    "  --question <text>                      Question or topic to chart (1-240 chars)",
+    "  --answer <text>                        Verified answer to chart (1-4000 chars; prefix 'not_applicable' if N/A)",
+    "  --files <a,b,...>                      Comma-separated repository-relative backing files for chart",
+    "  --file <path>                          Repository-relative file path for memory bust or repl script",
+    "  --id <id>                              Memory entry hex ID (for unchart) or evaluation test ID (for repl)",
+    "  --if-exists                            Succeed idempotently if uncharted entry ID is already absent",
+    "  --dry-run                              Report drifted facets that heal would unchart without removing them",
+    "  --format <md|json>                     Output format for memory/map export (default: md)",
+    "  --all                                  Release all resident codedb instances across roots (for evict/close)",
+    "  --idle-timeout <sec>                   Daemon inactivity timeout in seconds (default: 600)",
+    "  --force                                Force-terminate daemon if graceful IPC stop fails",
+    "  --profile <capn-cli|none>              Memory adapter profile (default: capn-cli)",
+    "  --capn-executable <path>               Custom capn binary path override",
+    "  --manifest <file>                      Evaluation manifest JSONL path (for repl)",
+    "  --category <name>                      Filter evaluation manifest by category (for repl)",
+    "  --live                                 Enable live telemetry mode in repl",
+    "  --session <file>                       Session log path in repl",
+    "  --port <number>                        Viewer HTTP port in repl",
+    "",
+    "Environment Variables:",
+    "  WAYMARK_CAPN_PROFILE                   Adapter profile override (capn-cli | none, default: capn-cli)",
+    "  WAYMARK_CAPN_EXECUTABLE                Custom capn executable path (default: bundled lexical capn-hook)",
+    "  WAYMARK_MCP_WARM                       Set to 0 to disable automatic MCP background root warm-up",
+    "  WAYMARK_DISABLE_RESIDENT               Set to 1 to disable resident codedb processes",
+  ].join("\n");
 }
 
 const VALUE_FLAGS = new Set([
@@ -23,8 +122,19 @@ const VALUE_FLAGS = new Set([
 ]);
 
 const BOOLEAN_FLAGS = new Set([
-  "timing", "b", "json", "j", "plain", "p", "auto-resolve", "if-exists", "force", "daemon", "d", "exclude-tests", "dev", "dry-run", "live", "all", "outline",
+  "timing", "b", "json", "j", "plain", "p", "auto-resolve", "if-exists", "force", "daemon", "d",
+  "exclude-tests", "dev", "dry-run", "live", "all", "outline", "help", "h", "version", "v", "V",
 ]);
+
+function normalizeBooleanFlag(flag: string): string {
+  if (flag === "b") return "timing";
+  if (flag === "j") return "json";
+  if (flag === "p") return "plain";
+  if (flag === "d") return "daemon";
+  if (flag === "h" || flag === "help") return "help";
+  if (flag === "v" || flag === "V" || flag === "version") return "version";
+  return flag;
+}
 
 function parseArgs(args: readonly string[]): ParsedArgs {
   const positionals: string[] = [];
@@ -36,7 +146,7 @@ function parseArgs(args: readonly string[]): ParsedArgs {
     if (current.startsWith("--")) {
       const flag = current.slice(2);
       if (BOOLEAN_FLAGS.has(flag)) {
-        values.set(flag, "true");
+        values.set(normalizeBooleanFlag(flag), "true");
         continue;
       }
       if (!VALUE_FLAGS.has(flag)) throw new WaymarkError("UNKNOWN_OPTION", `Unknown option --${flag}`);
@@ -50,8 +160,7 @@ function parseArgs(args: readonly string[]): ParsedArgs {
     if (current.startsWith("-") && current.length > 1) {
       const flag = current.slice(1);
       if (BOOLEAN_FLAGS.has(flag)) {
-        const canonical = flag === "b" ? "timing" : flag === "j" ? "json" : flag === "p" ? "plain" : flag === "d" ? "daemon" : flag;
-        values.set(canonical, "true");
+        values.set(normalizeBooleanFlag(flag), "true");
         continue;
       }
       if (flag === "t") {
@@ -103,9 +212,16 @@ function writeAllSync(fd: number, payload: Buffer): void {
   }
 }
 
-
-
 function output(value: unknown, options?: { json?: boolean; plain?: boolean }): void {
+  if (typeof value === "string" && !options?.json) {
+    try {
+      writeAllSync(1, Buffer.from(`${value}\n`, "utf8"));
+    } catch {
+      process.stdout.write(`${value}\n`);
+    }
+    return;
+  }
+
   if (options?.plain) {
     const text = renderPlainText(value);
     try {
@@ -154,62 +270,29 @@ async function runCommand(command: string, rawArgs: readonly string[]): Promise<
       ? "WAYMARK_HOOK_DEPTH"
       : undefined;
   if (suppression) return { value: { waymark: 1, kind: "suppressed", ok: true, reason: suppression } };
+
+  const wantsJson = rawArgs.includes("--json") || rawArgs.includes("-j");
+  if (isVersionToken(command) || rawArgs.some((arg) => isVersionToken(arg))) {
+    return {
+      value: wantsJson
+        ? { waymark: 1, kind: "version", ok: true, name: "waymark-engine", version: PACKAGE_VERSION }
+        : `waymark-engine v${PACKAGE_VERSION}`,
+    };
+  }
+  if (isHelpToken(command) || rawArgs.some((arg) => isHelpToken(arg))) {
+    return {
+      value: wantsJson
+        ? { waymark: 1, kind: "help", ok: true, name: "waymark-engine", version: PACKAGE_VERSION, help: formatHelpText() }
+        : formatHelpText(),
+    };
+  }
+
   const parsed = parseArgs(rawArgs);
   if (parsed.values.get("subsystem")?.trim()) {
     throw new WaymarkError("UNSUPPORTED_SUBSYSTEM", "Subsystem-scoped operations are not supported; query the repository root or omit --subsystem.");
   }
   const root = parsed.values.get("root") ? path.resolve(parsed.values.get("root")!) : repoRoot();
 
-  if (command === "help" || command === "--help" || command === "-h") {
-    return {
-      value: [
-        "Waymark discovery engine (symbolic + semantic routing)",
-        "  init [--capn-executable <path>] (initialize the lexical memory store in .waymark/memory)",
-        `  discover-symbols [--path <file>] [--query <q>] [--language <${SUPPORTED_STRUCTURED_LANGUAGES.join("|")}>] [--plain]`,
-        "  symbols <symbol1> [symbol2 ...] [--plain] (batch query symbol definitions across repo)",
-        "  ask <question> [--symbols a,b] [--facet <f>] [--tier auto|ast|path|fuzzy|capn] [--timing] [--json|--plain]",
-        "  memory <chart|bootstrap|bust|prune|list|unchart|init|status|context|heal|export> [options]",
-        "  bootstrap [--subsystem <s>] (read-only: collects unverified drafts; subsystem scope is currently unsupported)",
-        "  memory heal [--dry-run] (uncharts drifted facets and collects replacement drafts; --dry-run only reports)",
-        "  map [status|show|heal|export] (inspect and manage Semantic Repo Map)",
-        "  chart --question <q> --answer <a> --files <a,b> [--profile capn-cli|none] [--capn-executable <path>]",
-        "  unchart <id> [--if-exists] | bust <path> | prune | list | context",
-        "  mcp (starts the stdio MCP discovery server)",
-        "  daemon [start|stop|restart|status|list|ping] [--path <root>] [--idle-timeout <sec>] [--force]",
-        "  repl [--manifest <file>] [--category <c>] [--id <i>] [--file <script>] (interactive diagnostic shell)",
-        "",
-        "Explicit wrappers (same engine, one command per action):",
-        "  waymark-init | waymark-ask | waymark-discover | waymark-symbols | waymark-chart | waymark-unchart",
-        "  waymark-bust | waymark-prune | waymark-list | waymark-context | waymark-mcp | waymark-daemon | waymark-repl",
-        "",
-        "Options for ask:",
-        "  --outline            Emit structural AST coordinate outline of --path (question/query filters symbol names)",
-        "  --path <file>        Repository-relative or absolute file path to inspect or outline",
-        `  --language <lang>    Source language override (${SUPPORTED_STRUCTURED_LANGUAGES.join("|")})`,
-        "  --query <q>          Filter outline symbols by substring (with --outline, bypasses semantic QA)",
-        "  --facet <facet>      Scope query to architectural facet (lifecycle|data_state|boundaries|invariants|failure|status)",
-        "  -t, --tier <tier>    Force discovery tier: auto | ast | path | fuzzy | capn",
-        "  -b, --timing         Collect high-resolution tier execution timings",
-        "  -j, --json           Emit full JSON output",
-        "  -p, --plain          Emit token-minimal plain text output",
-        "  -d, --daemon         Accelerate queries via persistent in-memory background daemon",
-        "  --auto-resolve       Collapse junction responses to top recommendation",
-        "  --depth <n>          Call graph BFS traversal depth (1-5, default: 1)",
-        "  --direction <dir>    Call graph direction: callers | callees | both (default: both)",
-        "  --exclude-tests      Filter out test files (*_test.*, test/*) from call graph results",
-        "",
-        "Commands for daemon:",
-        "  waymark daemon [start|stop|restart|reload|status|list|ping]",
-        "",
-        "Options for daemon:",
-        "  --path <root>        Target repository root (default: current repository)",
-        "  --idle-timeout <sec> Inactivity timeout before auto-shutdown in seconds (default: 600)",
-        "  --force              Force-kill process if graceful IPC stop fails",
-        "",
-        "Env: WAYMARK_CAPN_PROFILE (capn-cli|none, default capn-cli), WAYMARK_CAPN_EXECUTABLE (optional override; default: bundled lexical-only capn-hook)",
-      ].join("\n"),
-    };
-  }
 
   if (command === "init") {
     const res = await initCapn(root, resolveCapnExecutable(parsed));
@@ -674,9 +757,8 @@ async function runCommand(command: string, rawArgs: readonly string[]): Promise<
  * waymark-chart) so each action is one process without subcommand parsing.
  */
 export async function runCli(command: string, args: readonly string[]): Promise<void> {
-  const parsed = parseArgs(args);
-  const isJson = parsed.values.has("json");
-  const isPlain = parsed.values.has("plain");
+  const isJson = args.includes("--json") || args.includes("-j");
+  const isPlain = args.includes("--plain") || args.includes("-p");
   try {
     const result = await runCommand(command, args);
     if (result.value !== null) {

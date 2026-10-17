@@ -127,16 +127,16 @@ export class ResidentCodedbClient {
     this.readyPromise = new Promise<void>((resolve, reject) => {
       const defaultThreads = Math.max(1, (os.availableParallelism?.() || os.cpus().length || 2) - 1);
       const maxThreads = process.env.CODEDB_MAX_THREADS || String(defaultThreads);
-      const timeoutMs = process.env.WAYMARK_CODEDB_TIMEOUT
-        ? parseInt(process.env.WAYMARK_CODEDB_TIMEOUT, 10) || 45_000
-        : 45_000;
+      const startupTimeoutMs = process.env.WAYMARK_CODEDB_STARTUP_TIMEOUT
+        ? parseInt(process.env.WAYMARK_CODEDB_STARTUP_TIMEOUT, 10) || 120_000
+        : 120_000;
 
       const startupTimer = setTimeout(() => {
         if (!this.readyResolved) {
           this.close();
-          reject(new Error(`codedb serve startup timed out after ${timeoutMs}ms: ${this.stderrBuffer}`));
+          reject(new Error(`codedb serve startup timed out after ${startupTimeoutMs}ms: ${this.stderrBuffer}`));
         }
-      }, timeoutMs);
+      }, startupTimeoutMs);
       startupTimer.unref();
 
       try {
@@ -198,6 +198,9 @@ export class ResidentCodedbClient {
                 this.readyResolved = true;
                 clearTimeout(startupTimer);
                 this.unrefPipes();
+                if (this.queue.length === 0) {
+                  this.resetIdleTimer();
+                }
                 resolve();
                 this.processQueue();
                 return;
@@ -214,6 +217,7 @@ export class ResidentCodedbClient {
         }
       });
     });
+    this.readyPromise.catch(() => undefined);
 
     return this.readyPromise;
   }
@@ -287,12 +291,29 @@ export class ResidentCodedbClient {
     if (this.isClosing) {
       throw new Error("Resident codedb client is closing");
     }
-    await this.ensureStarted();
-
-    const cmd = args.map(formatArg).join(" ");
     const timeoutMs = process.env.WAYMARK_CODEDB_TIMEOUT
       ? parseInt(process.env.WAYMARK_CODEDB_TIMEOUT, 10) || 45_000
       : 45_000;
+
+    if (!this.readyResolved) {
+      let waitTimer: NodeJS.Timeout | undefined;
+      try {
+        await Promise.race([
+          this.ensureStarted(),
+          new Promise<never>((_, reject) => {
+            waitTimer = setTimeout(() => {
+              this.unrefPipes();
+              reject(new Error(`codedb serve startup timed out after ${timeoutMs}ms (background indexing continues)`));
+            }, timeoutMs);
+            waitTimer.unref();
+          }),
+        ]);
+      } finally {
+        if (waitTimer) clearTimeout(waitTimer);
+      }
+    }
+
+    const cmd = args.map(formatArg).join(" ");
 
     this.touch();
 

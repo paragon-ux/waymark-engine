@@ -124,3 +124,47 @@ test("CLI init creates the lexical memory store in .waymark/memory with embeddin
   assert.equal(execFileSync("git", ["status", "--porcelain", "--untracked-files=all"], { cwd: repo, encoding: "utf8" }).includes(".waymark"), false);
 });
 
+test("CLI and MCP binaries route any --h/-h/--help and --v/-v/-V/--version regardless of command", () => {
+  const capnIndexPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../src/mcp/capnIndex.js");
+  const askBinPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../bin/waymark-ask.mjs");
+  const pkgVersion = JSON.parse(fs.readFileSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../package.json"), "utf8")).version;
+
+  for (const [bin, args] of [
+    [cliPath, ["--help"]],
+    [cliPath, ["-h"]],
+    [cliPath, ["--h"]],
+    [cliPath, ["help"]],
+    [cliPath, ["ask", "--h"]],
+    [cliPath, ["memory", "chart", "-h"]],
+    [capnIndexPath, ["--help"]],
+    [capnIndexPath, ["--h"]],
+    [capnIndexPath, ["-h"]],
+    [capnIndexPath, ["ask", "--h"]],
+    [askBinPath, ["--h"]],
+  ] as const) {
+    const out = execFileSync(process.execPath, [bin, ...args], { encoding: "utf8", timeout: 10_000, windowsHide: true });
+    assert.match(out, /Commands:/);
+    assert.match(out, /Flags:/);
+    assert.doesNotMatch(out, /^"/, `help must not be JSON-escaped string for ${path.basename(bin)} ${args.join(" ")}`);
+  }
+
+  for (const [bin, args] of [
+    [cliPath, ["--version"]],
+    [cliPath, ["-v"]],
+    [cliPath, ["-V"]],
+    [cliPath, ["--v"]],
+    [cliPath, ["version"]],
+    [cliPath, ["ask", "--v"]],
+    [cliPath, ["daemon", "-v"]],
+    [capnIndexPath, ["--version"]],
+    [capnIndexPath, ["--v"]],
+    [capnIndexPath, ["-v"]],
+    [capnIndexPath, ["memory", "--v"]],
+    [askBinPath, ["--v"]],
+  ] as const) {
+    const out = execFileSync(process.execPath, [bin, ...args], { encoding: "utf8", timeout: 10_000, windowsHide: true }).trim();
+    assert.equal(out, `waymark-engine v${pkgVersion}`);
+  }
+});
+
+

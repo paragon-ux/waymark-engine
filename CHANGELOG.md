@@ -4,7 +4,13 @@ All notable changes to `waymark-engine` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [4.0.0] - 2026-10-17
+
+### Upgrading from 3.x
+- **Tier 4 memory moved to `.waymark/memory`.** Charts that an earlier `waymark init` stored in `.capn/` are no longer read. Run `waymark memory migrate` once per repository to copy them. It only reads `.capn/` and never changes it.
+- **`.capn/` belongs to upstream capn.** Waymark no longer reads or writes it, so it's safe to keep upstream capn in the same repository.
+- **The MCP server warms nothing at startup.** Each repository warms in the background on its first tool call. Set `WAYMARK_MCP_WARM=0` to turn warm-up off.
+- The library API is otherwise unchanged. New exports: `memoryStoreDir`, `stateDir`, `ensureStateDir`, `capnStoreArgs`, `migrateMemoryStore`.
 
 ### Changed (Breaking)
 - **Memory Store Moved to `.waymark/memory` (`src/stateDir.ts`, `src/capnAdapter.ts`, `src/semanticMap.ts`)**: `.capn/` is upstream capn's folder, and `@paragon-ux/capn-hook` is a different implementation that shared its name. In repositories where upstream capn also ran, the two read and wrote each other's store. Waymark no longer reads or writes `.capn/`. `memoryStoreDir(root)` is the single store location. Existing stores are not moved; run `waymark memory migrate` to copy them.

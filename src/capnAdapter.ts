@@ -561,7 +561,8 @@ export async function initCapn(root: string, executable?: string): Promise<Recor
 const LEGACY_ENTRY_FILE = /^[0-9a-f]{8}\.md$/u;
 
 /**
- * Explicit, opt-in import of charted entries from a store that an earlier
+ * Internal maintainer command (`waymark memory migrate`, not in help or the
+ * public API): imports charted entries from a store that an earlier
  * `waymark init` created in the legacy folder. The source is only read: that
  * folder may belong to upstream capn, so nothing in it is moved, modified, or deleted.
  * Fails closed unless the source is a lexical store of capn entries and the

@@ -85,7 +85,6 @@ When Claude Desktop runs the MCP server via stdio, the server defaults its worki
 ```bash
 npm install -g waymark-engine
 waymark-init                                     # one-time lexical store init in .waymark/memory (or: waymark init)
-waymark memory migrate                           # opt-in copy of a 3.x store from .capn/ (source never modified)
 
 waymark-ask "Who calls verifyHop?"               # Tier 1 AST answer, no external process
 waymark-ask "refundOrdr"                         # Discovery Junction (fuzzy recommended, ~92% match)

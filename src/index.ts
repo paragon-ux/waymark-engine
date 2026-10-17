@@ -1,7 +1,7 @@
 // Public library API of the Waymark Engine.
 // One import surface for consumers: `import { ask, discoverSymbolsInFile, verifyHop } from "waymark-engine";`
 
-export { ask, initCapn, migrateMemoryStore, publish, capnChartArgs, capnStoreArgs, resolveWindowsExecutable, resolveCapnCommand, assertLexicalStore, readCapnConfig, unchart, bust, prune, listEntries, context } from "./capnAdapter.js";
+export { ask, initCapn, publish, capnChartArgs, capnStoreArgs, resolveWindowsExecutable, resolveCapnCommand, assertLexicalStore, readCapnConfig, unchart, bust, prune, listEntries, context } from "./capnAdapter.js";
 export { stateDir, memoryStoreDir, ensureStateDir } from "./stateDir.js";
 export { renderPlainText, renderCallGraph, formatTimings } from "./renderPlainText.js";
 export {

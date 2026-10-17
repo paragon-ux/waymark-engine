@@ -40,7 +40,7 @@ Before using long-term architectural memory, initialize the deterministic lexica
 waymark memory init
 ```
 
-The store lives in `.waymark/memory`, and `.waymark/.gitignore` keeps it out of `git status`. Upgrading from 3.x with charts in `.capn/`? Run `waymark memory migrate`; see [Memory Store & State Layout](memory-store.md).
+The store lives in `.waymark/memory`, and `.waymark/.gitignore` keeps it out of `git status`. See [Memory Store & State Layout](memory-store.md).
 
 ### 2. Discover Symbols & Call Graphs (`waymark ask`)
 

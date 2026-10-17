@@ -86,7 +86,6 @@ waymark memory <action> [options]
 | **`list`** | `waymark memory list` | List all charted consensus memory entries. |
 | **`unchart`** | `waymark memory unchart <id> [--if-exists]` | Delete a specific memory entry by hex ID. |
 | **`init`** | `waymark memory init` | Initialize deterministic lexical store (`.waymark/memory`). |
-| **`migrate`** | `waymark memory migrate [--from .capn]` | Opt-in, copy-only import of a store that an earlier `waymark init` created in `.capn/`. The source is never modified. See [Memory Store & State Layout](memory-store.md). |
 | **`context`** | `waymark memory context` | Retrieve ask-first routing contract and syntax guidelines. |
 
 ---

@@ -7,7 +7,7 @@ Waymark keeps everything it writes inside a repository under `.waymark/`. It nev
 | Path | Contents | Written by |
 | :--- | :--- | :--- |
 | `.waymark/.gitignore` | `*`, so the folder never shows up in `git status`. An existing file is kept. | The first Waymark write in the repository |
-| `.waymark/memory/` | Tier 4 memory store: `config.json` (`{"embedding": false}`), `entries/*.md`, `map.json`, `qmd/index.sqlite` | `waymark init`, chart, bust, prune, unchart, migrate |
+| `.waymark/memory/` | Tier 4 memory store: `config.json` (`{"embedding": false}`), `entries/*.md`, `map.json`, `qmd/index.sqlite` | `waymark init`, chart, bust, prune, unchart |
 | `.waymark/paths.v2.cache` | Tier 2 repository path cache | Path router (skipped when `WAYMARK_READ_ONLY=1`) |
 | `.waymark/sessions/active.jsonl` | Opt-in telemetry | Session logger (`WAYMARK_TELEMETRY=1`) |
 
@@ -45,25 +45,3 @@ The flags come before the subcommand on purpose. A capn without them, such as ca
 Tiers 1–3 are unaffected.
 
 To try a local fork checkout, point Waymark at its entry file: `WAYMARK_CAPN_EXECUTABLE=/path/to/capn-hook/dist/capn.js`. Waymark runs `.js`, `.mjs`, and `.cjs` entries with the current Node.
-
-## Migrating a store from Waymark 3.x
-
-Earlier `waymark init` runs created the store in `.capn/`. Waymark no longer reads it. To keep those charts:
-
-```bash
-waymark memory migrate            # source defaults to .capn
-waymark memory migrate --from <dir>
-```
-
-Migration is explicit and copy-only. The source is read and never moved, modified, or deleted. It fails closed, and copies nothing, when:
-
-| Code | Condition |
-| :--- | :--- |
-| `MIGRATE_SOURCE_NOT_LEXICAL` | The source has no readable `config.json`, or it is not `{"embedding": false}`. Waymark only ever created lexical stores. |
-| `MIGRATE_SOURCE_INVALID` | A file in `entries/` named like an entry is not a `capn: 1` entry, or the source is the Waymark store itself. |
-| `MIGRATE_DESTINATION_NOT_EMPTY` | `.waymark/memory` already holds entries. Migration never merges stores. |
-| `CAPN_STORE_DIR_UNSUPPORTED` | The capn executable lacks the store-dir flags, so the new store cannot be indexed. |
-
-On success, Waymark initializes `.waymark/memory`, copies the entries, and re-runs init to rebuild the lexical index and file map. Entries whose backing files have changed are pruned on the next recall, as usual.
-
-An upstream capn store initialized with `--no-embedding` looks the same as one Waymark created. If you point migrate at one, its entries are copied into Waymark's store, and the source is still left untouched.

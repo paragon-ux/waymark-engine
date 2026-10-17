@@ -168,8 +168,7 @@ async function runCommand(command: string, rawArgs: readonly string[]): Promise<
         `  discover-symbols [--path <file>] [--query <q>] [--language <${SUPPORTED_STRUCTURED_LANGUAGES.join("|")}>] [--plain]`,
         "  symbols <symbol1> [symbol2 ...] [--plain] (batch query symbol definitions across repo)",
         "  ask <question> [--symbols a,b] [--facet <f>] [--tier auto|ast|path|fuzzy|capn] [--timing] [--json|--plain]",
-        "  memory <chart|bootstrap|bust|prune|list|unchart|init|migrate|status|context|heal|export> [options]",
-        "  memory migrate [--from .capn] (opt-in: copy entries from a store an earlier waymark init made; the source is only read)",
+        "  memory <chart|bootstrap|bust|prune|list|unchart|init|status|context|heal|export> [options]",
         "  bootstrap [--dry-run] [--subsystem <s>] (subsystem scope is currently unsupported)",
         "  map [status|show|heal|export] (inspect and manage Semantic Repo Map)",
         "  chart --question <q> --answer <a> --files <a,b> [--profile capn-cli|none] [--capn-executable <path>]",
@@ -412,6 +411,7 @@ async function runCommand(command: string, rawArgs: readonly string[]): Promise<
       return { value: res, exitCode: res.ok ? 0 : (res.exitCode as number | undefined) ?? 1 };
     }
 
+    // Internal maintainer command, deliberately left out of help and docs.
     if (action === "migrate") {
       const res = await migrateMemoryStore(root, executable, parsed.values.get("from"));
       return { value: res, exitCode: res.ok ? 0 : (res.exitCode as number | undefined) ?? 1 };
@@ -464,7 +464,7 @@ async function runCommand(command: string, rawArgs: readonly string[]): Promise<
       return { value: { waymark: 1, ok: true, closed, root: target } };
     }
 
-    throw new WaymarkError("UNKNOWN_COMMAND", `Unknown memory action: ${action}. Use chart, bootstrap, bust, prune, list, unchart, init, migrate, context, status, heal, export, evict, or close.`);
+    throw new WaymarkError("UNKNOWN_COMMAND", `Unknown memory action: ${action}. Use chart, bootstrap, bust, prune, list, unchart, init, context, status, heal, export, evict, or close.`);
   }
 
   if (command === "bootstrap") {

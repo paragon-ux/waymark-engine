@@ -26,9 +26,9 @@ export function memoryStoreDir(root: string): string {
 export const MEMORY_STORE_LABEL = `${STATE_DIR_NAME}/memory`;
 
 /**
- * Where Waymark 3.x and earlier put the memory store. Only `waymark memory
- * migrate` reads it, on request, and nothing ever writes it: the folder name
- * belongs to upstream capn.
+ * Where Waymark 3.x and earlier put the memory store. Only the internal
+ * `memory migrate` command reads it, and nothing ever writes it: the folder
+ * name belongs to upstream capn.
  */
 export const LEGACY_STORE_DIR_NAME = ".capn";
 

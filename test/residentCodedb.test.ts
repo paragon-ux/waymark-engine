@@ -38,10 +38,18 @@ test("ResidentCodedbClient executes queries rapidly via resident stdio", async (
 });
 
 test("WaymarkDaemon and IPC bridge handle start, ping, query, and stop", async (t) => {
-  const daemon = new WaymarkDaemon(repoRoot);
-  await daemon.start();
+  // A daemon from another process, such as a warm Waymark MCP server for this checkout, already
+  // owns the socket: this daemon could not serve, and every ping would reach the other one.
+  const foreign = await tryDaemonPing(repoRoot, 500);
+  if (foreign) {
+    t.skip(`another daemon (pid ${foreign.pid}) already serves ${repoRoot}`);
+    return;
+  }
 
+  const daemon = new WaymarkDaemon(repoRoot);
   try {
+    assert.equal(await daemon.start(), true, "WaymarkDaemon.start() did not start serving");
+
     // 1. Verify ping responds
     const ping = await tryDaemonPing(repoRoot, 2000);
     assert.ok(ping);

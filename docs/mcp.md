@@ -212,4 +212,6 @@ If your agent framework requires flat, single-purpose tools, enable **Verbose Mo
 - `architectural-map`: Structured call-graph and consensus memory mapping workflow.
 - `bootstrap-semantic-map`: Collects unverified source-backed drafts; a human must verify and explicitly chart any supported claim.
 
+[`examples/`](https://github.com/paragon-ux/waymark-engine/tree/main/examples) has a recorded run of each prompt against this repository.
+
 Subsystem values supplied to discovery or memory tools fail with `UNSUPPORTED_SUBSYSTEM`. Tool requests do not silently widen to repository-root results.

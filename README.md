@@ -108,6 +108,7 @@ For complete technical references, architectural specifications, and benchmark a
 - 🏗️ **[4-Tier Architecture](docs/architecture.md)**: Deep dive into AST call graphs, literal paths, Junegunn Choi `fzf`, and BM25 consensus.
 - 🔌 **[Model Context Protocol (MCP)](docs/mcp.md)**: Two-Verb interface (<450 tokens), setup for Google Antigravity, Claude Desktop, and Cursor.
 - 💻 **[CLI & Command Registry](docs/commands.md)**: Full canonical command reference, `waymark memory` action catalog, and exit codes.
+- 🧭 **[Examples](examples/README.md)**: Recorded runs of the `architectural-map`, `explore-subsystem`, and `bootstrap-semantic-map` MCP prompts against this repository.
 - 📊 **[Empirical Benchmarks](docs/benchmarks.md)**: Steelmanned Aider Repo Map parity benchmark (`gpt-oss-120b`) and metrics schema.
 - 📦 **[Library API & Integrity](docs/library-api.md)**: TypeScript SDK, `verifyHop`, `anchorForRange`, and fail-closed invariant guards.
 

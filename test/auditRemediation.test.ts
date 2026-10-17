@@ -380,6 +380,38 @@ test("Windows command shims are rejected before cold and resident execution", as
   }
 });
 
+test("cold codedb runs in one process take turns instead of fanning out", async () => {
+  const root = workspace();
+  const marks = path.join(root, "marks");
+  fs.mkdirSync(marks);
+  // A stand-in codedb that records how many runs are alive when it starts.
+  const fake = path.join(root, "fake-codedb.mjs");
+  fs.writeFileSync(fake, [
+    'import fs from "node:fs";',
+    'import path from "node:path";',
+    `const dir = ${JSON.stringify(marks)};`,
+    "const mine = path.join(dir, `run-${process.pid}`);",
+    'fs.writeFileSync(mine, "");',
+    'const alive = fs.readdirSync(dir).filter((f) => f.startsWith("run-")).length;',
+    'fs.appendFileSync(path.join(dir, "alive.log"), `${alive}\\n`);',
+    "await new Promise((resolve) => setTimeout(resolve, 150));",
+    "fs.rmSync(mine);",
+    "console.log(JSON.stringify({ ok: true, results: [] }));",
+  ].join("\n"));
+  const command = { file: process.execPath, prefix: [fake], viaCmdShim: false };
+  const oldDisable = process.env.WAYMARK_DISABLE_RESIDENT;
+  try {
+    process.env.WAYMARK_DISABLE_RESIDENT = "1";
+    const runs = await Promise.all(Array.from({ length: 4 }, (_, i) => runJson(root, command, ["symbol", `s${i}`, "--json"])));
+    assert.ok(runs.every((run) => run.ok), JSON.stringify(runs));
+    const alive = fs.readFileSync(path.join(marks, "alive.log"), "utf8").trim().split(/\r?\n/u).map(Number);
+    assert.deepEqual(alive, [1, 1, 1, 1], "cold codedb runs overlapped");
+  } finally {
+    if (oldDisable === undefined) delete process.env.WAYMARK_DISABLE_RESIDENT; else process.env.WAYMARK_DISABLE_RESIDENT = oldDisable;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("codedb execution failures remain errors across structural, ask, batch, and repo-symbol APIs", async () => {
   const root = workspace();
   const missing = path.join(root, "missing-codedb.exe");

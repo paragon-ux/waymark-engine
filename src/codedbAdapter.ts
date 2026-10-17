@@ -78,7 +78,24 @@ import { tryDaemonQuery, autoStartDaemon } from "./daemon.js";
 
 export type { CodedbJson, CodedbRun };
 
+/**
+ * Cold runs take turns. Each one indexes the whole repository on CODEDB_MAX_THREADS threads,
+ * so concurrent runs, such as a multi-symbol batch with the resident client off, would start
+ * one codedb per query and oversubscribe the CPU.
+ */
+let coldTurn: Promise<unknown> = Promise.resolve();
+
+function nextColdTurn<T>(run: () => Promise<T>): Promise<T> {
+  const result = coldTurn.then(run, run);
+  coldTurn = result.catch(() => undefined);
+  return result;
+}
+
 async function executeCold(root: string, command: ResolvedCodedbCommand, args: readonly string[]): Promise<{ stdout: string; stderr: string }> {
+  return await nextColdTurn(() => executeColdNow(root, command, args));
+}
+
+async function executeColdNow(root: string, command: ResolvedCodedbCommand, args: readonly string[]): Promise<{ stdout: string; stderr: string }> {
   assertSupportedCodedbCommand(command);
   if (process.platform !== "win32" && command.file) {
     try {

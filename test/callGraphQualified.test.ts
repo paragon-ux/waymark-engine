@@ -105,3 +105,78 @@ test("Call graph: hops follow qualified names, and module nodes are labelled cal
   assert.match(plain, /- tools\.run \[method\] \(src\/app\.ts:6\)/);
   assert.match(plain, /- launch \(src\/app\.ts:2\)/);
 });
+
+/** Two classes with `start`, a getter/setter pair, and a free `boot`. */
+function setupRootRepo(): string {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "waymark-qualified-root-"));
+  execFileSync("git", ["init", "-q", "-b", "main"], { cwd: repo });
+  fs.mkdirSync(path.join(repo, "src"), { recursive: true });
+  const files: Record<string, string[]> = {
+    "daemon.ts": ["export class Daemon {", "  start(): number {", "    return 1;", "  }", "  restart(): number {", "    return this.start();", "  }", "}"],
+    "worker.ts": ["export class Worker {", "  start(): number {", "    return 2;", "  }", "  size(): number {", "    return 3;", "  }", "}"],
+    "shapes.ts": ["export class Shapes {", "  get size(): number {", "    return 1;", "  }", "  set size(n: number) {", "    return;", "  }", "}"],
+    "util.ts": ["export function boot(): number {", "  return 1;", "}", "export function main(): number {", "  return boot();", "}"],
+  };
+  for (const [name, lines] of Object.entries(files)) {
+    fs.writeFileSync(path.join(repo, "src", name), [...lines, ""].join("\n"), "utf8");
+  }
+  initMemoryStoreSync(repo);
+  return repo;
+}
+
+test("Call graph: a qualified root question queries the qualified name and never widens it", async (t) => {
+  const repo = setupRootRepo();
+  if (!(await codedbHasQualifiedNodes(repo))) {
+    t.skip("the resolved codedb predates qualified call-graph nodes; set WAYMARK_CODEDB_EXECUTABLE to a newer build");
+    return;
+  }
+  const server = new McpServer({ root: repo });
+
+  const flat = await ask(server, 1, { question: "Who calls Daemon.start?", root: repo });
+  assert.equal(flat.status, "hit");
+  assert.match(flat.result, /^function: Daemon\.start$/m);
+  assert.match(flat.result, /^callers: Daemon\.restart$/m);
+
+  const graph = await ask(server, 2, { question: "Who calls Daemon.start?", depth: 1, direction: "callers", root: repo });
+  assert.equal(graph.status, "hit");
+  assert.equal(graph.result.function, "Daemon.start");
+  assert.equal(`${graph.result.path}:${graph.result.line}`, "src/daemon.ts:2");
+  assert.deepEqual((graph.result.callers as CallGraphHopNode[]).map(brief), ["method Daemon.restart src/daemon.ts:5"]);
+
+  // `Worker.start` exists but has no callers: no widening to the ambiguous bare `start`.
+  const worker = await ask(server, 3, { question: "Who calls Worker.start?", root: repo });
+  assert.match(worker.result, /^function: Worker\.start$/m);
+  assert.match(worker.result, /^callers: None$/m);
+  const bare = await ask(server, 4, { question: "Who calls start?", root: repo });
+  assert.match(bare.result, /^ambiguous: true$/m);
+  assert.match(bare.result, /candidates \(2\)/);
+
+  // An ambiguous qualified name answers with its own candidates, not the
+  // bare name's three (`Worker.size` is left out).
+  for (const [id, extra] of [[5, {}], [6, { depth: 1, direction: "callers" }]] as const) {
+    const amb = await ask(server, id, { question: "Who calls Shapes.size?", root: repo, ...extra });
+    assert.equal(amb.status, "hit");
+    assert.equal(
+      amb.result,
+      ["function: Shapes.size", "ambiguous: true", "candidates (2):", "  src/shapes.ts:2 method Shapes.size", "  src/shapes.ts:5 method Shapes.size"].join("\n")
+    );
+  }
+});
+
+test("Call graph: a dotted root question falls back to the bare name when the qualified name doesn't exist", async () => {
+  const repo = setupRootRepo();
+  const server = new McpServer({ root: repo });
+
+  const flat = await ask(server, 1, { question: "Who calls helpers.boot?", root: repo });
+  assert.equal(flat.status, "hit");
+  assert.match(flat.result, /^function: boot$/m);
+  assert.match(flat.result, /^callers: main$/m);
+
+  const graph = await ask(server, 2, { question: "Who calls helpers.boot?", depth: 1, direction: "callers", root: repo });
+  assert.equal(graph.status, "hit");
+  assert.equal(graph.result.function, "boot");
+  assert.deepEqual(
+    (graph.result.callers as CallGraphHopNode[]).map((n) => `${n.name} ${n.path}:${n.line}`),
+    ["main src/util.ts:4"]
+  );
+});

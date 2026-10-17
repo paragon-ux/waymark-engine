@@ -130,7 +130,9 @@ export function detectAstIntent(question: string): AstIntent {
     ]);
     const candidates = tokens.filter(t => !stopWords.has(t.toLowerCase()) && t.length > 1);
     const rawTarget = candidates[candidates.length - 1] ?? candidates[0] ?? q;
-    const functionName = rawTarget.replace(/[?().]+$/g, "").replace(/^.*\.([A-Za-z0-9_]+)$/, "$1");
+    // A dotted name keeps its qualifier (`WaymarkDaemon.start`); queryStructural
+    // drops it only when codedb has no such qualified name (`path.join`).
+    const functionName = rawTarget.replace(/[?().]+$/g, "");
 
     return {
       requiresParser: true,

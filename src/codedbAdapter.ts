@@ -207,6 +207,18 @@ function neighborLabel(c: Neighbor): string {
   return c.qualified || c.name;
 }
 
+/**
+ * The last segment of a dotted root name (`path.join` -> `join`), or
+ * undefined for a bare name. A dotted question first asks codedb for the
+ * qualified name and asks again with this only when codedb reports that the
+ * qualified name doesn't exist (`symbol_exists: false`). A qualified name that
+ * exists is never widened to the bare name, even when it is ambiguous.
+ */
+function bareFallback(fn: string): string | undefined {
+  const bare = fn.slice(fn.lastIndexOf(".") + 1);
+  return bare && bare !== fn ? bare : undefined;
+}
+
 interface SymbolHit {
   path: string;
   line: number;
@@ -260,7 +272,7 @@ export async function queryMultiHopCallGraph(
         out += `ambiguous: true\n`;
         out += `candidates (${cands.length}):\n`;
         for (const c of cands) {
-          out += `  ${c.path}:${c.line} ${c.kind ?? "function"} ${c.name}\n`;
+          out += `  ${c.path}:${c.line} ${c.kind ?? "function"} ${c.qualified || c.name}\n`;
         }
         return { hit: true, output: out.trim() };
       }
@@ -281,21 +293,26 @@ export async function queryMultiHopCallGraph(
     out += `ambiguous: true\n`;
     out += `candidates (${cands.length}):\n`;
     for (const c of cands) {
-      out += `  ${c.path}:${c.line} ${c.kind ?? "function"} ${c.name}\n`;
+      out += `  ${c.path}:${c.line} ${c.kind ?? "function"} ${c.qualified || c.name}\n`;
     }
     return { hit: true, output: out.trim() };
   }
 
+  const bare = bareFallback(fn);
   if (nRun.payload.symbol_exists === false) {
+    if (bare) return queryMultiHopCallGraph(root, bare, depth, direction, cmd, excludeTests, autoDaemon);
     return { hit: false, output: `Function or method "${fn}" not found.` };
   }
 
+  // A qualified root is located among its bare name's definitions.
   let rootPath: string | undefined;
   let rootLine: number | undefined;
   let rootKind: string | undefined;
-  const symRun = await runJson(root, cmd, ["symbol", fn, "--json"], { autoDaemon });
-  if (symRun.ok && symRun.payload && Array.isArray(symRun.payload.results) && symRun.payload.results.length > 0) {
-    const r0 = symRun.payload.results[0] as { path?: string; line?: number; kind?: string };
+  const symArgs = bare ? ["symbol", bare, "--max-results", "200", "--json"] : ["symbol", fn, "--json"];
+  const symRun = await runJson(root, cmd, symArgs, { autoDaemon });
+  const symResults = (symRun.ok && Array.isArray(symRun.payload?.results) ? symRun.payload!.results : []) as Array<{ path?: string; line?: number; kind?: string; qualified?: string }>;
+  const r0 = bare ? symResults.find((r) => r.qualified === fn) : symResults[0];
+  if (r0) {
     rootPath = r0.path;
     rootLine = r0.line;
     rootKind = r0.kind;
@@ -491,7 +508,7 @@ export async function queryStructural(
           out += `ambiguous: true\n`;
           out += `candidates (${cands.length}):\n`;
           for (const c of cands) {
-            out += `  ${c.path}:${c.line} ${c.kind ?? "function"} ${c.name}\n`;
+            out += `  ${c.path}:${c.line} ${c.kind ?? "function"} ${c.qualified || c.name}\n`;
           }
           return { hit: true, output: out.trim() };
         }
@@ -510,12 +527,14 @@ export async function queryStructural(
         out += `ambiguous: true\n`;
         out += `candidates (${cands.length}):\n`;
         for (const c of cands) {
-          out += `  ${c.path}:${c.line} ${c.kind ?? "function"} ${c.name}\n`;
+          out += `  ${c.path}:${c.line} ${c.kind ?? "function"} ${c.qualified || c.name}\n`;
         }
         return { hit: true, output: out.trim() };
       }
 
       if (nRun.payload.symbol_exists === false) {
+        const bare = bareFallback(fn);
+        if (bare) return queryStructural({ ...intent, functionName: bare }, root, executable, options);
         return { hit: false, output: `Function or method "${fn}" not found.` };
       }
 
@@ -551,7 +570,7 @@ export async function queryStructural(
       out += `ambiguous: true\n`;
       out += `candidates (${cands.length}):\n`;
       for (const c of cands) {
-        out += `  ${c.path}:${c.line} ${c.kind ?? "function"} ${c.name}\n`;
+        out += `  ${c.path}:${c.line} ${c.kind ?? "function"} ${c.qualified || c.name}\n`;
       }
       return { hit: true, output: out.trim() };
     }
@@ -564,6 +583,8 @@ export async function queryStructural(
       if (!symbol.ok || !symbol.payload) return { hit: false, output: symbol.error || "codedb symbol lookup failed", error: true };
       const symbolCount = (symbol.payload?.results as unknown[] | undefined)?.length ?? 0;
       if (symbolCount === 0) {
+        const bare = bareFallback(fn);
+        if (bare) return queryStructural({ ...intent, functionName: bare }, root, executable, options);
         return { hit: false, output: `Function or method "${fn}" not found.` };
       }
     }

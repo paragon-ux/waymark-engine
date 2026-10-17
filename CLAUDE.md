@@ -1,7 +1,7 @@
 # CLAUDE.md — Waymark Engine
 
 Waymark Engine is a four-tier symbolic and semantic discovery engine for one-shot code questions:
-1. **Tier 1: AST Structural** — deterministic codedb call graph (`@paragon-ux/codedb-core` v1.1.0, resolved and fail-closed).
+1. **Tier 1: AST Structural** — deterministic codedb call graph (`@paragon-ux/codedb-core` v2.0.2, resolved and fail-closed).
 2. **Tier 2: Literal Path Router** — exact and substring path resolution with zero-hallucination fail-closed defense.
 3. **Tier 3: Deterministic Fuzzy Matcher** — embedded Junegunn Choi `fzf` (`algo.go`) two-pass scoring.
 4. **Tier 4: Charted Memory** — lexical BM25 repository consensus memory via `@paragon-ux/capn-hook`, stored in `.waymark/memory`.

@@ -16,9 +16,7 @@ import {
 import { WaymarkError } from "../src/types.js";
 import { ask, publish } from "../src/capnAdapter.js";
 import { memoryStoreDir } from "../src/stateDir.js";
-import { initMemoryStoreSync, useCapnStoreContract } from "./capnContract.js";
-
-useCapnStoreContract();
+import { initMemoryStoreSync } from "./capnContract.js";
 
 function setupTestRepo(): string {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), "waymark-semantic-map-"));

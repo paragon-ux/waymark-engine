@@ -7,9 +7,7 @@ import test from "node:test";
 import { McpServer } from "../src/mcp/server.js";
 import { routeDiscovery } from "../src/discoveryRouter.js";
 import { AskMissResult, FuzzyCandidate } from "../src/types.js";
-import { initMemoryStoreSync, useCapnStoreContract } from "./capnContract.js";
-
-useCapnStoreContract();
+import { initMemoryStoreSync } from "./capnContract.js";
 
 function setupRepo(): string {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), "waymark-mcp-parity-"));

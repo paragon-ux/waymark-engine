@@ -29,25 +29,20 @@ Waymark passes the project root and the store explicitly on every capn invocatio
 capn --root <absolute repository root> --store-dir <absolute .waymark/memory path> <command> [args...]
 ```
 
-The flags come before the subcommand on purpose. A capn that does not know them treats `--root` as an unknown command, prints usage, and exits 1 before it touches disk. Waymark maps that response to `CAPN_STORE_DIR_UNSUPPORTED` (exit code 2), and Tier 4 stays off:
+The bundled `@paragon-ux/capn-hook` implements this contract from 2.0.0 on:
+
+- `--root` is the project root as given: no walking up for a store, no `git rev-parse`.
+- `--store-dir` holds the whole store: `entries/`, `map.json`, `config.json`, and the lexical index. A relative path resolves against the root.
+- With `--store-dir`, capn leaves `<root>/.gitignore` alone; Waymark writes `.waymark/.gitignore` itself.
+- capn never reads, moves, or deletes a `.capn/` folder. Its own default store, when run directly, is `.capn-hook/`.
+
+The flags come before the subcommand on purpose. A capn without them, such as capn-hook 1.x set through `WAYMARK_CAPN_EXECUTABLE`, treats `--root` as an unknown command, prints usage, and exits 1 before it touches disk. Waymark maps that response to `CAPN_STORE_DIR_UNSUPPORTED` (exit code 2), and Tier 4 stays off for that executable:
 
 - `waymark init` and `waymark memory init` fail with that code.
 - `chart` reports the error and publishes nothing.
 - `ask` misses Tier 4 with `STORE_UNINITIALIZED`.
 
 Tiers 1–3 are unaffected.
-
-`@paragon-ux/capn-hook` 1.1.1 does not accept the flags yet. The fork needs these changes:
-
-1. **Global flags.** `main()` reads `--root <dir>` and `--store-dir <dir>` before the subcommand, in either order. A relative `--store-dir` resolves against the root. Unknown commands must keep printing `Usage:` and exiting 1, because Waymark relies on that response to detect a capn without the flags.
-2. **Store directory override.** `capnDir(root)` returns the `--store-dir` path when it is given. `entries/`, `map.json`, `config.json`, and `qmd/index.sqlite` already derive from `capnDir`, so they follow.
-3. **Project root.** With `--root`, `findProjectRoot()` returns that path unchanged: no walking up for `.capn` and no `git rev-parse`. With only a relative `--store-dir`, it walks up looking for that directory instead of `.capn`, and never stops at a `.capn` it finds on the way.
-4. **Gitignore.** With `--store-dir`, `ensureGitignore()` leaves `<root>/.gitignore` alone (Waymark writes `.waymark/.gitignore`). It must never add `.capn/` when the store lives elsewhere.
-5. **Help text.** `capn --help` lists the two global flags.
-
-Recommended, but Waymark does not depend on it: move the fork's own default store away from `.capn/` (for example to `.capn-hook/`), so that running the fork directly no longer clashes with upstream either. Optional `CAPN_ROOT` / `CAPN_STORE_DIR` environment equivalents would help direct CLI use; Waymark passes the flags only.
-
-After the fork release, bump `@paragon-ux/capn-hook` in `package.json`. The test helpers detect the flags in the bundled fork and switch to it on their own, at which point `test/capnContractHarness.ts` can be deleted. Until then, that harness is the executable spec: it runs the bundled fork with changes 2–4 applied in memory, and never modifies `node_modules`.
 
 To try a local fork checkout, point Waymark at its entry file: `WAYMARK_CAPN_EXECUTABLE=/path/to/capn-hook/dist/capn.js`. Waymark runs `.js`, `.mjs`, and `.cjs` entries with the current Node.
 

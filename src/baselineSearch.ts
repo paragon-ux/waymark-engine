@@ -39,6 +39,8 @@ const DEFAULT_IGNORED_DIRS = new Set([
   ".capn",
   ".waymark",
   ".codedb",
+  ".codedb-core",
+  ".capn-hook",
   "coverage",
 ]);
 

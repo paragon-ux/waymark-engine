@@ -2,7 +2,7 @@
 
 Waymark Engine separates code intelligence into two distinct layers for AI agents:
 1. **Core Automatic Discovery Engine (Tiers 1–3)**: Instant, zero-config discovery on raw source files.
-   - **Tier 1: AST Structural** — deterministic codedb call graph (`@paragon-ux/codedb-core` v1.1.0, resolved and fail-closed), bounded multi-hop graphs, and single-file tree-sitter AST extraction.
+   - **Tier 1: AST Structural** — deterministic codedb call graph (`@paragon-ux/codedb-core` v2.0.2, resolved and fail-closed), bounded multi-hop graphs, and single-file tree-sitter AST extraction.
    - **Tier 2: Literal Path Router** — exact and substring path resolution with zero-hallucination fail-closed defense.
    - **Tier 3: Deterministic Fuzzy Matcher** — embedded Junegunn Choi `fzf` (`algo.go`) two-pass scoring.
 2. **Semantic Repo Map & Consensus Ledger (Tier 4)**: Frontloaded 5-facet architectural consensus memory stored in SQLite (`.waymark/memory`) and queried via lexical BM25 (`@paragon-ux/capn-hook`). Solves agent context amnesia across sessions.

@@ -8,9 +8,7 @@ import { fileURLToPath } from "node:url";
 import { extractCandidateTokens, routeDiscovery } from "../src/discoveryRouter.js";
 import { ask, publish, assertLexicalStore, initCapn } from "../src/capnAdapter.js";
 import { memoryStoreDir } from "../src/stateDir.js";
-import { useCapnStoreContract } from "./capnContract.js";
 
-useCapnStoreContract();
 import { AskJunctionResult, AskHitResult, FuzzyCandidate, WaymarkError } from "../src/types.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));

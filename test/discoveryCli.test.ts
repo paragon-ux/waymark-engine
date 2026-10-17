@@ -8,9 +8,6 @@ import test from "node:test";
 import { McpServer } from "../src/mcp/server.js";
 import { skipCodedb } from "./codedb.js";
 import { memoryStoreDir } from "../src/stateDir.js";
-import { useCapnStoreContract } from "./capnContract.js";
-
-useCapnStoreContract();
 
 const cliPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../src/cli.js");
 

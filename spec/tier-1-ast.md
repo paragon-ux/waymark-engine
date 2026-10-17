@@ -2,7 +2,7 @@
 
 **Tier Identifier**: `ast` / `codedb`  
 **Owning Module**: [`src/codedbAdapter.ts`](../src/codedbAdapter.ts)  
-**Upstream Engine**: [`@paragon-ux/codedb-core`](https://github.com/paragon-ux/codedb-core) (v1.1.0)  
+**Upstream Engine**: [`@paragon-ux/codedb-core`](https://github.com/paragon-ux/codedb-core) (v2.0.2)  
 **Status**: Stable
 
 ---

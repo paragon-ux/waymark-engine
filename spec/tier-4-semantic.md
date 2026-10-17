@@ -2,7 +2,7 @@
 
 **Tier Identifier**: `capn` / `capn-cli`  
 **Owning Module**: [`src/capnAdapter.ts`](../src/capnAdapter.ts)  
-**Upstream Engine**: [`@paragon-ux/capn-hook`](https://github.com/paragon-ux/capn-hook) (v1.1.0, bundled lexical fork)  
+**Upstream Engine**: [`@paragon-ux/capn-hook`](https://github.com/paragon-ux/capn-hook) (v2.0.0, bundled lexical fork)  
 **Status**: Stable
 
 ---

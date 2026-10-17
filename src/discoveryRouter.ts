@@ -198,6 +198,9 @@ const SKIP_DIRS = new Set<string>([
   "capn", "waymark", "qmd", "claude", "codex", "zed",
   "eval", "experiments", "evidence", "sandbox", "tmp", "vendor", "venv",
   "__pycache__", ".git", ".capn", ".waymark",
+  // Tool state that never belongs in path results: upstream codedb, the codedb-core
+  // fork, and the capn-hook fork default store.
+  ".codedb", ".codedb-core", ".capn-hook",
 ]);
 
 function canonicalRoot(r: string): string {

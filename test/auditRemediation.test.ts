@@ -15,9 +15,7 @@ import { getResidentClient, closeAllResidentClients, normalizeKeyRoot } from "..
 import { queryMultiSymbols, fuzzyCandidateCacheSize, pruneFuzzyCandidateCache, queryFuzzyCandidates, assertSupportedCodedbCommand, resolveCodedbCommand, runJson, queryStructural } from "../src/codedbAdapter.js";
 import { logSessionEvent, resolveSessionLogPath, type SessionTelemetryEvent } from "../src/sessionLogger.js";
 import { ask, capnStoreArgs, initCapn, publish, resolveCapnCommand } from "../src/capnAdapter.js";
-import { useCapnStoreContract } from "./capnContract.js";
 
-useCapnStoreContract();
 import { getLiveDashboardHtml, LIVE_OBSERVER_HOST, startLiveReplObserver } from "../src/repl.js";
 import { skipCodedb } from "./codedb.js";
 import { discoverSymbolsInRepo } from "../src/astExtractor.js";
@@ -67,7 +65,7 @@ test("verifyHop validates persisted range and span before trusting a matching fi
 test("path discovery indexes supported hidden config directories and ignores runtime metadata", () => {
   const root = workspace();
   try {
-    for (const file of [".github/workflows/check.yml", ".vscode/settings.json", ".git/config", ".capn/entries/a.md", ".waymark/sessions/active.jsonl", "node_modules/pkg/index.js"]) {
+    for (const file of [".github/workflows/check.yml", ".vscode/settings.json", ".git/config", ".capn/entries/a.md", ".waymark/sessions/active.jsonl", ".codedb/projects/x/data.log", ".codedb-core/projects/x/state", ".capn-hook/entries/a.md", "node_modules/pkg/index.js"]) {
       const full = path.join(root, file);
       fs.mkdirSync(path.dirname(full), { recursive: true });
       fs.writeFileSync(full, "fixture\n");
@@ -79,6 +77,9 @@ test("path discovery indexes supported hidden config directories and ignores run
     assert.ok(!first.some((p) => p.startsWith(".git/")));
     assert.ok(!first.some((p) => p.startsWith(".capn/")));
     assert.ok(!first.some((p) => p.startsWith(".waymark/")));
+    for (const toolDir of [".codedb/", ".codedb-core/", ".capn-hook/"]) {
+      assert.ok(!first.some((p) => p.startsWith(toolDir)), `${toolDir} must not appear in path results`);
+    }
     assert.ok(!first.some((p) => p.startsWith("node_modules/")));
     const added = path.join(root, ".github", "new.yml");
     fs.writeFileSync(added, "new\n");

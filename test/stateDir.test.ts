@@ -12,9 +12,7 @@ import { getPidFilePath } from "../src/daemon.js";
 import { getSemanticMapStatus } from "../src/semanticMap.js";
 import { logSessionEvent } from "../src/sessionLogger.js";
 import { ensureStateDir, memoryStoreDir, stateDir } from "../src/stateDir.js";
-import { bundledForkEntry, bundledForkSupportsStoreDir, useCapnStoreContract } from "./capnContract.js";
-
-useCapnStoreContract();
+import { bundledForkEntry } from "./capnContract.js";
 
 const cliPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../src/cli.js");
 const QUESTION = "Where is the app entry declared?";
@@ -140,32 +138,48 @@ test("Waymark never creates .capn in a repository without one", async () => {
   }
 });
 
-test("the bundled capn fork either honors --store-dir or is refused before it touches disk", async () => {
+test("the bundled capn fork honors --store-dir and leaves a foreign .capn untouched", async () => {
   const repo = setupRepo();
   const fork = bundledForkEntry();
   try {
     writeForeignCapnStore(repo, false);
     const before = snapshot(path.join(repo, ".capn"));
     const init = await initCapn(repo, fork);
+    assert.equal(init.ok, true, JSON.stringify(init));
     const published = await publish(repo, "capn-cli", fork, "Where is appEntry?", "In src/app.ts.", ["src/app.ts"]);
-    if (bundledForkSupportsStoreDir()) {
-      assert.equal(init.ok, true, JSON.stringify(init));
-      assert.equal(published.published, true, published.error);
-      assert.equal(fs.existsSync(path.join(memoryStoreDir(repo), "config.json")), true);
-    } else {
-      assert.equal(init.ok, false);
-      assert.equal(init.exitCode, 2);
-      assert.match(String(init.error), /^CAPN_STORE_DIR_UNSUPPORTED: /);
-      assert.equal(published.published, false);
-      assert.match(String(published.error), /CAPN_STORE_DIR_UNSUPPORTED/);
-      assert.equal(fs.existsSync(memoryStoreDir(repo)), false);
-      const cli = spawnSync(process.execPath, [cliPath, "init", "--root", repo, "--capn-executable", fork], { encoding: "utf8", windowsHide: true });
-      assert.equal(cli.status, 2, cli.stdout + cli.stderr);
-    }
+    assert.equal(published.published, true, published.error);
+    assert.equal(fs.existsSync(path.join(memoryStoreDir(repo), "config.json")), true);
     assert.deepEqual(snapshot(path.join(repo, ".capn")), before);
     assert.equal(fs.existsSync(path.join(repo, ".gitignore")), false);
   } finally {
     fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("a capn without --store-dir support is refused before it touches disk", async () => {
+  const repo = setupRepo();
+  const bin = fs.mkdtempSync(path.join(os.tmpdir(), "waymark-old-capn-"));
+  // Stands in for capn-hook 1.x: `--root` is an unknown command, so it prints usage and exits 1.
+  const oldCapn = path.join(bin, "capn.mjs");
+  fs.writeFileSync(oldCapn, 'process.stderr.write("Usage: capn <command> [args]\\n");\nprocess.exit(1);\n', "utf8");
+  try {
+    writeForeignCapnStore(repo, false);
+    const before = snapshot(path.join(repo, ".capn"));
+    const init = await initCapn(repo, oldCapn);
+    assert.equal(init.ok, false);
+    assert.equal(init.exitCode, 2);
+    assert.match(String(init.error), /^CAPN_STORE_DIR_UNSUPPORTED: /);
+    const published = await publish(repo, "capn-cli", oldCapn, "Where is appEntry?", "In src/app.ts.", ["src/app.ts"]);
+    assert.equal(published.published, false);
+    assert.match(String(published.error), /CAPN_STORE_DIR_UNSUPPORTED/);
+    assert.equal(fs.existsSync(memoryStoreDir(repo)), false);
+    const cli = spawnSync(process.execPath, [cliPath, "init", "--root", repo, "--capn-executable", oldCapn], { encoding: "utf8", windowsHide: true });
+    assert.equal(cli.status, 2, cli.stdout + cli.stderr);
+    assert.deepEqual(snapshot(path.join(repo, ".capn")), before);
+    assert.equal(fs.existsSync(path.join(repo, ".gitignore")), false);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+    fs.rmSync(bin, { recursive: true, force: true });
   }
 });
 

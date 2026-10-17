@@ -7,9 +7,7 @@ import { createRequire } from "node:module";
 import test from "node:test";
 import { ask, initCapn, publish, unchart, bust, prune, listEntries, context } from "../src/capnAdapter.js";
 import { memoryStoreDir } from "../src/stateDir.js";
-import { initMemoryStoreSync, useCapnStoreContract } from "./capnContract.js";
-
-useCapnStoreContract();
+import { initMemoryStoreSync } from "./capnContract.js";
 
 function setupRepo(): string {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), "waymark-capn-surface-"));

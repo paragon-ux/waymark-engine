@@ -56,7 +56,10 @@ export type StructuredSymbolKind =
   | "section"
   | "heading"
   | "config_block"
-  | "table";
+  | "config_item"
+  | "table"
+  | "table_row"
+  | "code_block";
 
 export interface StructuredSymbolPosition {
   line: number;
@@ -498,6 +501,17 @@ function collectStructuredSymbols(rootNode: any, language?: StructuredLanguage):
       if (name && value && ["arrow_function", "function_expression", "function"].includes(value.type)) {
         symbols.push(structuredSymbol(node, currentClass ? "method" : "function", name));
       }
+    } else if (node.type === "assignment" && language === "python" && !currentClass && isPythonModuleLevelAssignment(node)) {
+      const left = node.childForFieldName("left") || node.namedChildren[0];
+      if (left?.type === "identifier" && left.text) {
+        symbols.push(structuredSymbol(node, "variable", left.text));
+      } else if (left?.type === "pattern_list" || left?.type === "tuple_pattern") {
+        for (const child of left.namedChildren) {
+          if (child?.type === "identifier" && child.text) {
+            symbols.push(structuredSymbol(node, "variable", child.text));
+          }
+        }
+      }
     }
 
     for (const child of node.children) walk(child, nextClass);
@@ -505,6 +519,18 @@ function collectStructuredSymbols(rootNode: any, language?: StructuredLanguage):
 
   walk(rootNode);
   return symbols;
+}
+
+function isPythonModuleLevelAssignment(node: any): boolean {
+  let curr = node.parent;
+  while (curr) {
+    if (curr.type === "module") return true;
+    if (curr.type !== "expression_statement" && curr.type !== "assignment") {
+      return false;
+    }
+    curr = curr.parent;
+  }
+  return false;
 }
 
 let mdParserInstance: InstanceType<typeof MarkdownIt> | null = null;
@@ -562,6 +588,15 @@ function extractMarkdownSymbols(text: string): StructuredSymbol[] {
     });
   }
 
+  interface TableRowCandidate {
+    cellText: string;
+    startLine: number;
+    endLine: number;
+  }
+  const rowCandidates: TableRowCandidate[] = [];
+  const rowCounts = new Map<string, number>();
+  let inTbody = false;
+
   for (let i = 0; i < tokens.length; i++) {
     const token = tokens[i];
     if (token?.type === "table_open" && token.map) {
@@ -573,11 +608,137 @@ function extractMarkdownSymbols(text: string): StructuredSymbol[] {
         start: { line: startLine, column: 0 },
         end: { line: endLine, column: 0 },
       });
+    } else if (token?.type === "tbody_open") {
+      inTbody = true;
+    } else if (token?.type === "tbody_close") {
+      inTbody = false;
+    } else if (inTbody && token?.type === "tr_open" && token.map) {
+      const startLine = token.map[0] + 1;
+      const endLine = Math.max(startLine, token.map[1]);
+      let cellText = "";
+      for (let j = i + 1; j < tokens.length; j++) {
+        const inner = tokens[j];
+        if (!inner || inner.type === "tr_close") break;
+        if (inner.type === "td_open") {
+          const inlineTok = tokens[j + 1];
+          if (inlineTok?.type === "inline" && inlineTok.content) {
+            cellText = inlineTok.content.replace(/`/g, "").replace(/\s+/g, " ").trim();
+          }
+          break;
+        }
+      }
+      rowCandidates.push({ cellText, startLine, endLine });
+      if (cellText) {
+        rowCounts.set(cellText, (rowCounts.get(cellText) ?? 0) + 1);
+      }
+    } else if (token?.type === "fence" && token.map) {
+      const startLine = token.map[0] + 1;
+      const endLine = Math.max(startLine, token.map[1]);
+      symbols.push({
+        name: `fence:L${startLine}`,
+        kind: "code_block",
+        start: { line: startLine, column: 0 },
+        end: { line: endLine, column: 0 },
+      });
     }
+  }
+
+  for (const row of rowCandidates) {
+    let name: string;
+    if (!row.cellText) {
+      name = `row:L${row.startLine}`;
+    } else if ((rowCounts.get(row.cellText) ?? 0) > 1) {
+      name = `row:${row.cellText} (L${row.startLine})`;
+    } else {
+      name = `row:${row.cellText}`;
+    }
+    symbols.push({
+      name,
+      kind: "table_row",
+      start: { line: row.startLine, column: 0 },
+      end: { line: row.endLine, column: 0 },
+    });
   }
 
   symbols.sort((a, b) => a.start.line - b.start.line);
   return symbols;
+}
+
+const MAX_JSON_ARRAY_ITEMS = 500;
+
+function isJsonIdentifyingKey(key: string): boolean {
+  return key === "id" || key === "name" || key === "key" || (key.endsWith("_id") && key.length > 3);
+}
+
+function extractJsonArrayObjects(arrayNode: any, prefix: string, symbols: StructuredSymbol[]): void {
+  const children: any[] = arrayNode?.namedChildren ?? [];
+  if (children.length === 0 || children.length > MAX_JSON_ARRAY_ITEMS) return;
+
+  interface ArrayItemEntry {
+    node: any;
+    index: number;
+    candId: string | null;
+    conflicted: boolean;
+  }
+
+  const entries: ArrayItemEntry[] = [];
+  const idCounts = new Map<string, number>();
+
+  for (let idx = 0; idx < children.length; idx++) {
+    const elem = children[idx];
+    if (elem?.type !== "object") continue;
+
+    const seenKeys = new Set<string>();
+    const candidateValues: string[] = [];
+    let hasDuplicateSameKey = false;
+
+    for (const ep of elem.namedChildren) {
+      if (ep?.type !== "pair") continue;
+      const kNode = ep.childForFieldName("key");
+      const vNode = ep.childForFieldName("value");
+      if (!kNode) continue;
+      const k = decodePropertyKey(kNode.text);
+      if (!isJsonIdentifyingKey(k)) continue;
+      if (seenKeys.has(k)) {
+        hasDuplicateSameKey = true;
+      }
+      seenKeys.add(k);
+      if (vNode?.type === "string") {
+        const v = decodePropertyKey(vNode.text).trim();
+        if (v.length > 0) {
+          candidateValues.push(v);
+        }
+      }
+    }
+
+    const distinctValues = Array.from(new Set(candidateValues));
+    if (distinctValues.length === 0) {
+      entries.push({ node: elem, index: idx, candId: null, conflicted: false });
+    } else if (hasDuplicateSameKey || distinctValues.length > 1) {
+      entries.push({ node: elem, index: idx, candId: distinctValues[0]!, conflicted: true });
+    } else {
+      const candId = distinctValues[0]!;
+      entries.push({ node: elem, index: idx, candId, conflicted: false });
+      idCounts.set(candId, (idCounts.get(candId) ?? 0) + 1);
+    }
+  }
+
+  for (const entry of entries) {
+    let name: string;
+    if (!entry.candId) {
+      name = `${prefix}[${entry.index}]`;
+    } else if (entry.conflicted || (idCounts.get(entry.candId) ?? 0) > 1) {
+      name = `${prefix}[${entry.candId}#${entry.index}]`;
+    } else {
+      name = `${prefix}[${entry.candId}]`;
+    }
+    symbols.push({
+      name,
+      kind: "config_item",
+      start: { line: entry.node.startPosition.row + 1, column: entry.node.startPosition.column },
+      end: { line: entry.node.endPosition.row + 1, column: entry.node.endPosition.column },
+    });
+  }
 }
 
 function collectJsonSymbols(rootNode: any): StructuredSymbol[] {
@@ -599,6 +760,7 @@ function collectJsonSymbols(rootNode: any): StructuredSymbol[] {
           for (const subPair of valNode.namedChildren) {
             if (subPair.type === "pair") {
               const subKeyNode = subPair.childForFieldName("key");
+              const subValNode = subPair.childForFieldName("value");
               const subKey = subKeyNode ? decodePropertyKey(subKeyNode.text) : "<unknown>";
               symbols.push({
                 name: `${rawKey}.${subKey}`,
@@ -606,10 +768,20 @@ function collectJsonSymbols(rootNode: any): StructuredSymbol[] {
                 start: { line: subPair.startPosition.row + 1, column: subPair.startPosition.column },
                 end: { line: subPair.endPosition.row + 1, column: subPair.endPosition.column },
               });
+              if (subValNode?.type === "array") {
+                extractJsonArrayObjects(subValNode, `${rawKey}.${subKey}`, symbols);
+              }
             }
           }
+        } else if (valNode?.type === "array") {
+          extractJsonArrayObjects(valNode, rawKey, symbols);
         }
       }
+    }
+  } else {
+    const rootArr = rootNode.namedChildren.find((c: any) => c.type === "array");
+    if (rootArr) {
+      extractJsonArrayObjects(rootArr, "", symbols);
     }
   }
   return symbols;

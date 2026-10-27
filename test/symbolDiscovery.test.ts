@@ -1283,6 +1283,57 @@ test("A2: JSON array-object discovery handles id/name/key/*_id, missing IDs, dup
       rootArrRes.symbols.map((s) => `${s.name}:${s.kind}`),
       ["[alpha]:config_item", "[1]:config_item"],
     );
+
+    // WM-R1 Case 1: literal numeric string ID vs unnamed index fallback must not collide
+    fs.writeFileSync(
+      path.join(repo, "collision_numeric.json"),
+      JSON.stringify({ items: [{ id: "1" }, { other: "unnamed" }] }),
+      "utf8",
+    );
+    const colNumeric = await discoverSymbolsInFile(repo, "collision_numeric.json");
+    assert.deepEqual(
+      colNumeric.symbols.filter((s) => s.kind === "config_item").map((s) => s.name),
+      ["items[1#0]", "items[1]"],
+    );
+
+    // WM-R1 Case 2: conflicted object suffix (#0) vs literal ID ending with #0 must not collide
+    fs.writeFileSync(
+      path.join(repo, "collision_hash.json"),
+      JSON.stringify([{ id: "x", name: "y" }, { id: "x#0" }]),
+      "utf8",
+    );
+    const colHash = await discoverSymbolsInFile(repo, "collision_hash.json");
+    assert.deepEqual(
+      colHash.symbols.map((s) => s.name),
+      ["[x#0]", "[x#0#1]"],
+    );
+
+    // WM-R1 Case 3: conflicted object's identifying values must be counted toward duplicate ID ambiguity
+    fs.writeFileSync(
+      path.join(repo, "collision_shared_conflict.json"),
+      JSON.stringify([{ id: "x", name: "y" }, { id: "x" }, { id: null, name: "z" }, { id: "z" }]),
+      "utf8",
+    );
+    const colShared = await discoverSymbolsInFile(repo, "collision_shared_conflict.json");
+    assert.deepEqual(
+      colShared.symbols.map((s) => s.name),
+      ["[x#0]", "[x#1]", "[z#2]", "[z#3]"],
+    );
+
+    // WM-R2: 500 JSON array items succeed; 501 items fail closed with OUTLINE_LIMIT_EXCEEDED
+    const items500 = Array.from({ length: 500 }, (_, i) => ({ id: `item_${i}` }));
+    fs.writeFileSync(path.join(repo, "limit_500.json"), JSON.stringify({ items: items500 }), "utf8");
+    const res500 = await discoverSymbolsInFile(repo, "limit_500.json");
+    assert.equal(res500.symbols.filter((s) => s.kind === "config_item").length, 500);
+    assert.equal(res500.symbols[1]?.name, "items[item_0]");
+    assert.equal(res500.symbols[500]?.name, "items[item_499]");
+
+    const items501 = Array.from({ length: 501 }, (_, i) => ({ id: `item_${i}` }));
+    fs.writeFileSync(path.join(repo, "limit_501.json"), JSON.stringify({ items: items501 }), "utf8");
+    await assert.rejects(
+      () => discoverSymbolsInFile(repo, "limit_501.json"),
+      (err: any) => err?.code === "OUTLINE_LIMIT_EXCEEDED",
+    );
   } finally {
     cleanRepo(repo);
   }
@@ -1337,6 +1388,39 @@ test("A3: Markdown discovery extracts tbody table rows, disambiguates repeated r
         "row:shared-row (L16):table_row:L16-16",
         "## 3. Patch Template:section:L18-26",
         "fence:L20:code_block:L20-25",
+      ],
+    );
+
+    // WM-R3: verify non-zero end.column on single-line table_row and multi-line code_block
+    const chkRow = md.symbols.find((s) => s.name === "row:CHK-14-C");
+    assert.deepEqual(chkRow?.start, { line: 7, column: 0 });
+    assert.deepEqual(chkRow?.end, { line: 7, column: "| `CHK-14-C` | `<= 30 sec` |".length });
+    assert.ok((chkRow?.end.column ?? 0) > (chkRow?.start.column ?? 0));
+
+    const fenceSym = md.symbols.find((s) => s.name === "fence:L20");
+    assert.deepEqual(fenceSym?.start, { line: 20, column: 0 });
+    assert.deepEqual(fenceSym?.end, { line: 25, column: 3 });
+
+    // Verify literal row names that resemble fallback/disambiguation patterns are disambiguated
+    fs.writeFileSync(path.join(repo, "row_collision.md"), [
+      "| ID | Value |",
+      "| --- | --- |",
+      "| L5 | literal-line-id |",
+      "| foo (L6) | literal-paren-id |",
+      "|   | empty-id-on-L5 |",
+      "| foo | dup-1 |",
+      "| foo | dup-2 |",
+      "",
+    ].join("\n"), "utf8");
+    const rowColMd = await discoverSymbolsInFile(repo, "row_collision.md");
+    assert.deepEqual(
+      rowColMd.symbols.filter((s) => s.kind === "table_row").map((s) => s.name),
+      [
+        "row:L5 (L3)",
+        "row:foo (L6) (L4)",
+        "row:L5",
+        "row:foo (L6)",
+        "row:foo (L7)",
       ],
     );
   } finally {

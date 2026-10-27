@@ -544,7 +544,9 @@ function getMarkdownParser(): InstanceType<typeof MarkdownIt> {
 function extractMarkdownSymbols(text: string): StructuredSymbol[] {
   const md = getMarkdownParser();
   const tokens = md.parse(text, {});
-  const totalLines = text.split(/\r?\n/).length;
+  const lines = text.split(/\r?\n/);
+  const totalLines = lines.length;
+  const lineEndCol = (lineNum: number): number => lines[lineNum - 1]?.length ?? 0;
 
   interface HeadingItem {
     title: string;
@@ -580,11 +582,12 @@ function extractMarkdownSymbols(text: string): StructuredSymbol[] {
 
   for (let i = 0; i < headings.length; i++) {
     const current = headings[i]!;
+    const secEndLine = endLines[i] ?? totalLines;
     symbols.push({
       name: `${"#".repeat(current.level)} ${current.title}`,
       kind: "section",
       start: { line: current.startLine, column: 0 },
-      end: { line: endLines[i] ?? totalLines, column: 0 },
+      end: { line: secEndLine, column: lineEndCol(secEndLine) },
     });
   }
 
@@ -601,12 +604,12 @@ function extractMarkdownSymbols(text: string): StructuredSymbol[] {
     const token = tokens[i];
     if (token?.type === "table_open" && token.map) {
       const startLine = token.map[0] + 1;
-      const endLine = token.map[1];
+      const endLine = Math.max(startLine, token.map[1]);
       symbols.push({
         name: `Table (L${startLine}-L${endLine})`,
         kind: "table",
         start: { line: startLine, column: 0 },
-        end: { line: endLine, column: 0 },
+        end: { line: endLine, column: lineEndCol(endLine) },
       });
     } else if (token?.type === "tbody_open") {
       inTbody = true;
@@ -638,7 +641,7 @@ function extractMarkdownSymbols(text: string): StructuredSymbol[] {
         name: `fence:L${startLine}`,
         kind: "code_block",
         start: { line: startLine, column: 0 },
-        end: { line: endLine, column: 0 },
+        end: { line: endLine, column: lineEndCol(endLine) },
       });
     }
   }
@@ -647,7 +650,11 @@ function extractMarkdownSymbols(text: string): StructuredSymbol[] {
     let name: string;
     if (!row.cellText) {
       name = `row:L${row.startLine}`;
-    } else if ((rowCounts.get(row.cellText) ?? 0) > 1) {
+    } else if (
+      (rowCounts.get(row.cellText) ?? 0) > 1 ||
+      /^L\d+$/.test(row.cellText) ||
+      /\(L\d+\)$/.test(row.cellText)
+    ) {
       name = `row:${row.cellText} (L${row.startLine})`;
     } else {
       name = `row:${row.cellText}`;
@@ -656,7 +663,7 @@ function extractMarkdownSymbols(text: string): StructuredSymbol[] {
       name,
       kind: "table_row",
       start: { line: row.startLine, column: 0 },
-      end: { line: row.endLine, column: 0 },
+      end: { line: row.endLine, column: lineEndCol(row.endLine) },
     });
   }
 
@@ -664,7 +671,7 @@ function extractMarkdownSymbols(text: string): StructuredSymbol[] {
   return symbols;
 }
 
-const MAX_JSON_ARRAY_ITEMS = 500;
+export const MAX_JSON_ARRAY_ITEMS = 500;
 
 function isJsonIdentifyingKey(key: string): boolean {
   return key === "id" || key === "name" || key === "key" || (key.endsWith("_id") && key.length > 3);
@@ -672,7 +679,16 @@ function isJsonIdentifyingKey(key: string): boolean {
 
 function extractJsonArrayObjects(arrayNode: any, prefix: string, symbols: StructuredSymbol[]): void {
   const children: any[] = arrayNode?.namedChildren ?? [];
-  if (children.length === 0 || children.length > MAX_JSON_ARRAY_ITEMS) return;
+  if (children.length === 0) return;
+  const hasObjectChild = children.some((c: any) => c?.type === "object");
+  if (!hasObjectChild) return;
+  if (children.length > MAX_JSON_ARRAY_ITEMS) {
+    throw new WaymarkError(
+      "OUTLINE_LIMIT_EXCEEDED",
+      `JSON array "${prefix || "<root>"}" has ${children.length} elements, exceeding the ${MAX_JSON_ARRAY_ITEMS}-item outline limit`,
+      2,
+    );
+  }
 
   interface ArrayItemEntry {
     node: any;
@@ -691,6 +707,7 @@ function extractJsonArrayObjects(arrayNode: any, prefix: string, symbols: Struct
     const seenKeys = new Set<string>();
     const candidateValues: string[] = [];
     let hasDuplicateSameKey = false;
+    let hasInvalidIdValue = false;
 
     for (const ep of elem.namedChildren) {
       if (ep?.type !== "pair") continue;
@@ -707,22 +724,37 @@ function extractJsonArrayObjects(arrayNode: any, prefix: string, symbols: Struct
         const v = decodePropertyKey(vNode.text).trim();
         if (v.length > 0) {
           candidateValues.push(v);
+        } else {
+          hasInvalidIdValue = true;
         }
+      } else {
+        hasInvalidIdValue = true;
       }
     }
 
     const distinctValues = Array.from(new Set(candidateValues));
+    for (const val of distinctValues) {
+      idCounts.set(val, (idCounts.get(val) ?? 0) + 1);
+    }
+
     if (distinctValues.length === 0) {
       entries.push({ node: elem, index: idx, candId: null, conflicted: false });
-    } else if (hasDuplicateSameKey || distinctValues.length > 1) {
-      entries.push({ node: elem, index: idx, candId: distinctValues[0]!, conflicted: true });
     } else {
       const candId = distinctValues[0]!;
-      entries.push({ node: elem, index: idx, candId, conflicted: false });
-      idCounts.set(candId, (idCounts.get(candId) ?? 0) + 1);
+      // Disjoint namespaces:
+      // 1) Pure numeric literal IDs (/^\d+$/) would collide with unnamed index fallbacks (`prefix[idx]`).
+      // 2) Literal IDs ending with `#<digits>` (/#\d+$/) would collide with disambiguated IDs (`prefix[id#idx]`).
+      const namespaceCollision = /^\d+$/.test(candId) || /#\d+$/.test(candId);
+      const conflicted =
+        hasDuplicateSameKey ||
+        hasInvalidIdValue ||
+        distinctValues.length > 1 ||
+        namespaceCollision;
+      entries.push({ node: elem, index: idx, candId, conflicted });
     }
   }
 
+  const emittedInArray = new Set<string>();
   for (const entry of entries) {
     let name: string;
     if (!entry.candId) {
@@ -732,6 +764,14 @@ function extractJsonArrayObjects(arrayNode: any, prefix: string, symbols: Struct
     } else {
       name = `${prefix}[${entry.candId}]`;
     }
+    if (emittedInArray.has(name)) {
+      throw new WaymarkError(
+        "AMBIGUOUS_SYMBOL_IDENTITY",
+        `Duplicate JSON array symbol identity "${name}" in "${prefix || "<root>"}"`,
+        2,
+      );
+    }
+    emittedInArray.add(name);
     symbols.push({
       name,
       kind: "config_item",

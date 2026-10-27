@@ -697,6 +697,7 @@ test("Snapshot tests: full symbol-list snapshots for Markdown, JSON, TOML, YAML,
         { name: "# Documentation Title", kind: "section", line: 1 },
         { name: "## Section One", kind: "section", line: 3 },
         { name: "Table (L5-L7)", kind: "table", line: 5 },
+        { name: "row:val1", kind: "table_row", line: 7 },
         { name: "## Section Two", kind: "section", line: 8 },
         { name: "### Subsection A", kind: "section", line: 10 },
       ]
@@ -1152,4 +1153,404 @@ test("Waymark C/C++ outline extracts symbols across unexpanded macros and filter
     cleanRepo(repo);
   }
 });
+
+test("A1: Python module-level assignments are extracted while function-local, class-local, and control-flow assignments are excluded", async () => {
+  const repo = setupRepo();
+  try {
+    fs.writeFileSync(path.join(repo, "module_vars.py"), [
+      'FRAME_SYNC_STREAM = "HEADER::SYNC::SYNC::TRAILER"',
+      'VALID_SCOPES: tuple[str, ...] = ("GLOBAL", "PARTITION")',
+      "ALPHA, BETA = 10, 20",
+      "CHAIN_A = CHAIN_B = 99",
+      "obj.attr = 42",
+      "items[0] = 1",
+      "if True:",
+      "    CONDITIONAL_VAR = 123",
+      "",
+      "class Envelope:",
+      "    CLASS_ATTR = 'v3'",
+      "    def method(self):",
+      "        method_local = 1",
+      "        return method_local",
+      "",
+      "def execute_kernel():",
+      "    fn_local = 2",
+      "    for idx in range(4):",
+      "        loop_local = idx",
+      "    return fn_local",
+      "",
+    ].join("\n"), "utf8");
+
+    const res = await discoverSymbolsInFile(repo, "module_vars.py");
+    assert.equal(res.language, "python");
+    assert.deepEqual(
+      res.symbols.map((s) => `${s.name}:${s.kind}:L${s.start.line}-${s.end.line}`),
+      [
+        "FRAME_SYNC_STREAM:variable:L1-1",
+        "VALID_SCOPES:variable:L2-2",
+        "ALPHA:variable:L3-3",
+        "BETA:variable:L3-3",
+        "CHAIN_A:variable:L4-4",
+        "CHAIN_B:variable:L4-4",
+        "Envelope:class:L10-14",
+        "method:method:L12-14",
+        "execute_kernel:function:L16-20",
+      ],
+    );
+  } finally {
+    cleanRepo(repo);
+  }
+});
+
+test("A2: JSON array-object discovery handles id/name/key/*_id, missing IDs, duplicates, conflicting keys, nested arrays, root arrays, and Unicode", async () => {
+  const repo = setupRepo();
+  try {
+    fs.writeFileSync(path.join(repo, "routing.json"), [
+      "{",
+      '  "manifest_version": "2026.10.1",',
+      '  "tenants": [',
+      "    {",
+      '      "tenant_id": "ten_006",',
+      '      "wire_version": "v2"',
+      "    },",
+      "    {",
+      '      "tenant_id": "ten_013",',
+      '      "wire_version": "v2"',
+      "    },",
+      "    {",
+      '      "cluster_shard": "shard-no-id"',
+      "    },",
+      "    {",
+      '      "tenant_id": "ten_dup",',
+      '      "wire_version": "v1"',
+      "    },",
+      "    {",
+      '      "tenant_id": "ten_dup",',
+      '      "wire_version": "v2"',
+      "    },",
+      "    {",
+      '      "tenant_id": "ten_conflict",',
+      '      "account_id": "acc_conflict"',
+      "    },",
+      "    {",
+      '      "id": "dup_key_1",',
+      '      "id": "dup_key_1"',
+      "    },",
+      "    {",
+      '      "name": "tén_🚀"',
+      "    }",
+      "  ],",
+      '  "nested": {',
+      '    "routes": [',
+      '      { "key": "route_alpha" },',
+      '      { "id": "" },',
+      '      { "id": 42 }',
+      "    ]",
+      "  }",
+      "}",
+    ].join("\n"), "utf8");
+
+    const res = await discoverSymbolsInFile(repo, "routing.json");
+    assert.equal(res.language, "json");
+    assert.deepEqual(
+      res.symbols.map((s) => `${s.name}:${s.kind}:L${s.start.line}-${s.end.line}`),
+      [
+        "manifest_version:config_block:L2-2",
+        "tenants:config_block:L3-34",
+        "tenants[ten_006]:config_item:L4-7",
+        "tenants[ten_013]:config_item:L8-11",
+        "tenants[2]:config_item:L12-14",
+        "tenants[ten_dup#3]:config_item:L15-18",
+        "tenants[ten_dup#4]:config_item:L19-22",
+        "tenants[ten_conflict#5]:config_item:L23-26",
+        "tenants[dup_key_1#6]:config_item:L27-30",
+        "tenants[tén_🚀]:config_item:L31-33",
+        "nested:config_block:L35-41",
+        "nested.routes:config_block:L36-40",
+        "nested.routes[route_alpha]:config_item:L37-37",
+        "nested.routes[1]:config_item:L38-38",
+        "nested.routes[2]:config_item:L39-39",
+      ],
+    );
+
+    // Root-level JSON array support
+    fs.writeFileSync(path.join(repo, "root_array.json"), JSON.stringify([
+      { id: "alpha", value: 1 },
+      { value: 2 },
+    ], null, 2), "utf8");
+    const rootArrRes = await discoverSymbolsInFile(repo, "root_array.json");
+    assert.deepEqual(
+      rootArrRes.symbols.map((s) => `${s.name}:${s.kind}`),
+      ["[alpha]:config_item", "[1]:config_item"],
+    );
+
+    // WM-R1 Case 1: literal numeric string ID vs unnamed index fallback must not collide
+    fs.writeFileSync(
+      path.join(repo, "collision_numeric.json"),
+      JSON.stringify({ items: [{ id: "1" }, { other: "unnamed" }] }),
+      "utf8",
+    );
+    const colNumeric = await discoverSymbolsInFile(repo, "collision_numeric.json");
+    assert.deepEqual(
+      colNumeric.symbols.filter((s) => s.kind === "config_item").map((s) => s.name),
+      ["items[1#0]", "items[1]"],
+    );
+
+    // WM-R1 Case 2: conflicted object suffix (#0) vs literal ID ending with #0 must not collide
+    fs.writeFileSync(
+      path.join(repo, "collision_hash.json"),
+      JSON.stringify([{ id: "x", name: "y" }, { id: "x#0" }]),
+      "utf8",
+    );
+    const colHash = await discoverSymbolsInFile(repo, "collision_hash.json");
+    assert.deepEqual(
+      colHash.symbols.map((s) => s.name),
+      ["[x#0]", "[x#0#1]"],
+    );
+
+    // WM-R1 Case 3: conflicted object's identifying values must be counted toward duplicate ID ambiguity
+    fs.writeFileSync(
+      path.join(repo, "collision_shared_conflict.json"),
+      JSON.stringify([{ id: "x", name: "y" }, { id: "x" }, { id: null, name: "z" }, { id: "z" }]),
+      "utf8",
+    );
+    const colShared = await discoverSymbolsInFile(repo, "collision_shared_conflict.json");
+    assert.deepEqual(
+      colShared.symbols.map((s) => s.name),
+      ["[x#0]", "[x#1]", "[z#2]", "[z#3]"],
+    );
+
+    // WM-R1 Case 4: cross-array dotted key vs nested path (`{"a":{"b":[{"id":"x"}]},"a.b":[{"id":"x"}]}`)
+    // must encode path segments unambiguously so two distinct objects never share a symbol name
+    fs.writeFileSync(
+      path.join(repo, "collision_cross_array.json"),
+      JSON.stringify({ a: { b: [{ id: "x" }] }, "a.b": [{ id: "x" }] }),
+      "utf8",
+    );
+    const colCross = await discoverSymbolsInFile(repo, "collision_cross_array.json");
+    const colCrossNames = colCross.symbols.map((s) => `${s.name}:${s.kind}`);
+    assert.deepEqual(colCrossNames, [
+      "a:config_block",
+      "a.b:config_block",
+      "a.b[x]:config_item",
+      "a\\.b:config_block",
+      "a\\.b[x]:config_item",
+    ]);
+    assert.equal(new Set(colCross.symbols.map((s) => s.name)).size, colCross.symbols.length);
+
+    // WM-R1 Case 5: duplicate root property keys in raw JSON fail closed with AMBIGUOUS_SYMBOL_IDENTITY
+    fs.writeFileSync(
+      path.join(repo, "collision_dup_root_key.json"),
+      '{\n  "a": [{ "id": "x" }],\n  "a": [{ "id": "x" }]\n}\n',
+      "utf8",
+    );
+    await assert.rejects(
+      () => discoverSymbolsInFile(repo, "collision_dup_root_key.json"),
+      (err: any) => err?.code === "AMBIGUOUS_SYMBOL_IDENTITY",
+    );
+
+    // WM-R2: 500 JSON array items succeed; 501 items fail closed with OUTLINE_LIMIT_EXCEEDED
+    const items500 = Array.from({ length: 500 }, (_, i) => ({ id: `item_${i}` }));
+    fs.writeFileSync(path.join(repo, "limit_500.json"), JSON.stringify({ items: items500 }), "utf8");
+    const res500 = await discoverSymbolsInFile(repo, "limit_500.json");
+    assert.equal(res500.symbols.filter((s) => s.kind === "config_item").length, 500);
+    assert.equal(res500.symbols[1]?.name, "items[item_0]");
+    assert.equal(res500.symbols[500]?.name, "items[item_499]");
+
+    const items501 = Array.from({ length: 501 }, (_, i) => ({ id: `item_${i}` }));
+    fs.writeFileSync(path.join(repo, "limit_501.json"), JSON.stringify({ items: items501 }), "utf8");
+    await assert.rejects(
+      () => discoverSymbolsInFile(repo, "limit_501.json"),
+      (err: any) => err?.code === "OUTLINE_LIMIT_EXCEEDED",
+    );
+  } finally {
+    cleanRepo(repo);
+  }
+});
+
+test("A3: Markdown discovery extracts tbody table rows, disambiguates repeated row names across tables, and scopes fenced code blocks", async () => {
+  const repo = setupRepo();
+  try {
+    fs.writeFileSync(path.join(repo, "runbook.md"), [
+      "# Runbook Title",
+      "",
+      "## 1. Gates",
+      "",
+      "| Check ID | Threshold |",
+      "| --- | --- |",
+      "| `CHK-14-C` | `<= 30 sec` |",
+      "| `shared-row` | `10` |",
+      "|   | `empty-first-cell` |",
+      "",
+      "## 2. Cohorts",
+      "",
+      "| Cohort | Scope |",
+      "| --- | --- |",
+      "| `canary-v3` | `GLOBAL` |",
+      "| `shared-row` | `TENANT` |",
+      "",
+      "## 3. Patch Template",
+      "",
+      "```text",
+      "# Heading Inside Fence Must Not Be Extracted",
+      "| Fake | Table |",
+      "| --- | --- |",
+      "| fake-row | 1 |",
+      "```",
+      "",
+    ].join("\n"), "utf8");
+
+    const md = await discoverSymbolsInFile(repo, "runbook.md");
+    assert.equal(md.language, "markdown");
+    assert.deepEqual(
+      md.symbols.map((s) => `${s.name}:${s.kind}:L${s.start.line}-${s.end.line}`),
+      [
+        "# Runbook Title:section:L1-26",
+        "## 1. Gates:section:L3-10",
+        "Table (L5-L9):table:L5-9",
+        "row:CHK-14-C:table_row:L7-7",
+        "row:shared-row (L8):table_row:L8-8",
+        "row:L9:table_row:L9-9",
+        "## 2. Cohorts:section:L11-17",
+        "Table (L13-L16):table:L13-16",
+        "row:canary-v3:table_row:L15-15",
+        "row:shared-row (L16):table_row:L16-16",
+        "## 3. Patch Template:section:L18-26",
+        "fence:L20:code_block:L20-25",
+      ],
+    );
+
+    // WM-R3: verify non-zero end.column on single-line table_row and multi-line code_block
+    const chkRow = md.symbols.find((s) => s.name === "row:CHK-14-C");
+    assert.deepEqual(chkRow?.start, { line: 7, column: 0 });
+    assert.deepEqual(chkRow?.end, { line: 7, column: "| `CHK-14-C` | `<= 30 sec` |".length });
+    assert.ok((chkRow?.end.column ?? 0) > (chkRow?.start.column ?? 0));
+
+    const fenceSym = md.symbols.find((s) => s.name === "fence:L20");
+    assert.deepEqual(fenceSym?.start, { line: 20, column: 0 });
+    assert.deepEqual(fenceSym?.end, { line: 25, column: 3 });
+
+    // Verify literal row names that resemble fallback/disambiguation patterns and emoji UTF-16 line length
+    const emojiRowLine = "| `row-\uD83D\uDE80` | payload \uD83D\uDE80 |";
+    fs.writeFileSync(path.join(repo, "row_collision.md"), [
+      "| ID | Value |",
+      "| --- | --- |",
+      "| L5 | literal-line-id |",
+      "| foo (L6) | literal-paren-id |",
+      "|   | empty-id-on-L5 |",
+      "| foo | dup-1 |",
+      "| foo | dup-2 |",
+      emojiRowLine,
+      "",
+    ].join("\n"), "utf8");
+    const rowColMd = await discoverSymbolsInFile(repo, "row_collision.md");
+    assert.deepEqual(
+      rowColMd.symbols.filter((s) => s.kind === "table_row").map((s) => s.name),
+      [
+        "row:L5 (L3)",
+        "row:foo (L6) (L4)",
+        "row:L5",
+        "row:foo (L6)",
+        "row:foo (L7)",
+        "row:row-\uD83D\uDE80",
+      ],
+    );
+    const emojiSym = rowColMd.symbols.find((s) => s.name === "row:row-\uD83D\uDE80");
+    assert.deepEqual(emojiSym?.start, { line: 8, column: 0 });
+    assert.deepEqual(emojiSym?.end, { line: 8, column: emojiRowLine.length });
+  } finally {
+    cleanRepo(repo);
+  }
+});
+
+test("B5/B6/B7: Library, CLI, and MCP parity on hard-suite scopes and strict preservation of the two-verb MCP contract", async () => {
+  const repo = setupRepo();
+  try {
+    // Write representative hard-suite fixtures
+    fs.writeFileSync(path.join(repo, "matrix_kernel.py"), [
+      'FRAME_SYNC_STREAM = "HEADER::SYNC::SYNC::SYNC::SYNC::SYNC::TRAILER"',
+      "",
+      "def execute_tile_kernel_07(tile, weights):",
+      "    return {}",
+      "",
+      "def dispatch_kernel_triad(tile, weights):",
+      "    return {}",
+      "",
+    ].join("\n"), "utf8");
+
+    fs.writeFileSync(path.join(repo, "routing_manifest.json"), JSON.stringify({
+      manifest_version: "2026.10.1",
+      tenants: [
+        { tenant_id: "ten_006", wire_version: "v2" },
+        { tenant_id: "ten_013", wire_version: "v2" },
+        { tenant_id: "ten_018", wire_version: "v2" },
+      ],
+    }, null, 2), "utf8");
+
+    fs.writeFileSync(path.join(repo, "MIGRATION_RUNBOOK.md"), [
+      "# Settlement Protocol v3 Nanosecond & Quorum Migration Runbook",
+      "## 1. Executive Summary",
+      "- **Allowed Idempotency Scopes**: `GLOBAL, PARTITION`",
+      "## 2.14 Pre-Flight Verification Gate #14",
+      "| Check ID | Metric |",
+      "| --- | --- |",
+      "| `CHK-14-C` | Clock skew p99 |",
+      "## 3. Canary Cohort Parameters",
+      "| Cohort | Wire Version |",
+      "| --- | --- |",
+      "| `canary-v3` | `v2` |",
+      "## 4. Literal Patch & Conflict Template",
+      "```text",
+      "<<<<<<< MATCH",
+      ">>>>>>> REPLACE",
+      "```",
+      "",
+    ].join("\n"), "utf8");
+
+    const server = new McpServer();
+
+    // Verify 2-verb MCP contract is untouched
+    const listRaw = await server.handleMessage(JSON.stringify({
+      jsonrpc: "2.0",
+      id: 99,
+      method: "tools/list",
+      params: {},
+    }));
+    const listResp = JSON.parse(listRaw ?? "{}");
+    const toolNames = (listResp.result?.tools ?? []).map((t: any) => t.name);
+    assert.deepEqual(toolNames, ["waymark_ask", "waymark_memory"]);
+
+    // Verify direct library, MCP (outline: true), and CLI (--outline) parity for new scopes
+    const cli = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../src/cli.js");
+    for (const [file, query, expectedName, expectedKind] of [
+      ["matrix_kernel.py", "FRAME_SYNC_STREAM", "FRAME_SYNC_STREAM", "variable"],
+      ["routing_manifest.json", "ten_013", "tenants[ten_013]", "config_item"],
+      ["MIGRATION_RUNBOOK.md", "CHK-14-C", "row:CHK-14-C", "table_row"],
+      ["MIGRATION_RUNBOOK.md", "fence:L13", "fence:L13", "code_block"],
+    ] as const) {
+      const libRes = await discoverSymbolsInFile(repo, file, undefined, query);
+      assert.equal(libRes.symbols.length, 1);
+      assert.equal(libRes.symbols[0]?.name, expectedName);
+      assert.equal(libRes.symbols[0]?.kind, expectedKind);
+
+      const mcpRes = await callTool(server, "waymark_ask", {
+        root: repo,
+        path: file,
+        outline: true,
+        question: query,
+      });
+      assert.deepEqual(mcpRes.symbols, libRes.symbols);
+
+      const cliOut = JSON.parse(execFileSync(
+        process.execPath,
+        [cli, "ask", query, "--path", file, "--outline"],
+        { cwd: repo, windowsHide: true, encoding: "utf8" },
+      ));
+      assert.deepEqual(cliOut.symbols, libRes.symbols);
+    }
+  } finally {
+    cleanRepo(repo);
+  }
+});
+
 

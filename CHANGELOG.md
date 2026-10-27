@@ -4,6 +4,21 @@ All notable changes to `waymark-engine` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.1.0] - 2026-10-26
+
+### Added
+- **Python Module-Level Assignment Discovery (`src/astExtractor.ts`)**: Recognizes top-level Python `assignment` and `expression_statement > assignment` AST nodes as `variable` symbols (e.g., `FRAME_SYNC_STREAM`, `VALID_SCOPES`), including multi-target/chained and tuple/list unpacking targets while excluding function-local, class-local, and attribute/subscript assignments (`09a5c88`).
+- **JSON Array-Object `config_item` Discovery (`src/astExtractor.ts`)**: Extends `collectJsonSymbols()` to inspect object items inside JSON arrays and emit `config_item` symbols named `<arrayPath>[<identifier>]` (or `[<identifier>]` for root arrays) when an object contains a non-empty string `id`, `name`, `key`, or `*_id` property (e.g., `tenants[ten_006]`), while falling back to `#<index>` only when no identifying string key exists or when its value starts with `#` (`09a5c88`).
+- **Markdown `<tbody>` `table_row` & Fenced-Block `code_block` Discovery (`src/astExtractor.ts`)**: Extends `extractMarkdownSymbols()` to emit `table_row` symbols (`row:<first-cell>`) for non-empty `<tbody>` rows (excluding `<thead>` header rows) and `code_block` symbols (`fence:L<startLine>`) for fenced code blocks while preserving existing `h1`-`h6` `section` headings (`09a5c88`).
+
+### Fixed & Hardened
+- **Escaped JSON Path Segments & File-Wide Uniqueness Enforcement (`src/astExtractor.ts`)**: Encodes nested JSON object key path segments via `encodeJsonPathSegment()` (`\` -> `\\`, `.` -> `\.`, `[` -> `\[`, `]` -> `\]`) and enforces document-wide symbol name uniqueness via `pushUniqueJsonSymbol()`, failing closed with `AMBIGUOUS_SYMBOL_IDENTITY` on duplicate root/nested JSON keys or cross-path symbol collisions, while disambiguating duplicate identifiers within the same array via `#<index>` (`09a5c88`).
+- **JSON Array Item Limit (`OUTLINE_LIMIT_EXCEEDED`) (`src/astExtractor.ts`)**: Enforces `MAX_JSON_ARRAY_ITEMS = 500` before inspecting the 501st array element (`itemIndex >= MAX_JSON_ARRAY_ITEMS`), failing closed with `OUTLINE_LIMIT_EXCEEDED` while allowing arrays of up to 500 items (`09a5c88`).
+- **Markdown Line Scope & UTF-16 `end.column` Semantics (`src/astExtractor.ts`, `docs/architecture.md`)**: Emits inclusive 1-based line ranges (`start.line`..`end.line`) for Markdown headings, table rows, and fenced code blocks using `token.map`, with `start.column = 1` and `end.column = lineText.length + 1` in JavaScript UTF-16 code units (`09a5c88`).
+- **Preserved Library, CLI, and Two-Verb MCP Interfaces**: Exposes all new structural discovery symbols seamlessly through `discoverSymbolsInFile`, `waymark outline`, and `waymark_ask(..., outline: true)` while keeping the default two-tool MCP surface (`waymark_ask`, `waymark_memory`) unchanged (`09a5c88`).
+
+---
+
 ## [4.0.2] - 2026-10-17
 
 ### Fixed

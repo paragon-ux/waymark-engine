@@ -1320,6 +1320,35 @@ test("A2: JSON array-object discovery handles id/name/key/*_id, missing IDs, dup
       ["[x#0]", "[x#1]", "[z#2]", "[z#3]"],
     );
 
+    // WM-R1 Case 4: cross-array dotted key vs nested path (`{"a":{"b":[{"id":"x"}]},"a.b":[{"id":"x"}]}`)
+    // must encode path segments unambiguously so two distinct objects never share a symbol name
+    fs.writeFileSync(
+      path.join(repo, "collision_cross_array.json"),
+      JSON.stringify({ a: { b: [{ id: "x" }] }, "a.b": [{ id: "x" }] }),
+      "utf8",
+    );
+    const colCross = await discoverSymbolsInFile(repo, "collision_cross_array.json");
+    const colCrossNames = colCross.symbols.map((s) => `${s.name}:${s.kind}`);
+    assert.deepEqual(colCrossNames, [
+      "a:config_block",
+      "a.b:config_block",
+      "a.b[x]:config_item",
+      "a\\.b:config_block",
+      "a\\.b[x]:config_item",
+    ]);
+    assert.equal(new Set(colCross.symbols.map((s) => s.name)).size, colCross.symbols.length);
+
+    // WM-R1 Case 5: duplicate root property keys in raw JSON fail closed with AMBIGUOUS_SYMBOL_IDENTITY
+    fs.writeFileSync(
+      path.join(repo, "collision_dup_root_key.json"),
+      '{\n  "a": [{ "id": "x" }],\n  "a": [{ "id": "x" }]\n}\n',
+      "utf8",
+    );
+    await assert.rejects(
+      () => discoverSymbolsInFile(repo, "collision_dup_root_key.json"),
+      (err: any) => err?.code === "AMBIGUOUS_SYMBOL_IDENTITY",
+    );
+
     // WM-R2: 500 JSON array items succeed; 501 items fail closed with OUTLINE_LIMIT_EXCEEDED
     const items500 = Array.from({ length: 500 }, (_, i) => ({ id: `item_${i}` }));
     fs.writeFileSync(path.join(repo, "limit_500.json"), JSON.stringify({ items: items500 }), "utf8");
@@ -1401,7 +1430,8 @@ test("A3: Markdown discovery extracts tbody table rows, disambiguates repeated r
     assert.deepEqual(fenceSym?.start, { line: 20, column: 0 });
     assert.deepEqual(fenceSym?.end, { line: 25, column: 3 });
 
-    // Verify literal row names that resemble fallback/disambiguation patterns are disambiguated
+    // Verify literal row names that resemble fallback/disambiguation patterns and emoji UTF-16 line length
+    const emojiRowLine = "| `row-\uD83D\uDE80` | payload \uD83D\uDE80 |";
     fs.writeFileSync(path.join(repo, "row_collision.md"), [
       "| ID | Value |",
       "| --- | --- |",
@@ -1410,6 +1440,7 @@ test("A3: Markdown discovery extracts tbody table rows, disambiguates repeated r
       "|   | empty-id-on-L5 |",
       "| foo | dup-1 |",
       "| foo | dup-2 |",
+      emojiRowLine,
       "",
     ].join("\n"), "utf8");
     const rowColMd = await discoverSymbolsInFile(repo, "row_collision.md");
@@ -1421,8 +1452,12 @@ test("A3: Markdown discovery extracts tbody table rows, disambiguates repeated r
         "row:L5",
         "row:foo (L6)",
         "row:foo (L7)",
+        "row:row-\uD83D\uDE80",
       ],
     );
+    const emojiSym = rowColMd.symbols.find((s) => s.name === "row:row-\uD83D\uDE80");
+    assert.deepEqual(emojiSym?.start, { line: 8, column: 0 });
+    assert.deepEqual(emojiSym?.end, { line: 8, column: emojiRowLine.length });
   } finally {
     cleanRepo(repo);
   }

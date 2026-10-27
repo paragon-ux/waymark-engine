@@ -677,7 +677,32 @@ function isJsonIdentifyingKey(key: string): boolean {
   return key === "id" || key === "name" || key === "key" || (key.endsWith("_id") && key.length > 3);
 }
 
-function extractJsonArrayObjects(arrayNode: any, prefix: string, symbols: StructuredSymbol[]): void {
+function encodeJsonPathSegment(key: string): string {
+  return key.replace(/[\\.[\]]/g, "\\$&");
+}
+
+function pushUniqueJsonSymbol(
+  symbols: StructuredSymbol[],
+  emittedInFile: Set<string>,
+  symbol: StructuredSymbol,
+): void {
+  if (emittedInFile.has(symbol.name)) {
+    throw new WaymarkError(
+      "AMBIGUOUS_SYMBOL_IDENTITY",
+      `Duplicate JSON symbol identity "${symbol.name}" in file outline`,
+      2,
+    );
+  }
+  emittedInFile.add(symbol.name);
+  symbols.push(symbol);
+}
+
+function extractJsonArrayObjects(
+  arrayNode: any,
+  prefix: string,
+  symbols: StructuredSymbol[],
+  emittedInFile: Set<string>,
+): void {
   const children: any[] = arrayNode?.namedChildren ?? [];
   if (children.length === 0) return;
   const hasObjectChild = children.some((c: any) => c?.type === "object");
@@ -754,7 +779,6 @@ function extractJsonArrayObjects(arrayNode: any, prefix: string, symbols: Struct
     }
   }
 
-  const emittedInArray = new Set<string>();
   for (const entry of entries) {
     let name: string;
     if (!entry.candId) {
@@ -764,15 +788,7 @@ function extractJsonArrayObjects(arrayNode: any, prefix: string, symbols: Struct
     } else {
       name = `${prefix}[${entry.candId}]`;
     }
-    if (emittedInArray.has(name)) {
-      throw new WaymarkError(
-        "AMBIGUOUS_SYMBOL_IDENTITY",
-        `Duplicate JSON array symbol identity "${name}" in "${prefix || "<root>"}"`,
-        2,
-      );
-    }
-    emittedInArray.add(name);
-    symbols.push({
+    pushUniqueJsonSymbol(symbols, emittedInFile, {
       name,
       kind: "config_item",
       start: { line: entry.node.startPosition.row + 1, column: entry.node.startPosition.column },
@@ -783,6 +799,7 @@ function extractJsonArrayObjects(arrayNode: any, prefix: string, symbols: Struct
 
 function collectJsonSymbols(rootNode: any): StructuredSymbol[] {
   const symbols: StructuredSymbol[] = [];
+  const emittedInFile = new Set<string>();
   const rootObj = rootNode.namedChildren.find((c: any) => c.type === "object");
   if (rootObj) {
     for (const pair of rootObj.namedChildren) {
@@ -790,8 +807,9 @@ function collectJsonSymbols(rootNode: any): StructuredSymbol[] {
         const keyNode = pair.childForFieldName("key");
         const valNode = pair.childForFieldName("value");
         const rawKey = keyNode ? decodePropertyKey(keyNode.text) : "<unknown>";
-        symbols.push({
-          name: rawKey,
+        const encodedRootKey = encodeJsonPathSegment(rawKey);
+        pushUniqueJsonSymbol(symbols, emittedInFile, {
+          name: encodedRootKey,
           kind: "config_block",
           start: { line: pair.startPosition.row + 1, column: pair.startPosition.column },
           end: { line: pair.endPosition.row + 1, column: pair.endPosition.column },
@@ -802,26 +820,27 @@ function collectJsonSymbols(rootNode: any): StructuredSymbol[] {
               const subKeyNode = subPair.childForFieldName("key");
               const subValNode = subPair.childForFieldName("value");
               const subKey = subKeyNode ? decodePropertyKey(subKeyNode.text) : "<unknown>";
-              symbols.push({
-                name: `${rawKey}.${subKey}`,
+              const encodedSubPath = `${encodedRootKey}.${encodeJsonPathSegment(subKey)}`;
+              pushUniqueJsonSymbol(symbols, emittedInFile, {
+                name: encodedSubPath,
                 kind: "config_block",
                 start: { line: subPair.startPosition.row + 1, column: subPair.startPosition.column },
                 end: { line: subPair.endPosition.row + 1, column: subPair.endPosition.column },
               });
               if (subValNode?.type === "array") {
-                extractJsonArrayObjects(subValNode, `${rawKey}.${subKey}`, symbols);
+                extractJsonArrayObjects(subValNode, encodedSubPath, symbols, emittedInFile);
               }
             }
           }
         } else if (valNode?.type === "array") {
-          extractJsonArrayObjects(valNode, rawKey, symbols);
+          extractJsonArrayObjects(valNode, encodedRootKey, symbols, emittedInFile);
         }
       }
     }
   } else {
     const rootArr = rootNode.namedChildren.find((c: any) => c.type === "array");
     if (rootArr) {
-      extractJsonArrayObjects(rootArr, "", symbols);
+      extractJsonArrayObjects(rootArr, "", symbols, emittedInFile);
     }
   }
   return symbols;

@@ -1,8 +1,9 @@
 # Contributing to Waymark Engine
 
-Waymark Engine is intentionally small, local-first, and dependency-free at runtime
-(the only runtime dependencies are the codedb binary, tree-sitter for single-file
-symbol discovery, and an optional Capn CLI invocation).
+Waymark Engine is intentionally small and local-first, with five direct runtime
+dependencies declared in `package.json`: `@paragon-ux/codedb-core` (prebuilt native AST
+binary), `@paragon-ux/capn-hook` (lexical BM25 store using SQLite / `better-sqlite3`),
+`web-tree-sitter` + `tree-sitter-wasms` (WASM single-file outlines), and `markdown-it`.
 
 ## Development
 

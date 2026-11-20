@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
 import { classifyTokenShape, rankFzf } from "./fuzzyMatcher.js";
-import { queryStructural, queryFuzzyCandidates } from "./codedbAdapter.js";
+import { queryStructural, queryFuzzyCandidates, isTestFile } from "./codedbAdapter.js";
 import { PrefixTrie } from "./prefixTrie.js";
 import { tryDaemonResolvePath } from "./daemon.js";
 import { ensureStateDir, stateDir, MEMORY_STORE_LABEL } from "./stateDir.js";
@@ -12,6 +12,8 @@ import {
   AskMissResult,
   AskOptions,
   AskResult,
+  CallGraphData,
+  CallGraphHopNode,
   DevDiagnostics,
   DiscoveryTier,
   FuzzyCandidate,
@@ -75,7 +77,7 @@ const DOTTED_IDENTIFIER = /^[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]
 
 export function detectLiteralIntent(question: string): LiteralIntent {
   const q = question.trim().replace(/^['"`]+|['"`]+$/g, "");
-  const normalized = q.replace(/\\/g, "/").replace(/^\.\//, "");
+  const normalized = q.replace(/\\/g, "/").replace(/^(?:\.\/)+/, "");
   const lower = normalized.toLowerCase();
 
   const hasSep = normalized.includes("/");
@@ -220,21 +222,51 @@ const SKIP_DIRS_ANY_DEPTH = new Set<string>([
  * Scratch and tool folders skipped only at the repository root. Nested folders with these names
  * (`src/waymark`, `src/claude`, `src/eval`) are ordinary source and stay visible.
  */
-const SKIP_DIRS_ROOT_ONLY = new Set<string>([
+export const SKIP_DIRS_ROOT_ONLY = new Set<string>([
   "next", "nuxt", "capn", "waymark", "qmd", "claude", "codex", "zed",
   "eval", "experiments", "evidence", "sandbox", "scratch", "tmp", "vendor",
 ]);
 
-export function isSkippedDir(name: string, depth: number): boolean {
-  return SKIP_DIRS_ANY_DEPTH.has(name) || (depth === 0 && SKIP_DIRS_ROOT_ONLY.has(name));
+function readConfiguredIncludeDirs(root: string): string[] {
+  try {
+    const cfgPath = path.join(stateDir(root), "config.json");
+    if (!fs.existsSync(cfgPath)) return [];
+    const parsed = JSON.parse(fs.readFileSync(cfgPath, "utf8")) as { includeDirs?: unknown };
+    if (!Array.isArray(parsed?.includeDirs)) return [];
+    return parsed.includeDirs
+      .filter((item): item is string => typeof item === "string")
+      .map((item) => item.trim().replace(/^\/+|\/+$/gu, ""))
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+function normalizeIncludeDirSet(root: string, explicit?: readonly string[]): { set: Set<string>; key: string } {
+  const merged = new Set<string>();
+  for (const dir of readConfiguredIncludeDirs(root)) merged.add(dir);
+  for (const dir of explicit ?? []) {
+    const cleaned = dir.trim().replace(/^\/+|\/+$/gu, "");
+    if (cleaned) merged.add(cleaned);
+  }
+  const key = [...merged].sort().join(",");
+  return { set: merged, key };
+}
+
+export function isSkippedDir(name: string, depth: number, includeDirs?: ReadonlySet<string>): boolean {
+  if (SKIP_DIRS_ANY_DEPTH.has(name)) return true;
+  if (depth === 0 && SKIP_DIRS_ROOT_ONLY.has(name)) {
+    return !includeDirs?.has(name);
+  }
+  return false;
 }
 
 function canonicalRoot(r: string): string {
   return path.resolve(r).replace(/^[a-zA-Z]:/, (m) => m.toLowerCase());
 }
 
-let pathCache: { root: string; at: number; paths: string[] } | null = null;
-let pathTrieCache: { root: string; at: number; trie: PrefixTrie } | null = null;
+let pathCache: { root: string; cacheKey: string; at: number; paths: string[] } | null = null;
+let pathTrieCache: { root: string; cacheKey: string; at: number; trie: PrefixTrie } | null = null;
 
 export function invalidatePathsCache(): void {
   const root = pathCache?.root || pathTrieCache?.root;
@@ -245,14 +277,16 @@ export function invalidatePathsCache(): void {
   pathTrieCache = null;
 }
 
-export function getRepoPrefixTrie(root: string, maxAgeMs = 60_000): PrefixTrie {
+export function getRepoPrefixTrie(root: string, maxAgeMs = 60_000, includeDirs?: readonly string[]): PrefixTrie {
   const normRoot = canonicalRoot(root);
-  if (pathTrieCache && pathTrieCache.root === normRoot && Date.now() - pathTrieCache.at < maxAgeMs) {
+  const { key } = normalizeIncludeDirSet(root, includeDirs);
+  const cacheKey = `${normRoot}::${key}`;
+  if (pathTrieCache && pathTrieCache.cacheKey === cacheKey && Date.now() - pathTrieCache.at < maxAgeMs) {
     return pathTrieCache.trie;
   }
-  const paths = collectRepoPaths(root, maxAgeMs);
+  const paths = collectRepoPaths(root, maxAgeMs, includeDirs);
   const trie = new PrefixTrie(paths, Date.now());
-  pathTrieCache = { root: normRoot, at: Date.now(), trie };
+  pathTrieCache = { root: normRoot, cacheKey, at: Date.now(), trie };
   return trie;
 }
 
@@ -260,27 +294,31 @@ function getCacheFilePath(root: string): string {
   return path.join(stateDir(root), "paths.v3.cache");
 }
 
-export function collectRepoPaths(root: string, maxAgeMs = 60_000): string[] {
+export function collectRepoPaths(root: string, maxAgeMs = 60_000, includeDirs?: readonly string[]): string[] {
   const normRoot = canonicalRoot(root);
-  if (pathCache && pathCache.root === normRoot && Date.now() - pathCache.at < maxAgeMs) {
+  const { set: includeSet, key } = normalizeIncludeDirSet(root, includeDirs);
+  const cacheKey = `${normRoot}::${key}`;
+  if (pathCache && pathCache.cacheKey === cacheKey && Date.now() - pathCache.at < maxAgeMs) {
     return pathCache.paths;
   }
 
   const cacheFile = getCacheFilePath(root);
-  try {
-    if (fs.existsSync(cacheFile)) {
-      const stat = fs.statSync(cacheFile);
-      if (Date.now() - stat.mtimeMs < maxAgeMs) {
-        const content = fs.readFileSync(cacheFile, "utf8");
-        const lines = content.split("\n").filter(Boolean);
-        if (lines.length > 0) {
-          pathCache = { root: normRoot, at: stat.mtimeMs, paths: lines };
-          return lines;
+  if (includeSet.size === 0) {
+    try {
+      if (fs.existsSync(cacheFile)) {
+        const stat = fs.statSync(cacheFile);
+        if (Date.now() - stat.mtimeMs < maxAgeMs) {
+          const content = fs.readFileSync(cacheFile, "utf8");
+          const lines = content.split("\n").filter(Boolean);
+          if (lines.length > 0) {
+            pathCache = { root: normRoot, cacheKey, at: stat.mtimeMs, paths: lines };
+            return lines;
+          }
         }
       }
+    } catch {
+      // Disk cache read failed; fall back to filesystem walk
     }
-  } catch {
-    // Disk cache read failed; fall back to filesystem walk
   }
 
   const base = path.resolve(root);
@@ -295,7 +333,7 @@ export function collectRepoPaths(root: string, maxAgeMs = 60_000): string[] {
     for (const ent of entries) {
       const full = path.join(dir, ent.name);
       if (ent.isDirectory()) {
-        if (!isSkippedDir(ent.name, depth)) {
+        if (!isSkippedDir(ent.name, depth, includeSet)) {
           walk(full, depth + 1);
         }
       } else if (ent.isFile()) {
@@ -306,15 +344,17 @@ export function collectRepoPaths(root: string, maxAgeMs = 60_000): string[] {
   };
   walk(base, 0);
 
-  pathCache = { root: normRoot, at: Date.now(), paths: out };
+  pathCache = { root: normRoot, cacheKey, at: Date.now(), paths: out };
 
-  try {
-    if (process.env.WAYMARK_READ_ONLY !== "1") {
-      ensureStateDir(root);
-      fs.writeFileSync(cacheFile, out.join("\n"), "utf8");
+  if (includeSet.size === 0) {
+    try {
+      if (process.env.WAYMARK_READ_ONLY !== "1") {
+        ensureStateDir(root);
+        fs.writeFileSync(cacheFile, out.join("\n"), "utf8");
+      }
+    } catch {
+      // Fail silent if repository is read-only
     }
-  } catch {
-    // Fail silent if repository is read-only
   }
 
   return out;
@@ -342,8 +382,9 @@ export type RepoWalkResult =
  * make an ambiguous basename look unique, so over budget the walk is abandoned instead.
  * It reads and writes no path cache.
  */
-export async function collectRepoPathsBounded(root: string, budget: RepoWalkBudget): Promise<RepoWalkResult> {
+export async function collectRepoPathsBounded(root: string, budget: RepoWalkBudget, includeDirs?: readonly string[]): Promise<RepoWalkResult> {
   const base = path.resolve(root);
+  const { set: includeSet } = normalizeIncludeDirSet(root, includeDirs);
   const deadline = Date.now() + budget.timeoutMs;
   const out: string[] = [];
   // Cast so control-flow analysis does not narrow it to null; the walk closure assigns it.
@@ -362,7 +403,7 @@ export async function collectRepoPathsBounded(root: string, budget: RepoWalkBudg
       if (stopped) return;
       const full = path.join(dir, ent.name);
       if (ent.isDirectory()) {
-        if (!isSkippedDir(ent.name, depth)) {
+        if (!isSkippedDir(ent.name, depth, includeSet)) {
           await walk(full, depth + 1);
         }
       } else if (ent.isFile()) {
@@ -384,9 +425,11 @@ export function matchLiteralPath(
   paths: string[],
   isExplicitPath: boolean = false
 ): LiteralMatch[] {
-  const isExplicit = isExplicitPath || rawNormalized.startsWith("./") || rawNormalized.startsWith(".\\");
-  const normalized = rawNormalized.replace(/\\/g, "/").replace(/^\.\//, "");
+  const isRootAnchored = rawNormalized.startsWith("./") || rawNormalized.startsWith(".\\");
+  const isExplicit = isExplicitPath || isRootAnchored;
+  const normalized = rawNormalized.replace(/\\/g, "/").replace(/^(?:\.\/)+/, "");
   const lower = normalized.toLowerCase();
+  const hasSlash = normalized.includes("/");
   const baseName = lower.split("/").pop() ?? "";
   const basenames = paths.filter(
     (p) => (p.split("/").pop() ?? "").toLowerCase() === baseName
@@ -394,7 +437,7 @@ export function matchLiteralPath(
 
   // If a bare basename query has multiple collision candidates across the repository,
   // refuse to arbitrarily select the root-level file unless explicitly qualified with ./
-  if (!isExplicit && !normalized.includes("/") && basenames.length > 1) {
+  if (!isExplicit && !hasSlash && basenames.length > 1) {
     return [];
   }
 
@@ -406,18 +449,31 @@ export function matchLiteralPath(
       : exact.map((file) => ({ file, kind: "exact" }));
   }
 
-  if (basenames.length === 1) {
+  // Leading "./" anchors to repository root — never extrapolate to subdirectories.
+  if (isRootAnchored) {
+    return [];
+  }
+
+  // Basename fallback only applies to bare filenames without a directory prefix.
+  if (!isExplicit && !hasSlash && basenames.length === 1) {
     const file = basenames[0];
     if (file !== undefined) return [{ file, kind: "basename" }];
   }
 
-  const suffixes = paths.filter((p) => p.toLowerCase().endsWith(lower));
+  const suffixes = paths.filter((p) => {
+    const pl = p.toLowerCase();
+    return pl === lower || pl.endsWith(`/${lower}`);
+  });
   if (suffixes.length === 1) {
     const file = suffixes[0];
     if (file !== undefined) return [{ file, kind: "suffix" }];
   }
 
-  const subs = paths.filter((p) => p.toLowerCase().includes(lower));
+  const subs = paths.filter((p) => {
+    const pl = p.toLowerCase();
+    if (!hasSlash) return pl.includes(lower);
+    return pl === lower || pl.startsWith(`${lower}/`) || pl.endsWith(`/${lower}`) || pl.includes(`/${lower}/`);
+  });
   if (subs.length === 1) {
     const file = subs[0];
     if (file !== undefined) return [{ file, kind: "substring" }];
@@ -513,7 +569,50 @@ export interface DiscoveryRouteContext {
   overrideCandidates?: FuzzyCandidate[];
 }
 
-async function routeDiscoveryCore(ctx: DiscoveryRouteContext): Promise<AskResult> {
+interface RuntimeDiagTracker {
+  daemonIpcUsed: boolean;
+  trieHitType?: "exact" | "basename" | "suffix" | "substring" | "none";
+  nodesVisited?: number;
+}
+
+const VALID_FACET_IDS = new Set(["lifecycle", "data_state", "boundaries", "invariants", "failure"]);
+const CAPN_ERROR_REASONS = new Set(["CAPN_STORE_DIR_UNSUPPORTED", "CAPN_UNSUPPORTED_SHIM", "CAPN_CONFIG_CORRUPT"]);
+
+function capnGuardFailureResult(
+  capnRes: { hit: boolean; result: unknown; error?: string; reason?: string; note?: string },
+  timings: Record<string, number>,
+  recordTiming: boolean,
+): AskResult | null {
+  if (capnRes.reason && CAPN_ERROR_REASONS.has(capnRes.reason)) {
+    const message = capnRes.error || capnRes.note || capnRes.reason;
+    return {
+      waymark: 1,
+      kind: "ask",
+      status: "error",
+      provider: "capn-cli",
+      errorCode: capnRes.reason,
+      message,
+      error: message,
+      retryable: false,
+      ...(recordTiming ? { timings } : {}),
+    };
+  }
+  if (capnRes.reason === "CAPN_NON_DETERMINISTIC_MODE") {
+    return {
+      waymark: 1,
+      kind: "ask",
+      status: "miss",
+      provider: "capn-cli",
+      missCode: "CAPN_NON_DETERMINISTIC_MODE",
+      reason: capnRes.note || "Capn store is in embedding mode. Re-initialize with deterministic lexical mode.",
+      matches: [],
+      ...(recordTiming ? { timings } : {}),
+    };
+  }
+  return null;
+}
+
+async function routeDiscoveryCore(ctx: DiscoveryRouteContext, diag: RuntimeDiagTracker): Promise<AskResult> {
   const {
     root,
     question,
@@ -521,9 +620,11 @@ async function routeDiscoveryCore(ctx: DiscoveryRouteContext): Promise<AskResult
     codedbExecutable,
     capnExecutable = "",
     queryCapnMemory,
-    assertLexicalStore,
     overrideCandidates,
   } = ctx;
+  const onDaemonIpc = (): void => {
+    diag.daemonIpcUsed = true;
+  };
   if (options?.subsystem?.trim()) {
     throw new WaymarkError("UNSUPPORTED_SUBSYSTEM", "Subsystem-scoped discovery is not supported; query the repository root or omit subsystem.");
   }
@@ -546,7 +647,7 @@ async function routeDiscoveryCore(ctx: DiscoveryRouteContext): Promise<AskResult
 
   // Facet routing & Semantic Repo Map status
   let effectiveQuestion = question;
-  if (options?.facet) {
+  if (options?.facet !== undefined && options.facet.trim() !== "") {
     const rawFacet = options.facet.toLowerCase().trim();
     if (rawFacet === "status") {
       const { getSemanticMapStatus } = await import("./semanticMap.js");
@@ -561,6 +662,13 @@ async function routeDiscoveryCore(ctx: DiscoveryRouteContext): Promise<AskResult
         result: mapStatus,
         ...(recordTiming ? { timings } : {}),
       };
+    }
+    if (!VALID_FACET_IDS.has(rawFacet)) {
+      throw new WaymarkError(
+        "INVALID_FACET",
+        `Unknown facet "${rawFacet}". Allowed facets: lifecycle, data_state, boundaries, invariants, failure, status.`,
+        1,
+      );
     }
     const facetTag = `[FACET:${rawFacet.toUpperCase()}]`;
     effectiveQuestion = question.trim() ? `${facetTag} ${question.trim()}` : facetTag;
@@ -620,16 +728,30 @@ async function routeDiscoveryCore(ctx: DiscoveryRouteContext): Promise<AskResult
     if (hasStructuralIntent || tier === "ast") {
       const structuralIntent = hasStructuralIntent
         ? astIntent
-        : { requiresParser: true, tool: "search_graph" as const, query: question };
+        : {
+            requiresParser: true,
+            tool: "search_graph" as const,
+            query: question,
+            strictQualified: detectLiteralIntent(question).isLiteral,
+          };
       const astResult = await queryStructural(
         structuralIntent,
         root,
         codedbExecutable,
-        options ? { depth: options.depth, direction: options.direction, excludeTests: options.excludeTests, autoDaemon: options.daemon } : undefined,
+        {
+          depth: options?.depth,
+          direction: options?.direction,
+          excludeTests: options?.excludeTests,
+          autoDaemon: options?.daemon,
+          onDaemonIpc,
+        },
       );
       if (recordTiming) timings.ast_ms = Math.round((performance.now() - tAst0) * 100) / 100;
 
       if (astResult.hit) {
+        if (astResult.output && typeof astResult.output === "object" && (astResult.output as CallGraphData).tool === "call_graph") {
+          diag.nodesVisited = (astResult.output as CallGraphData).totalNodes;
+        }
         if (recordTiming) timings.total_ms = Math.round((performance.now() - startTime) * 100) / 100;
         return {
           waymark: 1,
@@ -673,16 +795,26 @@ async function routeDiscoveryCore(ctx: DiscoveryRouteContext): Promise<AskResult
     const tPath0 = performance.now();
     const literal = detectLiteralIntent(question);
     if (literal.isLiteral || tier === "path") {
+      const trimmedQ = question.trim().replace(/^['"`]+|['"`]+$/g, "");
+      const isRootAnchored = trimmedQ.startsWith("./") || trimmedQ.startsWith(".\\");
+      const trieQuery = isRootAnchored ? `./${literal.normalized}` : literal.normalized;
+      const hasCustomIncludes = normalizeIncludeDirSet(root, options?.includeDirs).set.size > 0;
       let matches: LiteralMatch[] | null = null;
-      try {
-        matches = await tryDaemonResolvePath(root, literal.normalized, literal.isExplicitPath, 300);
-      } catch {
-        matches = null;
+      if (!hasCustomIncludes) {
+        try {
+          matches = await tryDaemonResolvePath(root, trieQuery, literal.isExplicitPath, 300);
+          if (matches !== null) {
+            diag.daemonIpcUsed = true;
+          }
+        } catch {
+          matches = null;
+        }
       }
       if (matches === null) {
-        const trie = getRepoPrefixTrie(root);
-        matches = trie.match(literal.normalized, literal.isExplicitPath);
+        const trie = getRepoPrefixTrie(root, 60_000, options?.includeDirs);
+        matches = trie.match(trieQuery, literal.isExplicitPath);
       }
+      diag.trieHitType = matches.length > 0 ? matches[0]!.kind : "none";
       if (recordTiming) timings.path_ms = Math.round((performance.now() - tPath0) * 100) / 100;
 
       if (matches.length > 0) {
@@ -700,8 +832,8 @@ async function routeDiscoveryCore(ctx: DiscoveryRouteContext): Promise<AskResult
         tier === "path" ||
         (tier === "auto" && literal.isLiteral)
       ) {
-        const trie = getRepoPrefixTrie(root);
-        const collisions = trie.collisions(literal.normalized);
+        const trie = getRepoPrefixTrie(root, 60_000, options?.includeDirs);
+        const collisions = trie.collisions(trieQuery, literal.isExplicitPath);
         if (collisions.length > 1) {
           if (recordTiming) timings.total_ms = Math.round((performance.now() - startTime) * 100) / 100;
           const files = collisions.map((m) => m.file);
@@ -724,7 +856,7 @@ async function routeDiscoveryCore(ctx: DiscoveryRouteContext): Promise<AskResult
             { requiresParser: true, tool: "search_graph", query: question.trim().replace(/\(\)$/u, ""), strictQualified: true },
             root,
             codedbExecutable,
-            { autoDaemon: options?.daemon },
+            { autoDaemon: options?.daemon, onDaemonIpc },
           );
           if (recordTiming) timings.ast_ms = Math.round((performance.now() - tSym0) * 100) / 100;
           if (symbolResult.hit) {
@@ -762,7 +894,7 @@ async function routeDiscoveryCore(ctx: DiscoveryRouteContext): Promise<AskResult
     if (overrideCandidates && overrideCandidates.length > 0) {
       return overrideCandidates;
     }
-    return await queryFuzzyCandidates(token, root, codedbExecutable, { autoDaemon: Boolean(options?.daemon) });
+    return await queryFuzzyCandidates(token, root, codedbExecutable, { autoDaemon: Boolean(options?.daemon), onDaemonIpc });
   };
 
   // Branch 1: Forced Tier fuzzy
@@ -931,19 +1063,20 @@ async function routeDiscoveryCore(ctx: DiscoveryRouteContext): Promise<AskResult
       };
     }
 
+    const guardFailure = capnGuardFailureResult(capnRes, timings, recordTiming);
+    if (guardFailure) return guardFailure;
+
     return {
       waymark: 1,
       kind: "ask",
       status: "miss",
       provider: "capn-cli",
-      missCode: capnRes.reason === "STORE_UNINITIALIZED" || capnRes.reason === "CAPN_NON_DETERMINISTIC_MODE"
-        ? capnRes.reason
+      missCode: capnRes.reason === "STORE_UNINITIALIZED"
+        ? "STORE_UNINITIALIZED"
         : "NO_CHARTED_MEMORY",
       reason: capnRes.reason === "STORE_UNINITIALIZED"
         ? capnRes.note || `Repository consensus memory is not initialized (${MEMORY_STORE_LABEL} missing). Run waymark_memory(action: "init") (CLI: waymark memory init) to enable Tier 4.`
-        : (capnRes.reason === "CAPN_NON_DETERMINISTIC_MODE"
-          ? capnRes.note || "Capn store is in embedding mode. Re-initialize with deterministic lexical mode."
-          : `No charted memory found for "${question}".`),
+        : `No charted memory found for "${question}".`,
       matches: [],
       ...(recordTiming ? { timings } : {}),
     };
@@ -1043,6 +1176,14 @@ async function routeDiscoveryCore(ctx: DiscoveryRouteContext): Promise<AskResult
   const tCapn0 = performance.now();
   const capnRes = await queryCapnMemory(root, capnExecutable, effectiveQuestion);
   if (recordTiming) timings.capn_ms = Math.round((performance.now() - tCapn0) * 100) / 100;
+
+  // Fail closed immediately on deterministic-mode violations or unsupported store-dir shims
+  // rather than concealing them as NO_CHARTED_MEMORY or falling through to fuzzy search.
+  const autoGuardFailure = capnGuardFailureResult(capnRes, timings, recordTiming);
+  if (autoGuardFailure) {
+    if (recordTiming) timings.total_ms = Math.round((performance.now() - startTime) * 100) / 100;
+    return autoGuardFailure;
+  }
 
   if (capnRes.hit) {
     // Stage 2 Hit!
@@ -1235,10 +1376,51 @@ async function routeDiscoveryCore(ctx: DiscoveryRouteContext): Promise<AskResult
   };
 }
 
+function evaluateDevInvariants(res: AskResult, options?: AskOptions): string[] {
+  const failures: string[] = [];
+  if (res.status === "hit") {
+    if (res.provider === "literal-path" && typeof res.result === "string" && res.result.includes("\\")) {
+      failures.push("literal-path result contains unnormalized backslash separator");
+    }
+    if (res.result && typeof res.result === "object" && (res.result as CallGraphData).tool === "call_graph") {
+      const graph = res.result as CallGraphData;
+      if (graph.totalNodes > 50) {
+        failures.push(`call_graph totalNodes (${graph.totalNodes}) exceeds cap 50`);
+      }
+      if (graph.path && graph.path.includes("\\")) {
+        failures.push(`call_graph root path contains backslash: ${graph.path}`);
+      }
+      const checkNodes = (nodes?: CallGraphHopNode[]): void => {
+        if (!nodes) return;
+        for (const node of nodes) {
+          if (node.path.includes("\\")) {
+            failures.push(`call_graph node path contains backslash: ${node.path}`);
+          }
+          if (options?.excludeTests && isTestFile(node.path)) {
+            failures.push(`call_graph leaked test file despite excludeTests: ${node.path}`);
+          }
+          checkNodes(node.callers);
+          checkNodes(node.callees);
+        }
+      };
+      checkNodes(graph.callers);
+      checkNodes(graph.callees);
+    }
+  } else if (res.status === "miss" && Array.isArray(res.matches)) {
+    for (const match of res.matches) {
+      if (match && typeof match === "object" && "file" in match && typeof match.file === "string" && match.file.includes("\\")) {
+        failures.push(`miss match path contains backslash: ${match.file}`);
+      }
+    }
+  }
+  return failures;
+}
+
 export async function routeDiscovery(ctx: DiscoveryRouteContext): Promise<AskResult> {
   const isDev = Boolean(ctx.options?.dev);
   const startedAt = performance.now();
   let res: AskResult;
+  const diag: RuntimeDiagTracker = { daemonIpcUsed: false };
   // capn deletes stale entries while it answers; the result names them instead of losing them silently.
   let memoryPruned: string[] | undefined;
   const tracked: DiscoveryRouteContext = {
@@ -1250,7 +1432,7 @@ export async function routeDiscovery(ctx: DiscoveryRouteContext): Promise<AskRes
     },
   };
   try {
-    res = await routeDiscoveryCore(tracked);
+    res = await routeDiscoveryCore(tracked, diag);
     if (memoryPruned && res.status !== "error") res = { ...res, memoryPruned };
   } catch (error) {
     const code = error instanceof WaymarkError ? error.code : "UNEXPECTED_ERROR";
@@ -1278,11 +1460,15 @@ export async function routeDiscovery(ctx: DiscoveryRouteContext): Promise<AskRes
       if (res.timings.fuzzy_ms !== undefined) tiers.push("fuzzy");
       if (res.timings.capn_ms !== undefined) tiers.push("capn");
     }
+    const invariantFailures = evaluateDevInvariants(res, ctx.options);
     const dev: DevDiagnostics = {
       tiersEvaluated: tiers.length > 0 ? tiers : (res.provider ? [res.provider] : ["unknown"]),
       timingBreakdownMs: res.timings || {},
-      daemonIpcUsed: Boolean(process.env.WAYMARK_AUTO_DAEMON === "1" || ctx.options?.daemon),
-      invariantsPassed: true,
+      ...(diag.trieHitType !== undefined ? { trieHitType: diag.trieHitType } : {}),
+      daemonIpcUsed: diag.daemonIpcUsed,
+      ...(diag.nodesVisited !== undefined ? { nodesVisited: diag.nodesVisited } : {}),
+      invariantsPassed: invariantFailures.length === 0,
+      ...(invariantFailures.length > 0 ? { invariantFailures } : {}),
     };
     finalRes = { ...res, dev };
   }

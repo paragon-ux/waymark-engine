@@ -5,7 +5,6 @@
 [![npm version](https://img.shields.io/npm/v/waymark-engine)](https://www.npmjs.com/package/waymark-engine)
 [![CI](https://github.com/paragon-ux/waymark-engine/actions/workflows/verify.yml/badge.svg)](https://github.com/paragon-ux/waymark-engine/actions/workflows/verify.yml)
 [![Docs](https://img.shields.io/badge/docs-Zensical-purple.svg)](https://paragon-ux.github.io/waymark-engine/)
-[![tests](https://img.shields.io/badge/tests-160%2F160-brightgreen)](https://github.com/paragon-ux/waymark-engine)
 [![node](https://img.shields.io/badge/node-%3E%3D22-339933?logo=node.js)](https://nodejs.org)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![recall](https://img.shields.io/badge/recall-lexical%20BM25%20(no%20embeddings)-informational)](https://github.com/paragon-ux/capn-hook)
@@ -20,7 +19,7 @@ Built for AI coding agents: one-shot discovery, zero required background process
 
 - **Deterministic by Construction**: Every query path is zero-randomness. Semantic recall uses pure lexical BM25 (`@paragon-ux/capn-hook`) and hard-refuses embedding stores (`CAPN_NON_DETERMINISTIC_MODE`).
 - **Fail-Closed Defense**: When structural or literal tiers miss, the Discovery Junction emits a machine-readable recommendation or clean miss. It **never guesses**.
-- **Two-Verb MCP Interface**: Consolidates all discovery and maintenance into `waymark_ask` and `waymark_memory`, slashing tool context overhead to **<450 tokens** (vs. 3,000+ for flat tool catalogs).
+- **Two-Verb MCP Interface**: Consolidates all discovery and maintenance into `waymark_ask` and `waymark_memory` (**~1,500 tokens** serialized `tools/list` vs **~2,850 tokens** across 12 tools in verbose mode).
 - **Sub-Millisecond Speed**: In-memory `PrefixTrie` and warm AST call graphs answer queries in `<10ms` with warm daemon IPC.
 
 ---
@@ -37,9 +36,10 @@ Built for AI coding agents: one-shot discovery, zero required background process
                        │                             │
        ┌───────────────┼───────────────┐             │
        ▼               ▼               ▼             ▼
-    Tier 1          Tier 2          Tier 3        Tier 4
- AST Call Graph   Path Router    Fuzzy Matcher  Lexical BM25
-(@paragon/codedb) (PrefixTrie)   (algo.go fzf)  (capn-hook)
+     Tier 1          Tier 2          Tier 3        Tier 4
+  AST Call Graph   Path Router    Fuzzy Matcher  Lexical BM25
+ (@paragon-ux/     (PrefixTrie)   (algo.go fzf)  (capn-hook)
+  codedb-core)
        │               │               │             │
        └───────────────┼───────────────┘             │
                        ▼                             ▼
@@ -69,14 +69,19 @@ waymark ask "verfyHop"                        # Discovery Junction recommendatio
 waymark ask "verifyHop" --plain               # Token-minimal LLM output (~16-38 tokens)
 ```
 
-### Live REPL Observer & Web Viewer
+### Interactive REPL & Live Telemetry Observer
 
-Launch the interactive REPL with real-time SSE telemetry and browser viewer on port 4141:
+Waymark provides two distinct REPL modes:
 
 ```bash
-waymark repl --live --port 4141
+# 1. Interactive diagnostic REPL (supports ask, symbols, /battery, /status, /clear, /exit)
+waymark repl
+
+# 2. Live read-only telemetry tailer & browser SSE viewer (default port 4141; keys: q/c/s)
+WAYMARK_TELEMETRY=1 waymark repl --live --port 4141
 ```
-Open the access URL printed by the REPL to observe query executions, tier breakdowns, and cache hits in a viewport-locked layout. Run `/battery` in the REPL to execute prompt evaluations. The URL contains a random session token; keep it private.
+
+In `--live` mode, open the tokenized loopback URL printed by the observer to watch real-time query executions, tier breakdowns, and cache hits in a viewport-locked browser dashboard (use `--port 0` to run terminal-only without HTTP). Keep the URL private.
 
 The live observer binds to `127.0.0.1`, requires explicit telemetry opt-in with `WAYMARK_TELEMETRY=1`, and checks the session token on the dashboard and telemetry endpoints. It rejects mismatched Host or Origin headers and blocks framing. Persistent query/session logs are disabled by default. Do not expose the local viewer through a public interface.
 
@@ -84,7 +89,7 @@ The live observer binds to `127.0.0.1`, requires explicit telemetry opt-in with 
 
 `waymark memory bootstrap` collects source excerpts as **unverified drafts**; it does not publish architectural claims or initialize a Capn store. Verify each claim against its cited code, then publish it explicitly with `waymark memory chart`. Subsystem-scoped discovery and maps are not supported; requests that include `--subsystem` or `subsystem` return `UNSUPPORTED_SUBSYSTEM`.
 
-On Windows, `WAYMARK_CODEDB_EXECUTABLE` must name a native executable. `.cmd` and `.bat` shims are rejected with `CODEDB_UNSUPPORTED_SHIM` because Waymark never invokes external tools through a shell.
+On Windows, `WAYMARK_CODEDB_EXECUTABLE` and `WAYMARK_CAPN_EXECUTABLE` must name native `.exe` (or Node `.js`/`.mjs`/`.cjs` for capn) entries. `.cmd` and `.bat` shims are rejected with `CODEDB_UNSUPPORTED_SHIM` / `CAPN_UNSUPPORTED_SHIM` because Waymark never invokes external tools through a shell.
 
 ### Language Support & Tier Fallbacks
 
@@ -106,7 +111,7 @@ For complete technical references, architectural specifications, and benchmark a
 
 - 📖 **[Getting Started](docs/getting-started.md)**: Installation, CLI flags, background daemon, and the Live REPL Observer.
 - 🏗️ **[4-Tier Architecture](docs/architecture.md)**: Deep dive into AST call graphs, literal paths, Junegunn Choi `fzf`, and BM25 consensus.
-- 🔌 **[Model Context Protocol (MCP)](docs/mcp.md)**: Two-Verb interface (<450 tokens), setup for Google Antigravity, Claude Desktop, and Cursor.
+- 🔌 **[Model Context Protocol (MCP)](docs/mcp.md)**: Lean Two-Verb interface (~1,500 tokens), setup for Google Antigravity, Claude Desktop, and Cursor.
 - 💻 **[CLI & Command Registry](docs/commands.md)**: Full canonical command reference, `waymark memory` action catalog, and exit codes.
 - 🧭 **[Examples](examples/README.md)**: Recorded runs of the `architectural-map`, `explore-subsystem`, and `bootstrap-semantic-map` MCP prompts against this repository.
 - 📊 **[Empirical Benchmarks](docs/benchmarks.md)**: Steelmanned Aider Repo Map parity benchmark (`gpt-oss-120b`) and metrics schema.
@@ -119,11 +124,11 @@ For complete technical references, architectural specifications, and benchmark a
 Build or preview the documentation locally using **Zensical**:
 
 ```bash
-# Build static site
-py -3.11 -m zensical build
+# Build static site (macOS / Linux; on Windows use `py -3.11 -m zensical build`)
+python3 -m zensical build
 
-# Serve live preview on localhost:8000
-py -3.11 -m zensical serve
+# Serve live preview on localhost:8000 (on Windows use `py -3.11 -m zensical serve`)
+python3 -m zensical serve
 ```
 
 ---

@@ -11,7 +11,7 @@ Waymark keeps everything it writes inside a repository under `.waymark/`. It nev
 | `.waymark/paths.v3.cache` | Tier 2 repository path cache | Path router (skipped when `WAYMARK_READ_ONLY=1`) |
 | `.waymark/sessions/active.jsonl` | Opt-in telemetry | Session logger (`WAYMARK_TELEMETRY=1`) |
 
-The daemon socket, PID record, and daemon registry live in the OS temp directory. The PID record is informational only: `waymark daemon stop --force` never uses it to choose a process to kill (audit finding F-01).
+On POSIX hosts, the daemon Unix socket, PID record, and daemon registry live in a per-user `0700` runtime directory (`$XDG_RUNTIME_DIR/waymark` or `os.tmpdir()/waymark-<uid>`, falling back to `/tmp/waymark-<uid>` if the candidate would exceed the POSIX Unix domain socket `sun_path` length limit) with `0600` socket/file permissions and atomic writes (Windows uses Named Pipes and `os.tmpdir()/waymark`). The PID record is informational only: `waymark daemon stop` never uses it to choose a process to kill (audit finding F-01).
 
 In code, `memoryStoreDir(root)` (`src/stateDir.ts`) is the only definition of the store location. Every store read and every capn invocation goes through it.
 
@@ -40,7 +40,7 @@ The flags come before the subcommand on purpose. A capn without them, such as ca
 
 - `waymark init` and `waymark memory init` fail with that code.
 - `chart` reports the error and publishes nothing.
-- `ask` misses Tier 4 with `STORE_UNINITIALIZED`.
+- `ask` surfaces `CAPN_STORE_DIR_UNSUPPORTED` as an explicit error (exit code 2) rather than hiding it as a silent miss.
 
 Tiers 1–3 are unaffected.
 

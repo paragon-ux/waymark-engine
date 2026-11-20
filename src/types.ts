@@ -99,13 +99,16 @@ export interface FuzzyMatcherOptions {
 
 export type WaymarkErrorCode =
   | "CAPN_STORE_UNINITIALIZED"
+  | "CAPN_STORE_DIR_UNSUPPORTED"
   | "CAPN_NON_DETERMINISTIC_MODE"
+  | "CAPN_UNSUPPORTED_SHIM"
   | "CODEDB_BINARY_MISSING"
   | "CODEDB_PROCESS_TIMEOUT"
   | "CODEDB_PROCESS_ERROR"
   | "CODEDB_UNSUPPORTED_SHIM"
   | "UNSUPPORTED_SUBSYSTEM"
   | "INVALID_TIER_OVERRIDE"
+  | "INVALID_FACET"
   | "CALL_GRAPH_DISCONNECTED"
   | "AMBIGUOUS_DROPPED_EDGES"
   | "UNEXPECTED_ERROR";
@@ -141,10 +144,11 @@ export interface JunctionOption {
 export interface DevDiagnostics {
   tiersEvaluated: string[];
   timingBreakdownMs: Record<string, number>;
-  trieHitType?: "exact" | "basename" | "suffix" | "none";
+  trieHitType?: "exact" | "basename" | "suffix" | "substring" | "none";
   daemonIpcUsed?: boolean;
   nodesVisited?: number;
   invariantsPassed: boolean;
+  invariantFailures?: string[];
 }
 
 export interface AskHitResult {
@@ -256,6 +260,7 @@ export interface AskOptions {
   outline?: boolean;
   language?: string;
   subsystem?: string;
+  includeDirs?: string[];
 }
 
 

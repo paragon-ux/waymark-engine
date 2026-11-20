@@ -48,6 +48,10 @@ interface FileIndex {
 const fileCache = new Map<string, { mtimeMs: number; size: number; index: FileIndex | null }>();
 const FILE_CACHE_LIMIT = 5000;
 
+export function clearTreeSitterFileCache(): void {
+  fileCache.clear();
+}
+
 function contains(outer: StructuredSymbol, inner: StructuredSymbol): boolean {
   if (outer === inner) return false;
   const startsBefore = outer.start.line < inner.start.line || (outer.start.line === inner.start.line && outer.start.column <= inner.start.column);

@@ -44,6 +44,7 @@ waymark ask [options] [question]
 | `--daemon` | `-d` | `boolean` | Route query through the resident in-memory background daemon IPC. |
 | `--auto-resolve` | | `boolean` | Collapse junction responses to top recommendation. |
 | `--dev` | | `boolean` | Enable Dev Mode with per-tier timing breakdown and runtime invariant assertions. |
+| `--include-dir <dirs>` | | `string` | Comma-separated (or repeatable) root directory names (e.g. `vendor,eval`) to un-exclude from Tier 2 literal path indexing. |
 
 ### Examples
 
@@ -108,33 +109,37 @@ waymark daemon [command]
 ## Interactive REPL & Live Viewer (`waymark repl`)
 
 ```bash
-waymark repl [--live] [--port <port>]
+# Interactive diagnostic REPL
+waymark repl
+
+# Read-only live session tailer & SSE Web Viewer (requires WAYMARK_TELEMETRY=1)
+WAYMARK_TELEMETRY=1 waymark repl --live [--port 4141]
 ```
 
-- **`--live`**: Launches the real-time Server-Sent Events (SSE) Web Viewer.
-- **`--port <port>`**: Port for Web Viewer (default: `4141`).
+- **`--live`**: Runs the read-only live session tailer and Server-Sent Events (SSE) Web Viewer (terminal keys: `q` quit, `c` clear, `s` session stats). Exits `1` if `WAYMARK_TELEMETRY=1` is not set.
+- **`--port <port>`**: Port for Web Viewer in `--live` mode (default: `4141`; pass `0` to disable HTTP).
 
 The viewer binds only to `127.0.0.1`, requires the per-session token in the printed access URL, rejects mismatched Host/Origin headers, and blocks framing. It emits no permissive CORS header and starts only when `WAYMARK_TELEMETRY=1` is set. Persistent query/session logging also requires this opt-in; it is disabled by default. `WAYMARK_NO_LOG=1` remains an explicit deny switch.
 
-`--subsystem` is not supported by discovery, charting, bootstrap, or map maintenance and returns `UNSUPPORTED_SUBSYSTEM` instead of silently querying the whole repository. On Windows, `WAYMARK_CODEDB_EXECUTABLE` must point to a native `.exe`; `.cmd` and `.bat` shims return `CODEDB_UNSUPPORTED_SHIM`.
+`--subsystem` is not supported by discovery, charting, bootstrap, or map maintenance and returns `UNSUPPORTED_SUBSYSTEM` instead of silently querying the whole repository. On Windows, `WAYMARK_CODEDB_EXECUTABLE` and `WAYMARK_CAPN_EXECUTABLE` must point to native `.exe` (or `.js`/`.mjs`/`.cjs` for capn) entries; `.cmd` and `.bat` shims return `CODEDB_UNSUPPORTED_SHIM` / `CAPN_UNSUPPORTED_SHIM`.
 
-`waymark daemon stop --force` still shuts down only through the root-specific daemon IPC endpoint. If the daemon cannot be identified and reached, it fails safely and does not signal a PID read from disk.
+`waymark daemon stop` always shuts down strictly through the root-specific daemon IPC endpoint and never signals a PID read from disk.
 
-### REPL Commands
-- `/battery`: Run the full 6-category hardened evaluation test battery.
-- `/clear`: Clear terminal history.
-- `/status`: Show daemon IPC connection and cache health.
-- `/exit`: Terminate REPL session.
+### Interactive REPL Commands (`waymark repl`)
+- `manifest` / `/battery`: Run the canonical 105-prompt evaluation manifest (`CATALOGUE_MANIFEST.jsonl`).
+- `daemon status` / `/status`: Show daemon IPC connection status.
+- `clear` / `/clear`: Clear terminal screen.
+- `exit` / `quit` / `/exit`: Terminate REPL session.
 
 ---
 
-## Exit Codes & Status Envelopes
+## Output Default & Exit Codes
 
-Waymark guarantees consistent process exit codes:
+All CLI commands default to machine-readable JSON on `stdout`; pass `--plain` (`-p`) for compact plain-text output (~16–38 tokens). Process exit codes follow one canonical contract (aligned with `spec/error-codes.md`):
 
 | Code | Meaning | Context |
 | :--- | :--- | :--- |
-| `0` | **Success / Hit** | Valid AST match, path resolution, fuzzy score, or memory hit. |
-| `1` | **Clean Miss** | No matching symbol or file found (zero false positives). |
-| `2` | **Usage / Configuration Error** | Invalid flags, missing required arguments, or uninitialized store. |
-| `3` | **Deterministic Guard Violation** | Attempted to use embedding mode or non-deterministic vector store. |
+| `0` | **Success / Clean Result** | Valid hit, Discovery Junction recommendation, or clean fail-closed miss (`SYMBOL_NOT_FOUND`, `NO_CHARTED_MEMORY`, `JUNCTION_EXHAUSTED`, `STORE_UNINITIALIZED`, `AMBIGUOUS_PATH_COLLISION`). |
+| `1` | **Caller Error / Operational Failure** | Invalid CLI flags or syntax, missing arguments, unknown command/facet/tier, `ask` runtime `status: "error"`, failed daemon/memory operations (`ok: false`), or evaluation manifest failures. |
+| `2` | **Environment / Store / Guard Failure** | Deterministic guard violation (`CAPN_NON_DETERMINISTIC_MODE`), unsupported store-dir/shim (`CAPN_STORE_DIR_UNSUPPORTED`, `CAPN_UNSUPPORTED_SHIM`, `CODEDB_UNSUPPORTED_SHIM`), missing binary (`CODEDB_BINARY_MISSING`), or file/parser boundary errors (`FILE_TOO_LARGE`, `PARSE_ERROR`, `SYMLINK_ESCAPE`). |
+| `3` | **Publication Refused** | `waymark chart` / `waymark memory chart` returned `published: false` under `profile: "capn-cli"`. |

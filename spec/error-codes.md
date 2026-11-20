@@ -36,14 +36,17 @@ Errors represent exceptional failures or contract violations rather than discove
 
 | Error Code | Classification | Severity | Retryable | Exit Code | Triggering Condition | Recommended Remediation |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| `CAPN_STORE_UNINITIALIZED` | Store State | Fatal | `false` | `1` | Lexical Capn SQLite store does not exist in repo root or is missing tables. | Run `waymark-init` (or `waymark init`) once in the repository root. |
-| `CAPN_NON_DETERMINISTIC_MODE` | Invariant Guard | Fatal | `false` | `1` | Capn memory store is configured with embedding models or vector indexes. Refused by design invariant. | Reinitialize the store in strict lexical BM25 mode. Do not use embeddings. |
-| `CODEDB_BINARY_MISSING` | Dependency | Fatal | `false` | `1` | The `@paragon-ux/codedb-core` executable cannot be located. | Run `npm ci` to install or build native codedb binary dependencies. |
-| `CODEDB_PROCESS_ERROR` | Execution Fault | Fatal | `false` | `1` | Codedb failed to spawn, exited unsuccessfully, or returned invalid output; this is not a symbol miss. | Check the executable, permissions, and codedb diagnostics. |
-| `CODEDB_PROCESS_TIMEOUT` | Execution Fault| Transient | `true` | `1` | Codedb AST traversal or resident server exceeded process timeout (30s). | Retry with a more specific target path or query scope. |
-| `CODEDB_UNSUPPORTED_SHIM` | Platform Contract | Fatal | `false` | `1` | A configured Windows codedb executable ends in `.cmd` or `.bat`; shell-based shims are intentionally unsupported. | Configure a native `.exe` through `WAYMARK_CODEDB_EXECUTABLE`. |
+| `CAPN_STORE_UNINITIALIZED` | Store State | Fatal | `false` | `2` | Lexical Capn SQLite store does not exist in repo root or is missing tables. | Run `waymark-init` (or `waymark init`) once in the repository root. |
+| `CAPN_STORE_DIR_UNSUPPORTED` | Store Contract | Fatal | `false` | `2` | Configured capn executable does not accept `--root`/`--store-dir` and cannot target `.waymark/memory`. | Use the bundled `@paragon-ux/capn-hook` (>= 2.0.0) or upgrade your custom capn binary. |
+| `CAPN_NON_DETERMINISTIC_MODE` | Invariant Guard | Fatal | `false` | `2` | Capn memory store is configured with embedding models or vector indexes. Refused by design invariant. | Reinitialize the store in strict lexical BM25 mode. Do not use embeddings. |
+| `CAPN_UNSUPPORTED_SHIM` | Platform Contract | Fatal | `false` | `2` | A configured Windows capn executable ends in `.cmd` or `.bat`; shell-based shims are intentionally unsupported. | Configure a `.js`/`.mjs`/`.cjs` entry or native `.exe` via `WAYMARK_CAPN_EXECUTABLE`. |
+| `CODEDB_BINARY_MISSING` | Dependency | Fatal | `false` | `2` | The `@paragon-ux/codedb-core` executable cannot be located. | Run `npm ci` to install or build native codedb binary dependencies. |
+| `CODEDB_PROCESS_ERROR` | Execution Fault | Fatal | `true` | `1` | Codedb failed to spawn, exited unsuccessfully, or returned invalid output; this is not a symbol miss. | Check the executable, permissions, and codedb diagnostics. |
+| `CODEDB_PROCESS_TIMEOUT` | Execution Fault| Transient | `true` | `1` | Codedb AST traversal or resident server exceeded process timeout (45s). | Retry with a more specific target path or query scope. |
+| `CODEDB_UNSUPPORTED_SHIM` | Platform Contract | Fatal | `false` | `2` | A configured Windows codedb executable ends in `.cmd` or `.bat`; shell-based shims are intentionally unsupported. | Configure a native `.exe` through `WAYMARK_CODEDB_EXECUTABLE`. |
 | `UNSUPPORTED_SUBSYSTEM` | Caller Contract | Permanent | `false` | `1` | A discovery or memory operation requested unsupported filesystem-scoped subsystem behavior. | Omit `subsystem` to target the selected repository root. |
 | `INVALID_TIER_OVERRIDE` | Caller Error | Permanent | `false` | `1` | Caller passed an unknown tier to `--tier` or `ask({ tier })` (allowed: `auto`, `ast`, `path`, `fuzzy`, `capn`). | Fix tier selector parameter in CLI invocation or tool call. |
+| `INVALID_FACET` | Caller Error | Permanent | `false` | `1` | Caller passed an unknown facet to `--facet` or `ask({ facet })` (allowed: `lifecycle`, `data_state`, `boundaries`, `invariants`, `failure`, `status`). | Pass a valid Semantic Repo Map facet ID. |
 | `CALL_GRAPH_DISCONNECTED` | Structural | Warning | `false` | `0` | Function exists in AST, but caller/callee traversal finds no connected edges. | Verify symbol references; function may be an uninvoked leaf or dead code. |
 | `AMBIGUOUS_DROPPED_EDGES` | Structural | Warning | `false` | `0` | Multiple definitions share the same name across files; edges dropped to prevent false attribution. | Scope symbol query with file path context (e.g. `path/to/file.ts:symbolName`). |
 | `UNKNOWN_COMMAND` | CLI Syntax | Permanent | `false` | `1` | Unrecognized CLI subcommand passed to `waymark`. | Consult `waymark help` for supported commands. |
@@ -76,10 +79,10 @@ When invoked from the command line (`waymark`, `waymark-ask`, etc.), process exi
 
 | Exit Code | Classification | Meaning | Examples |
 | :--- | :--- | :--- | :--- |
-| `0` | **Success / Clean Result** | The operation completed successfully. Covers `status: "hit"`, `status: "junction"`, and clean fail-closed `status: "miss"`. In all these cases, valid output was produced. | `waymark-ask "who calls verifyHop?"` (Hit)<br>`waymark-ask "where is refundOrdr declared?"` (Junction)<br>`waymark-ask "unknownConcept"` (Miss) |
-| `1` | **Error / Invariant Violation** | Command aborted due to invalid arguments, syntax errors, or invariant failures. | Missing `--question`, uninitialized Capn store, unknown flag `--foo`. |
-| `2` | **Fatal Runtime Exception** | Process terminated unexpectedly due to uncaught runtime failure or signal interruption. | Out of memory, broken pipe, unhandled native panic. |
-| `3` | **Publication Refused** | Special exit code emitted by `waymark chart` when publication was rejected by adapter profile. | `waymark chart` attempted against `profile: "capn-cli"` with rejected consensus. |
+| `0` | **Success / Clean Result** | The operation completed cleanly. Covers `status: "hit"`, `status: "junction"`, and clean fail-closed `status: "miss"` (`SYMBOL_NOT_FOUND`, `NO_CHARTED_MEMORY`, `JUNCTION_EXHAUSTED`, `STORE_UNINITIALIZED`, `AMBIGUOUS_PATH_COLLISION`). | `waymark-ask "who calls verifyHop?"` (Hit)<br>`waymark-ask "where is refundOrdr declared?"` (Junction)<br>`waymark-ask "unknownConcept"` (Miss) |
+| `1` | **Caller Error / Operational Failure** | Command aborted due to invalid flags/syntax, missing arguments, unknown command/facet/tier, `ask` runtime `status: "error"`, failed daemon/memory operations (`ok: false`), or evaluation manifest failures. | Missing `--question`, unknown flag `--foo`, `--facet bogus`, failed `daemon start`. |
+| `2` | **Environment / Store / Guard Failure** | Determinism invariant violation, unsupported store-dir/Windows shim, missing binary, or file/parser boundary violation. | `CAPN_NON_DETERMINISTIC_MODE`, `CAPN_STORE_DIR_UNSUPPORTED`, `CAPN_UNSUPPORTED_SHIM`, `CODEDB_UNSUPPORTED_SHIM`, `FILE_TOO_LARGE`, `PARSE_ERROR`, `SYMLINK_ESCAPE`. |
+| `3` | **Publication Refused** | Special exit code emitted by `waymark chart` / `waymark memory chart` when publication returned `published: false` under `profile: "capn-cli"`. | `waymark chart` rejected by capn adapter. |
 
 ---
 

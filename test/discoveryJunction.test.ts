@@ -10,12 +10,13 @@ import { ask, publish, assertLexicalStore, initCapn } from "../src/capnAdapter.j
 import { memoryStoreDir } from "../src/stateDir.js";
 
 import { AskJunctionResult, AskHitResult, FuzzyCandidate, WaymarkError } from "../src/types.js";
+import { mkTrackedTempDir } from "./tempDirs.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const waymarkRoot = path.resolve(__dirname, "..");
 
 function createTestRepo(): string {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "waymark-junction-test-"));
+  const repo = mkTrackedTempDir("waymark-junction-test-");
   execFileSync("git", ["init", "-q", "-b", "main"], { cwd: repo });
   fs.mkdirSync(memoryStoreDir(repo), { recursive: true });
   fs.writeFileSync(path.join(memoryStoreDir(repo), "config.json"), '{"embedding": false}');

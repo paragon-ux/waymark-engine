@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { collectRepoPaths, collectRepoPathsBounded, detectAstIntent, detectLiteralIntent, matchLiteralPath, extractCandidateTokens } from "../src/discoveryRouter.js";
 import { queryStructural, resolveCodedbCommand } from "../src/codedbAdapter.js";
 import { ask } from "../src/capnAdapter.js";
+import { mkTrackedTempDir } from "./tempDirs.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const waymarkRoot = path.resolve(__dirname, "../..");
@@ -97,7 +98,7 @@ test("ask() automatically delegates AST queries to the codedb call graph", { ski
 });
 
 function literalWorkspace(): string {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "waymark-literal-"));
+  const repo = mkTrackedTempDir("waymark-literal-");
   fs.mkdirSync(path.join(repo, "src", "auth"), { recursive: true });
   fs.mkdirSync(path.join(repo, "src", "db"), { recursive: true });
   fs.writeFileSync(path.join(repo, "src", "auth", "utils.ts"), "export const auth = 1\n");

@@ -345,18 +345,19 @@ export class ResidentCodedbClient {
     }
 
     if (this.proc) {
-      const pid = this.proc.pid;
+      const proc = this.proc;
+      const pid = proc.pid;
       try {
-        if (this.proc.stdin && this.proc.stdin.writable) {
-          this.proc.stdin.end();
+        if (proc.stdin && proc.stdin.writable) {
+          proc.stdin.end();
         }
       } catch {
         // ignore
       }
       setTimeout(() => {
-        if (this.proc) {
+        if (proc.exitCode === null && !proc.killed) {
           try {
-            this.proc.kill("SIGKILL");
+            proc.kill("SIGKILL");
           } catch {
             // ignore
           }
@@ -367,7 +368,6 @@ export class ResidentCodedbClient {
               // ignore
             }
           }
-          this.proc = null;
         }
       }, 150).unref();
     }
@@ -487,10 +487,19 @@ export function listResidentClients(): Array<{ root: string; pid?: number; lastU
 process.once("exit", () => {
   closeAllResidentClients();
 });
-process.once("SIGINT", () => {
+
+const handleTerminationSignal = (signal: NodeJS.Signals): void => {
   closeAllResidentClients();
-});
-process.once("SIGTERM", () => {
-  closeAllResidentClients();
-});
+  // Re-raise when no other handler owns shutdown so a single SIGINT/SIGTERM always terminates.
+  if (process.listenerCount(signal) === 0) {
+    try {
+      process.kill(process.pid, signal);
+    } catch {
+      process.exit(signal === "SIGINT" ? 130 : 143);
+    }
+  }
+};
+
+process.once("SIGINT", () => handleTerminationSignal("SIGINT"));
+process.once("SIGTERM", () => handleTerminationSignal("SIGTERM"));
 

@@ -102,13 +102,43 @@ export function resolveRepositoryFile(root: string, storedPath: string): { lexic
   return { lexical, real };
 }
 
-export function readFileBytes(root: string, storedPath: string): { path: string; bytes: Buffer } {
+export function readFileBytes(root: string, storedPath: string, maxBytes?: number): { path: string; bytes: Buffer } {
   const file = resolveRepositoryFile(root, storedPath);
-  return { path: file.real, bytes: fs.readFileSync(file.real) };
+  if (maxBytes === undefined) {
+    return { path: file.real, bytes: fs.readFileSync(file.real) };
+  }
+  const fd = fs.openSync(file.real, "r");
+  try {
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile()) {
+      throw new WaymarkError("NOT_REGULAR_FILE", `Referenced path is not a regular file: ${storedPath}`, 2);
+    }
+    if (stat.size > maxBytes) {
+      throw new WaymarkError("FILE_TOO_LARGE", `Discovery only accepts files up to ${maxBytes} bytes`, 2);
+    }
+    const limit = maxBytes + 1;
+    const chunks: Buffer[] = [];
+    let total = 0;
+    const chunkSize = Math.min(64 * 1024, limit);
+    const scratch = Buffer.allocUnsafe(chunkSize);
+    while (total < limit) {
+      const toRead = Math.min(chunkSize, limit - total);
+      const read = fs.readSync(fd, scratch, 0, toRead, total);
+      if (read <= 0) break;
+      chunks.push(Buffer.from(scratch.subarray(0, read)));
+      total += read;
+    }
+    if (total > maxBytes) {
+      throw new WaymarkError("FILE_TOO_LARGE", `Discovery only accepts files up to ${maxBytes} bytes`, 2);
+    }
+    return { path: file.real, bytes: chunks.length === 1 ? chunks[0]! : Buffer.concat(chunks, total) };
+  } finally {
+    fs.closeSync(fd);
+  }
 }
 
-export function readFileText(root: string, storedPath: string): { path: string; bytes: Buffer; text: string } {
-  const result = readFileBytes(root, storedPath);
+export function readFileText(root: string, storedPath: string, maxBytes?: number): { path: string; bytes: Buffer; text: string } {
+  const result = readFileBytes(root, storedPath, maxBytes);
   try {
     return { ...result, text: decoder.decode(result.bytes) };
   } catch {

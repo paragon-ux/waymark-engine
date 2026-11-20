@@ -8,9 +8,10 @@ import { McpServer } from "../src/mcp/server.js";
 import { resolveCodedbCommand, runJson } from "../src/codedbAdapter.js";
 import type { CallGraphHopNode } from "../src/types.js";
 import { initMemoryStoreSync } from "./capnContract.js";
+import { mkTrackedTempDir } from "./tempDirs.js";
 
 function setupRepo(): string {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "waymark-qualified-"));
+  const repo = mkTrackedTempDir("waymark-qualified-");
   execFileSync("git", ["init", "-q", "-b", "main"], { cwd: repo });
   fs.mkdirSync(path.join(repo, "src"), { recursive: true });
   fs.mkdirSync(path.join(repo, "test"), { recursive: true });
@@ -108,7 +109,7 @@ test("Call graph: hops follow qualified names, and module nodes are labelled cal
 
 /** Two classes with `start`, a getter/setter pair, and a free `boot`. */
 function setupRootRepo(): string {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "waymark-qualified-root-"));
+  const repo = mkTrackedTempDir("waymark-qualified-root-");
   execFileSync("git", ["init", "-q", "-b", "main"], { cwd: repo });
   fs.mkdirSync(path.join(repo, "src"), { recursive: true });
   const files: Record<string, string[]> = {

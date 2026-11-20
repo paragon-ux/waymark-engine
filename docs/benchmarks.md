@@ -1,68 +1,54 @@
 # Empirical Benchmarks & Evaluation
 
-Waymark Engine has been rigorously evaluated against standard agentic retrieval methods, including whole-repo vector embeddings and Aider's AST PageRank repo map.
+Waymark Engine is evaluated against recorded empirical artifacts stored in `benchmarks/manifest.json` and `benchmarks/data/`. Every metric below cites its backing data file in this repository.
 
 ---
 
-## Steelmanned Aider Repo Map Parity Benchmark
+## Aider Repo Map Parity Benchmark (`gpt-oss-120b`)
 
-Evaluated using `gpt-oss-120b` across 6 distinct retrieval categories on real-world repositories:
+Recorded in [`benchmarks/data/aider_parity/results.json`](https://github.com/paragon-ux/waymark-engine/blob/main/benchmarks/data/aider_parity/results.json) (`model: "openai/gpt-oss-120b"`, `reasoningEffort: "low"`, timestamp `2026-09-28T14:29:01.161Z`):
 
-| Retrieval Task | Aider Repo Map (PageRank) | Waymark Engine (4-Tier) | Variance |
+| Evaluation Track | Aider Repo Map | Waymark Engine | Recorded Outcome |
 | :--- | :--- | :--- | :--- |
-| **Exact Symbol Caller** | 1,840 tokens (ranked file dump) | **34 tokens** (Tier 1 AST hit) | **-98.1% tokens** |
-| **Multi-Hop BFS Trace** | Not supported (requires agent loop) | **112 tokens** (Tier 1 Bounded BFS) | **Deterministic graph** |
-| **Typo / Transposition** | 0% recall (miss or wrong file) | **100% recall** (Tier 3 Junegunn FZF) | **+100% resilience** |
-| **Conceptual Invariant**| 2,400 tokens (approximate text) | **86 tokens** (Tier 4 BM25 Consensus) | **-96.4% tokens** |
-| **False-Positive Defense**| Hallucinates related functions | **0 false positives** (fail-closed miss) | **Zero hallucinations** |
+| **Track A: Locate & Edit `DaemonOptions`** | 416 prompt tokens, 306 completion tokens, 1 turn (`758 ms`, success) | 367 prompt tokens, 284 completion tokens, 2 turns (`1,292 ms`, success) | **-11.8% prompt tokens** on single-task lookup |
+| **Track B: Refactor IPC Bridge with Path Invariants** | 426 prompt tokens, `hallucinatedSemantics: true` (`188 ms`) | 376 prompt tokens, `hallucinatedSemantics: false` (`1,341 ms`) | **Zero semantic hallucination** |
+| **10-Turn Multi-Turn Simulation** | 2,700 cumulative tokens (270 tokens/turn) | 196 cumulative tokens (28 tokens on turn 1, amortized via charted recall) | **92.7% cumulative token reduction** |
 
 ---
 
-## Token Economics & Efficiency
+## MCP Tool Schema & Plain-Text Output Footprint
 
-When AI coding agents retrieve context, large file dumps rapidly degrade reasoning quality and inflate token costs:
+- **Two-Verb Canonical MCP (`tools/list`)**: ~1,500 tokens (~6.1 KB serialized across `waymark_ask` and `waymark_memory`), vs ~2,850 tokens (~11.4 KB serialized across all 12 tools with `WAYMARK_MCP_VERBOSE=1`) — a ~46% schema reduction.
+- **Plain-Text Query Responses (`--plain` / `plain: true`)**: Compact single-line/tree outputs instead of full JSON envelopes.
+- **Call-Graph Test Exclusion (`--exclude-tests`)**: Suppresses test files (`tests/`, `*_test.*`, `*.spec.*`) from multi-hop caller trees while preserving production call edges.
 
-```text
-Full File Context Reads (Standard Agent):
-████████████████████████████████████████  15,000–45,000 tokens
+---
 
-Aider Repo Map Ranking:
-████████████  2,500–5,000 tokens
+## Grafana Monorepo & Resident Daemon Latency
 
-Waymark Engine (--plain):
-█  16–38 tokens (99.8% reduction)
+Recorded in [`benchmarks/manifest.json`](https://github.com/paragon-ux/waymark-engine/blob/main/benchmarks/manifest.json) against `grafana/grafana` (`23,517` total files, `21,144` indexed source files, `347,845` AST symbols) on an **Intel Core i5-5300U @ 2.30 GHz (2 cores / 4 logical processors), 16 GB RAM, Windows 10** (`CODEDB_MAX_THREADS=3`):
+
+| Operation / Benchmark | Pre-Hardening / Cold | Post-Hardening / Resident | Speedup / Reduction |
+| :--- | :--- | :--- | :--- |
+| **High-Collision AST Verb (`Who calls New?`)** | `30,318.7 ms` | `4,454.4 ms` | **6.8x** (-85.3%) |
+| **Literal Path Lookup (`embed.go`)** | `4,594.8 ms` | `41.21 ms` (cold disk) / `229.9 ms` (warm CLI) | **20.0x** (-95.0%) |
+| **Non-Existent Path Fail-Closed** | `9,390.7 ms` (junction hijack) | `257.9 ms` (fail-closed Tier 2 miss) | **36.4x** (-97.3%) |
+| **Stateless Cold vs Resident Daemon Median** | `95.0 ms` | `3.8 ms` | **25.0x** |
+
+Supporting raw captures live under `benchmarks/data/grafana_pre_hardening/`, `benchmarks/data/grafana_post_hardening/`, and `benchmarks/data/codex_e2e/`.
+
+---
+
+## Automated 105-Prompt Evaluation Battery
+
+Waymark ships an automated 105-prompt evaluation manifest at `docs/prompts/CATALOGUE_MANIFEST.jsonl` covering 15 operational categories (exact path normalization, AST call graphs, bounded multi-hop BFS, test exclusion, single-file tree-sitter outlines, fuzzy transposition, batch symbol lookup, fail-closed adversarial misses, path-traversal sandboxing, SHA-256 range anchor integrity, multi-step workflows, forced-tier isolation, concurrency, plain-text compression, and Discovery Junction consensus).
+
+Run it locally or in CI via:
+
+```bash
+npm run test:prompts
+# or directly:
+node docs/prompts/run_battery.mjs
+# or interactively inside `waymark repl`:
+/battery
 ```
-
-### Test Exclusion Impact
-Call graphs in large repositories are often overwhelmed by unit and integration tests. Enabling `--exclude-tests`:
-- Suppresses test helper fixtures, mock callers, and test files (`*_test.*`, `*.spec.*`, `tests/`).
-- Yields up to **94% token savings** on multi-hop caller trees while preserving 100% of production architectural paths.
-
----
-
-## Latency & Performance Benchmarks
-
-Measured on an AMD Ryzen 9 7950X / Windows 11 with Node.js v22 across a 50,000-line TypeScript codebase:
-
-| Operation | Cold Process Scan | Warm Resident Daemon | Speedup |
-| :--- | :--- | :--- | :--- |
-| **Tier 1 (AST Symbol Definition)** | 185 ms | **8.2 ms** | **22.5x** |
-| **Tier 1 (Bounded Multi-Hop BFS)** | 240 ms | **12.4 ms** | **19.3x** |
-| **Tier 2 (Literal Path PrefixTrie)** | 24 ms | **0.8 ms** | **30.0x** |
-| **Tier 3 (Junegunn Choi FZF Score)** | 42 ms | **3.1 ms** | **13.5x** |
-| **Tier 4 (Lexical BM25 Memory Hit)** | 35 ms | **5.4 ms** | **6.5x** |
-
----
-
-## Adversarial Evaluation Battery
-
-Waymark maintains an automated 6-category regression and adversarial evaluation battery (`docs/prompts/` and `/battery` in the REPL):
-
-1. **AST Call Graph Fidelity**: Deterministic verification of callers and callees across overloaded signatures.
-2. **Literal Path Resolution**: Absolute, relative, and ambiguous path disambiguation.
-3. **Fuzzy Scoring Accuracy**: Transposition resilience, camelCase boundary weighting, and separator biases.
-4. **Bounded Multi-Hop Invariants**: Cycle detection, depth limiting (1–5), and directionality enforcement.
-5. **Batch Symbol Concurrency**: Concurrent multi-symbol queries under thread bounds.
-6. **Fail-Closed Adversarial Resistance**: Zero hallucinations on fabricated symbols, non-existent files, and uninitialized vector stores.
-
-All tests execute with 100% pass rates across offline test suites and live CI runs.

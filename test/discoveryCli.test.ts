@@ -8,11 +8,12 @@ import test from "node:test";
 import { McpServer } from "../src/mcp/server.js";
 import { skipCodedb } from "./codedb.js";
 import { memoryStoreDir } from "../src/stateDir.js";
+import { mkTrackedTempDir } from "./tempDirs.js";
 
 const cliPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../src/cli.js");
 
 function setupRepo(): string {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "waymark-discovery-cli-"));
+  const repo = mkTrackedTempDir("waymark-discovery-cli-");
   execFileSync("git", ["init", "-q", "-b", "main"], { cwd: repo });
   fs.mkdirSync(path.join(repo, "src"), { recursive: true });
   fs.writeFileSync(

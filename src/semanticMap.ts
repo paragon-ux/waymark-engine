@@ -4,7 +4,7 @@ import { resolveRepositoryFile } from "./paths.js";
 import { memoryStoreDir, MEMORY_STORE_LABEL } from "./stateDir.js";
 import { AdapterProfile, WaymarkError } from "./types.js";
 import { entryFreshness, readChartedEntries } from "./memoryEntries.js";
-import { publish, unchart } from "./capnAdapter.js";
+import { publish, unchart, withMemoryStoreLock } from "./capnAdapter.js";
 
 export type SemanticFacetId =
   | "lifecycle"
@@ -724,27 +724,55 @@ export async function chartMemoryEntry(
   // Anti-Hallucination Guard for facets
   if (normalized.facet) validateFacetBackingFiles(root, input.files, isNotApplicableAnswer(answer));
 
-  const result = await publish(root, profile, executable, question, answer, input.files);
-  const base: ChartMemoryResult = {
-    waymark: 1,
-    kind: "chart",
-    published: result.published,
-    adapter: result.adapter,
-    output: result.output,
-    ...(result.error ? { error: result.error } : {}),
-    question,
-    ...(normalized.facet ? { facet: normalized.facet } : {}),
-  };
-  if (!result.published || !normalized.facet) return base;
-
-  const tag = SEMANTIC_FACETS[normalized.facet].tag.toUpperCase();
-  const previous = readChartedEntries(root).filter((e) => e.question.toUpperCase().includes(tag) && e.question !== question);
-  const replaced: string[] = [];
-  for (const entry of previous) {
-    const removed = await unchart(root, executable, entry.id, true);
-    if (removed.ok) replaced.push(entry.id);
+  if (profile === "none") {
+    const result = await publish(root, profile, executable, question, answer, input.files);
+    return {
+      waymark: 1,
+      kind: "chart",
+      published: result.published,
+      adapter: result.adapter,
+      output: result.output,
+      ...(result.error ? { error: result.error } : {}),
+      question,
+      ...(normalized.facet ? { facet: normalized.facet } : {}),
+    };
   }
-  return replaced.length > 0 ? { ...base, replaced } : base;
+
+  return await withMemoryStoreLock(root, async () => {
+    const tag = normalized.facet ? SEMANTIC_FACETS[normalized.facet].tag.toUpperCase() : "";
+    const beforeIds = normalized.facet
+      ? new Set(readChartedEntries(root).filter((e) => e.question.toUpperCase().includes(tag)).map((e) => e.id))
+      : new Set<string>();
+
+    const result = await publish(root, profile, executable, question, answer, input.files);
+    const base: ChartMemoryResult = {
+      waymark: 1,
+      kind: "chart",
+      published: result.published,
+      adapter: result.adapter,
+      output: result.output,
+      ...(result.error ? { error: result.error } : {}),
+      question,
+      ...(normalized.facet ? { facet: normalized.facet } : {}),
+    };
+    if (!result.published || !normalized.facet) return base;
+
+    const afterEntries = readChartedEntries(root).filter((e) => e.question.toUpperCase().includes(tag));
+    // Preserve the newly published entry (preferring an ID not present before publish, else matching question, else newest).
+    const keepEntry =
+      afterEntries.find((e) => !beforeIds.has(e.id) && e.question === question) ??
+      afterEntries.find((e) => !beforeIds.has(e.id)) ??
+      afterEntries.find((e) => e.question === question) ??
+      afterEntries[0];
+
+    const staleEntries = keepEntry ? afterEntries.filter((e) => e.id !== keepEntry.id) : [];
+    const replaced: string[] = [];
+    for (const entry of staleEntries) {
+      const removed = await unchart(root, executable, entry.id, true);
+      if (removed.ok) replaced.push(entry.id);
+    }
+    return replaced.length > 0 ? { ...base, replaced } : base;
+  });
 }
 
 /** The Markdown architecture report of `waymark memory export` / `waymark_memory(action: "export")`. */

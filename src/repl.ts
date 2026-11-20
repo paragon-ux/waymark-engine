@@ -13,6 +13,7 @@ import { runBaselineSearch, computeBaselineComparison } from "./baselineSearch.j
 import { runManifestEvaluation, executePromptTest } from "./evaluator.js";
 import { AskResult, DiscoveryTier } from "./types.js";
 import { resolveSessionLogPath, SessionTelemetryEvent } from "./sessionLogger.js";
+import { ensureStateDir, stateDir } from "./stateDir.js";
 
 export interface ReplOptions {
   rootDir?: string;
@@ -27,12 +28,11 @@ export interface ReplOptions {
 /**
  * Start the interactive Waymark REPL attached to the resident background daemon or live observer.
  */
-export async function startRepl(options: ReplOptions = {}): Promise<void> {
+export async function startRepl(options: ReplOptions = {}): Promise<number> {
   const root = options.rootDir ? path.resolve(options.rootDir) : repoRoot();
 
   if (options.live) {
-    await startLiveReplObserver(options);
-    return;
+    return await startLiveReplObserver(options);
   }
 
   let devMode = options.dev ?? true;
@@ -71,32 +71,42 @@ export async function startRepl(options: ReplOptions = {}): Promise<void> {
 
   rl.prompt();
 
-  rl.on("line", async (lineStr: string) => {
+  let pendingChain: Promise<void> = Promise.resolve();
+  let closed = false;
+
+  rl.on("line", (lineStr: string) => {
     const line = lineStr.trim();
-    if (!line) {
-      rl.prompt();
-      return;
-    }
-
-    try {
-      await handleReplCommand(line, root, {
-        dev: devMode,
-        plain: plainMode,
-        setDev: (val: boolean) => { devMode = val; },
-        setPlain: (val: boolean) => { plainMode = val; },
-        manifestPath: options.manifestPath,
+    pendingChain = pendingChain
+      .then(async () => {
+        if (!line) {
+          if (!closed) rl.prompt();
+          return;
+        }
+        try {
+          await handleReplCommand(line, root, {
+            dev: devMode,
+            plain: plainMode,
+            setDev: (val: boolean) => { devMode = val; },
+            setPlain: (val: boolean) => { plainMode = val; },
+            manifestPath: options.manifestPath,
+          });
+        } catch (err: any) {
+          process.stdout.write(`Error: ${err?.message || err}\n`);
+        }
+        if (!closed) rl.prompt();
+      })
+      .catch(() => {
+        if (!closed) rl.prompt();
       });
-    } catch (err: any) {
-      process.stdout.write(`Error: ${err?.message || err}\n`);
-    }
-
-    rl.prompt();
   });
 
-  rl.on("close", () => {
+  rl.on("close", async () => {
+    closed = true;
+    await pendingChain;
     process.stdout.write("\nExiting Waymark REPL.\n");
     process.exit(0);
   });
+  return 0;
 }
 
 /**
@@ -114,8 +124,22 @@ async function handleReplCommand(
   }
 ): Promise<void> {
   const parts = line.match(/(?:[^\s"]+|"[^"]*")+/g) || [];
-  const cmd = parts[0]?.toLowerCase();
-  const rawArgs = parts.slice(1).map((a) => (a.startsWith('"') && a.endsWith('"') ? a.slice(1, -1) : a));
+  const rawCmd = parts[0]?.toLowerCase();
+  let cmd = rawCmd;
+  let rawArgs = parts.slice(1).map((a) => (a.startsWith('"') && a.endsWith('"') ? a.slice(1, -1) : a));
+
+  if (rawCmd === "/battery") {
+    cmd = "manifest";
+  } else if (rawCmd === "/status") {
+    cmd = "daemon";
+    rawArgs = ["status", ...rawArgs];
+  } else if (rawCmd === "/clear") {
+    cmd = "clear";
+  } else if (rawCmd === "/exit" || rawCmd === "/quit") {
+    cmd = "exit";
+  } else if (rawCmd === "/help") {
+    cmd = "help";
+  }
 
   if (cmd === "exit" || cmd === "quit") {
     process.stdout.write("Goodbye.\n");
@@ -138,12 +162,12 @@ async function handleReplCommand(
         "  verify-anchor <file> <start> <end> <hash> Check anchor integrity and drift",
         "  baseline <query>                Run naive lexical regex search benchmark",
         "  compare <query>                 Compare Waymark vs baseline search (noise & speed)",
-        "  manifest [--path <p>] [--category <c>] [--id <i>] Run prompt test battery",
-        "  daemon [status|ping|restart|stop] Control resident background daemon",
+        "  manifest | /battery [--path <p>] [--category <c>] [--id <i>] Run prompt test battery",
+        "  daemon [status|ping|restart|stop] | /status Control resident background daemon",
         "  dev [on|off]                    Toggle dev mode diagnostics (default: on)",
         "  plain [on|off]                  Toggle plain text output format (default: off)",
-        "  clear                           Clear screen",
-        "  exit | quit                     Exit REPL",
+        "  clear | /clear                  Clear screen",
+        "  exit | quit | /exit             Exit REPL",
       ].join("\n") + "\n"
     );
     return;
@@ -328,6 +352,13 @@ async function handleReplCommand(
       }
     }
 
+    if (!fs.existsSync(manifestPath)) {
+      process.stdout.write(
+        `Manifest file not found: ${manifestPath}\nPass --path <manifest.jsonl> or run inside the waymark-engine repository.\n`,
+      );
+      return;
+    }
+
     process.stdout.write(`Running manifest evaluation: ${manifestPath}\n`);
     const scoreboard = await runManifestEvaluation({
       manifestPath,
@@ -340,11 +371,12 @@ async function handleReplCommand(
       },
     });
 
+    const passPct = scoreboard.total > 0 ? Math.round((scoreboard.passed / scoreboard.total) * 100) : 0;
     process.stdout.write(
       [
         "\n================ Prompt Battery Scoreboard ================",
         `Total Executed:          ${scoreboard.total}`,
-        `Passed:                  ${scoreboard.passed} (${Math.round((scoreboard.passed / scoreboard.total) * 100)}%)`,
+        `Passed:                  ${scoreboard.passed} (${passPct}%)`,
         `Failed:                  ${scoreboard.failed}`,
         `Average Latency:         ${scoreboard.average_duration_ms}ms`,
         `Average Noise Reduction: ${scoreboard.average_noise_reduction_pct}%`,
@@ -589,16 +621,24 @@ export function getLiveDashboardHtml(): string {
 
 export const LIVE_OBSERVER_HOST = "127.0.0.1";
 
-export async function startLiveReplObserver(options: ReplOptions = {}): Promise<void> {
+export async function startLiveReplObserver(options: ReplOptions = {}): Promise<number> {
   const root = options.rootDir ? path.resolve(options.rootDir) : repoRoot();
   if (process.env.WAYMARK_TELEMETRY !== "1") {
-    process.stdout.write("Live observer requires explicit telemetry opt-in: set WAYMARK_TELEMETRY=1.\n");
-    return;
+    process.stderr.write("Live observer requires explicit telemetry opt-in: set WAYMARK_TELEMETRY=1.\n");
+    return 1;
   }
   const sessionPath = resolveSessionLogPath(root, options.sessionPath);
-  const webPort = options.port ?? (process.env.WAYMARK_LIVE_PORT ? parseInt(process.env.WAYMARK_LIVE_PORT, 10) : undefined);
+  const envPort = process.env.WAYMARK_LIVE_PORT ? parseInt(process.env.WAYMARK_LIVE_PORT, 10) : undefined;
+  const webPort = options.port !== undefined
+    ? options.port
+    : (envPort !== undefined && Number.isInteger(envPort) && envPort >= 0 ? envPort : 4141);
 
-  // Ensure file and directory exist
+  // Ensure .waymark/.gitignore is always written before creating session logs inside stateDir(root).
+  const repoStateDir = path.resolve(stateDir(root));
+  const relToState = path.relative(repoStateDir, path.resolve(sessionPath));
+  if (relToState === "" || (!relToState.startsWith("..") && !path.isAbsolute(relToState))) {
+    ensureStateDir(root);
+  }
   const dir = path.dirname(sessionPath);
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
@@ -715,8 +755,32 @@ export async function startLiveReplObserver(options: ReplOptions = {}): Promise<
       res.end(html);
     });
 
-    httpServer.listen(webPort, LIVE_OBSERVER_HOST, () => {
-      // server active
+    const bindResult = await new Promise<{ ok: true } | { ok: false; error: Error }>((resolve) => {
+      let settled = false;
+      httpServer!.once("error", (err: Error) => {
+        if (!settled) {
+          settled = true;
+          resolve({ ok: false, error: err });
+        }
+      });
+      httpServer!.listen(webPort, LIVE_OBSERVER_HOST, () => {
+        if (!settled) {
+          settled = true;
+          resolve({ ok: true });
+        }
+      });
+    });
+    if (!bindResult.ok) {
+      const err = bindResult.error as NodeJS.ErrnoException;
+      const reason = err.code === "EADDRINUSE"
+        ? `Port ${webPort} on ${LIVE_OBSERVER_HOST} is already in use. Pass --port <other> or --port 0 to disable the web viewer.`
+        : (err.message || String(err));
+      process.stderr.write(`[Live Observer Error] Unable to start web viewer: ${reason}\n`);
+      try { httpServer.close(); } catch {}
+      return 1;
+    }
+    httpServer.on("error", (err: Error) => {
+      process.stderr.write(`[Live Observer Error] HTTP server error: ${err.message || String(err)}\n`);
     });
   }
 
@@ -868,5 +932,6 @@ export async function startLiveReplObserver(options: ReplOptions = {}): Promise<
 
   process.once("SIGINT", cleanup);
   process.once("SIGTERM", cleanup);
+  return 0;
 }
 

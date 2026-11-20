@@ -455,9 +455,23 @@ const SOURCE_EXTENSIONS = new Set([
   ".sol", ".sh", ".bash",
 ]);
 
+const TEST_SOURCE_MARKERS = [
+  ".test.", "_test.", "-test.",
+  ".spec.", "_spec.", "-spec.",
+  ".bench.", "_bench.", "-bench.",
+];
+
 function isTestSource(file: string): boolean {
-  return /(?:^|\/)(?:tests?|__tests__|spec|testing|benchmarks?|benches|examples|fixtures|testdata)\//iu.test(file)
-    || /(?:[._-]test|[._-]spec|[._-]bench)\.[^/]+$/iu.test(file);
+  if (/(?:^|\/)(?:tests?|__tests__|spec|testing|benchmarks?|benches|examples|fixtures|testdata)\//iu.test(file)) {
+    return true;
+  }
+  const slashIdx = file.lastIndexOf("/");
+  const base = (slashIdx === -1 ? file : file.slice(slashIdx + 1)).toLowerCase();
+  for (const marker of TEST_SOURCE_MARKERS) {
+    const idx = base.indexOf(marker);
+    if (idx !== -1 && idx + marker.length < base.length) return true;
+  }
+  return false;
 }
 
 /** Entry files the package manifest names (`main`, `module`, every `bin`, string `exports`), in that order. */

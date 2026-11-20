@@ -63,7 +63,10 @@ function prunedLine(record: Record<string, unknown>): string {
 
 /** A codedb name from a CRLF file can end in \r; never let it split the output line. */
 function cleanName(value: unknown): string {
-  return String(value ?? "").replace(/[\r\n]+$/u, "").replace(/[\r\n]+/gu, " ");
+  const s = String(value ?? "");
+  let end = s.length;
+  while (end > 0 && (s[end - 1] === "\r" || s[end - 1] === "\n")) end--;
+  return s.slice(0, end).replace(/[\r\n]+/gu, " ");
 }
 
 /** Bootstrap and heal: the drafts with their evidence, what heal uncharted, then the map status. */

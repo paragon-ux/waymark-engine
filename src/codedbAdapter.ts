@@ -371,12 +371,24 @@ const HIGH_COLLISION_NAMES = new Set([
   "load", "save", "flush", "clear", "open", "connect", "disconnect",
 ]);
 
+const TEST_FILE_MARKERS = [
+  ".test.", "_test.", "-test.",
+  ".spec.", "_spec.", "-spec.",
+  ".bench.", "_bench.", "-bench.",
+];
+
 export function isTestFile(filePath: string): boolean {
   const normalized = filePath.replace(/\\/g, "/");
-  return (
-    /(?:^|\/)(?:tests?|__tests__|spec|testing|benchmarks?|benches|examples|fixtures|testdata)\//i.test(normalized) ||
-    /(?:[._-]test|[._-]spec|[._-]bench)\.[^/]+$/i.test(normalized)
-  );
+  if (/(?:^|\/)(?:tests?|__tests__|spec|testing|benchmarks?|benches|examples|fixtures|testdata)\//i.test(normalized)) {
+    return true;
+  }
+  const slashIdx = normalized.lastIndexOf("/");
+  const base = (slashIdx === -1 ? normalized : normalized.slice(slashIdx + 1)).toLowerCase();
+  for (const marker of TEST_FILE_MARKERS) {
+    const idx = base.indexOf(marker);
+    if (idx !== -1 && idx + marker.length < base.length) return true;
+  }
+  return false;
 }
 
 function languageFamily(filePath: string): string | null {

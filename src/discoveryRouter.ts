@@ -227,6 +227,24 @@ export const SKIP_DIRS_ROOT_ONLY = new Set<string>([
   "eval", "experiments", "evidence", "sandbox", "scratch", "tmp", "vendor",
 ]);
 
+function trimEdgeSlashes(value: string): string {
+  const s = value.trim();
+  let start = 0;
+  let end = s.length;
+  while (start < end && s[start] === "/") start++;
+  while (end > start && s[end - 1] === "/") end--;
+  return s.slice(start, end);
+}
+
+function stripOuterQuotes(value: string): string {
+  const s = value.trim();
+  let start = 0;
+  let end = s.length;
+  while (start < end && (s[start] === "'" || s[start] === '"' || s[start] === "`")) start++;
+  while (end > start && (s[end - 1] === "'" || s[end - 1] === '"' || s[end - 1] === "`")) end--;
+  return s.slice(start, end);
+}
+
 function readConfiguredIncludeDirs(root: string): string[] {
   try {
     const cfgPath = path.join(stateDir(root), "config.json");
@@ -235,7 +253,7 @@ function readConfiguredIncludeDirs(root: string): string[] {
     if (!Array.isArray(parsed?.includeDirs)) return [];
     return parsed.includeDirs
       .filter((item): item is string => typeof item === "string")
-      .map((item) => item.trim().replace(/^\/+|\/+$/gu, ""))
+      .map((item) => trimEdgeSlashes(item))
       .filter(Boolean);
   } catch {
     return [];
@@ -246,7 +264,7 @@ function normalizeIncludeDirSet(root: string, explicit?: readonly string[]): { s
   const merged = new Set<string>();
   for (const dir of readConfiguredIncludeDirs(root)) merged.add(dir);
   for (const dir of explicit ?? []) {
-    const cleaned = dir.trim().replace(/^\/+|\/+$/gu, "");
+    const cleaned = trimEdgeSlashes(dir);
     if (cleaned) merged.add(cleaned);
   }
   const key = [...merged].sort().join(",");
@@ -795,7 +813,7 @@ async function routeDiscoveryCore(ctx: DiscoveryRouteContext, diag: RuntimeDiagT
     const tPath0 = performance.now();
     const literal = detectLiteralIntent(question);
     if (literal.isLiteral || tier === "path") {
-      const trimmedQ = question.trim().replace(/^['"`]+|['"`]+$/g, "");
+      const trimmedQ = stripOuterQuotes(question);
       const isRootAnchored = trimmedQ.startsWith("./") || trimmedQ.startsWith(".\\");
       const trieQuery = isRootAnchored ? `./${literal.normalized}` : literal.normalized;
       const hasCustomIncludes = normalizeIncludeDirSet(root, options?.includeDirs).set.size > 0;

@@ -116,4 +116,4 @@ jobs:
           if [ -n "${NPM_TOKEN_SECRET}" ]; then
             export NODE_AUTH_TOKEN="${NPM_TOKEN_SECRET}"
           fi
-          npm publish --access public --provenance
+          npm publish "${{ steps.pack.outputs.tarball }}" --access public --provenance

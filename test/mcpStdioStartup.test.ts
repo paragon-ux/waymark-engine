@@ -130,7 +130,11 @@ test("MCP stdio indexes nothing at startup, even in a project root", async () =>
   const marker = path.join(root, "daemon-started");
   try {
     const session = startStdio(root, {
-      preload: writePreload(root, [`WaymarkDaemon.prototype.start = async () => { fs.writeFileSync(${JSON.stringify(marker)}, ""); return true; };`]),
+      preload: writePreload(root, [
+        'const marker = process.env.WAYMARK_TEST_MARKER_1;',
+        'WaymarkDaemon.prototype.start = async () => { fs.writeFileSync(marker, ""); return true; };',
+      ]),
+      env: { WAYMARK_TEST_MARKER_1: marker },
     });
     session.send(...HANDSHAKE);
     assert.equal((await session.response(1)).result?.serverInfo?.version, packageVersion);
@@ -152,8 +156,10 @@ test("MCP stdio answers a tool call while that root's warm-up never finishes", a
   try {
     const session = startStdio(launch, {
       preload: writePreload(launch, [
-        `WaymarkDaemon.prototype.start = function () { fs.writeFileSync(${JSON.stringify(marker)}, this.root); return new Promise(() => {}); };`,
+        'const marker = process.env.WAYMARK_TEST_MARKER_1;',
+        'WaymarkDaemon.prototype.start = function () { fs.writeFileSync(marker, this.root); return new Promise(() => {}); };',
       ]),
+      env: { WAYMARK_TEST_MARKER_1: marker },
     });
     session.send(...HANDSHAKE, toolCall(3, "waymark_daemon_status", { root: target }));
     const response = await session.response(3);
@@ -175,9 +181,12 @@ test("MCP stdio stops a daemon whose warm-up finishes after stdin closes", async
   try {
     const session = startStdio(root, {
       preload: writePreload(root, [
-        `WaymarkDaemon.prototype.start = () => { fs.writeFileSync(${JSON.stringify(started)}, ""); return new Promise((resolve) => setTimeout(() => resolve(true), 1000)); };`,
-        `WaymarkDaemon.prototype.stop = () => fs.writeFileSync(${JSON.stringify(stopped)}, "");`,
+        'const started = process.env.WAYMARK_TEST_MARKER_1;',
+        'const stopped = process.env.WAYMARK_TEST_MARKER_2;',
+        'WaymarkDaemon.prototype.start = () => { fs.writeFileSync(started, ""); return new Promise((resolve) => setTimeout(() => resolve(true), 1000)); };',
+        'WaymarkDaemon.prototype.stop = () => fs.writeFileSync(stopped, "");',
       ]),
+      env: { WAYMARK_TEST_MARKER_1: started, WAYMARK_TEST_MARKER_2: stopped },
     });
     session.send(...HANDSHAKE, toolCall(3, "waymark_daemon_status"));
     await session.response(3);

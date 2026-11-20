@@ -795,8 +795,11 @@ async function runCommand(command: string, rawArgs: readonly string[]): Promise<
     const rawIdle = parsed.values.get("idle-timeout");
     let idleMs: number | undefined;
     if (rawIdle !== undefined) {
+      if (!/^\d+$/u.test(rawIdle)) {
+        throw new WaymarkError("INVALID_ARGUMENT", `Invalid --idle-timeout value "${rawIdle}". Expected a non-negative integer (seconds).`);
+      }
       const idleSec = Number(rawIdle);
-      if (!Number.isInteger(idleSec) || idleSec < 0) {
+      if (!Number.isSafeInteger(idleSec)) {
         throw new WaymarkError("INVALID_ARGUMENT", `Invalid --idle-timeout value "${rawIdle}". Expected a non-negative integer (seconds).`);
       }
       idleMs = idleSec * 1000;

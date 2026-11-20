@@ -14,7 +14,7 @@ import { collectRepoPaths, detectAstIntent, invalidatePathsCache, matchLiteralPa
 import { anchorForRange, normalizeRelativePath, resolveRepositoryFile } from "../src/paths.js";
 import { PrefixTrie } from "../src/prefixTrie.js";
 import { readChartedEntries, staleChartedEntries } from "../src/memoryEntries.js";
-import { chartMemoryEntry, getSemanticMapStatus, renderSemanticMapExport } from "../src/semanticMap.js";
+import { chartMemoryEntry, codeOnly, getSemanticMapStatus, normalizeFacetQuestion, renderSemanticMapExport } from "../src/semanticMap.js";
 import {
   autoStartDaemon,
   getDaemonAddress,
@@ -1734,4 +1734,43 @@ test("RAW-DOC-003 + RAW-DOC-004: junction hints use canonical 'waymark ask', con
   const exported = renderSemanticMapExport(status);
   assert.doesNotMatch(exported, /- \*\*Files\*\*: None\n## Facet:/);
   assert.match(exported, /- \*\*Files\*\*: None\n\n## Facet:/);
+});
+
+// ---------------------------------------------------------------------------
+// WM-SEC-001 + WM-CLI-001: Linear-time codeOnly / FACET_TAG & strict --idle-timeout
+// ---------------------------------------------------------------------------
+test("WM-SEC-001 + WM-CLI-001: semanticMap scanners stay linear-time on ReDoS payloads and daemon --idle-timeout rejects non-decimal values", () => {
+  // codeOnly strips string/template/regex literals without modifying division or identifiers
+  assert.equal(codeOnly('const re = /secret[a\\/b]/gi; const s = "hidden \\"quote\\""; return `tmpl`;'), "const re =  ; const s =  ; return  ;");
+  assert.equal(codeOnly("const ratio = a / b / c;"), "const ratio = a / b / c;");
+
+  // Adversarial unclosed bracket/regex payload runs in linear time (< 50ms for 10,000 chars)
+  const evilLine = "= /" + "[]".repeat(5000);
+  const t0 = performance.now();
+  assert.equal(codeOnly(evilLine), evilLine);
+  assert.ok(performance.now() - t0 < 50, "codeOnly must stay linear-time on pathological bracket/slash input");
+
+  // Adversarial unclosed [FACET: payload runs in linear time (< 50ms)
+  const evilFacet = "[FACET:".repeat(2000);
+  const t1 = performance.now();
+  assert.deepEqual(normalizeFacetQuestion(evilFacet), { question: evilFacet });
+  assert.ok(performance.now() - t1 < 50, "normalizeFacetQuestion must stay linear-time on pathological [FACET: input");
+
+  // Strict --idle-timeout validation rejects blank/whitespace/hex/float/negative values
+  const repo = createSampleRepo("waymark-wm-cli-001-");
+  for (const [badVal, expectedCode] of [
+    ["", "MISSING_OPTION_VALUE"],
+    [" ", "INVALID_ARGUMENT"],
+    ["0x10", "INVALID_ARGUMENT"],
+    ["1.5", "INVALID_ARGUMENT"],
+    ["-1", "INVALID_ARGUMENT"],
+  ] as const) {
+    const res = spawnSync(
+      process.execPath,
+      [cliPath, "daemon", "start", "--idle-timeout", badVal, "--root", repo],
+      { encoding: "utf8", windowsHide: true, timeout: 15_000 },
+    );
+    assert.equal(res.status, 1, `Expected exit 1 for --idle-timeout ${JSON.stringify(badVal)}, got ${res.status}: ${res.stdout}`);
+    assert.equal(JSON.parse(res.stdout).code, expectedCode);
+  }
 });

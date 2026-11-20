@@ -375,15 +375,100 @@ interface EvidenceLine {
   score: number;
 }
 
+const REGEX_PREFIX_CHARS = new Set(["=", "(", ":", ",", "[", "!", "&", "|", "?", ";", "{", "}"]);
+
+function isRegexStartContext(line: string, slashIndex: number): boolean {
+  let k = slashIndex - 1;
+  while (k >= 0 && (line[k] === " " || line[k] === "\t")) k--;
+  if (k < 0) return true;
+  const ch = line[k]!;
+  if (REGEX_PREFIX_CHARS.has(ch)) return true;
+  if (k >= 5 && line.slice(k - 5, k + 1) === "return") {
+    const prev = k === 5 ? "" : line[k - 6]!;
+    if (!/[A-Za-z0-9_$]/u.test(prev)) return true;
+  }
+  return false;
+}
+
 /**
- * A line's code with its regex, string, and template literals blanked, so a keyword spelled inside
- * a literal (an error message, a keyword table, a pattern) is not evidence. Quotes are written as
- * \x22/\x27/\x60 because codedb-core 2.1.1 misreads a quote inside a regex literal.
+ * A line's code with its regex, string, and template literals blanked in a single linear pass,
+ * so a keyword spelled inside a literal (an error message, a keyword table, a pattern) is not
+ * evidence and untrusted repo lines can never trigger regex backtracking.
  */
-function codeOnly(line: string): string {
-  return line
-    .replace(/(^|[=(:,[!&|?;{}]|\breturn)\s*\/(?![/*])(?:\\.|\[(?:\\.|[^\]\\])*\]|[^/\\])+\/[a-z]*/gu, "$1 ")
-    .replace(/\x22(?:\\.|[^\x22\\])*\x22|\x27(?:\\.|[^\x27\\])*\x27|\x60(?:\\.|[^\x60\\])*\x60/gu, " ");
+export function codeOnly(line: string): string {
+  const out: string[] = [];
+  let i = 0;
+  let noClosingSlash = false;
+  while (i < line.length) {
+    const code = line.charCodeAt(i);
+    // Double quote (34), single quote (39), or backtick (96)
+    if (code === 34 || code === 39 || code === 96) {
+      let j = i + 1;
+      while (j < line.length) {
+        const c = line.charCodeAt(j);
+        if (c === 92) {
+          j += 2;
+          continue;
+        }
+        if (c === code) {
+          j++;
+          break;
+        }
+        j++;
+      }
+      out.push(" ");
+      i = j;
+      continue;
+    }
+    // Forward slash (47): potential regex literal (not // or /* comment)
+    if (code === 47 && !noClosingSlash && i + 1 < line.length) {
+      const next = line.charCodeAt(i + 1);
+      if (next !== 47 && next !== 42 && isRegexStartContext(line, i)) {
+        let j = i + 1;
+        let inClass = false;
+        let closed = false;
+        while (j < line.length) {
+          const c = line.charCodeAt(j);
+          if (c === 92) {
+            j += 2;
+            continue;
+          }
+          if (inClass) {
+            if (c === 93) inClass = false;
+            j++;
+            continue;
+          }
+          if (c === 91) {
+            inClass = true;
+            j++;
+            continue;
+          }
+          if (c === 47) {
+            if (j > i + 1) closed = true;
+            j++;
+            break;
+          }
+          j++;
+        }
+        if (closed) {
+          while (j < line.length) {
+            const flag = line.charCodeAt(j);
+            if (flag < 97 || flag > 122) break;
+            j++;
+          }
+          out.push(" ");
+          i = j;
+          continue;
+        }
+        if (j >= line.length) {
+          noClosingSlash = true;
+        }
+      }
+    }
+    out.push(line[i]!);
+    i++;
+  }
+  return out.join("");
 }
 
 /** Every code line of a file that names a facet keyword or is an exported declaration. */
@@ -673,7 +758,33 @@ export async function healSemanticMap(
 export const MAX_CHART_QUESTION_CHARS = 240;
 export const MAX_CHART_ANSWER_CHARS = 4000;
 
-const FACET_TAG = /\[FACET:([^\]]*)\]/giu;
+/** Linear-time scanner for `[FACET:<id>]` tags (case-insensitive) without polynomial regex backtracking. */
+function extractFacetTags(question: string): { tags: string[]; bare: string } {
+  const lower = question.toLowerCase();
+  const tags: string[] = [];
+  const parts: string[] = [];
+  let cursor = 0;
+  while (cursor < question.length) {
+    const start = lower.indexOf("[facet:", cursor);
+    if (start === -1) {
+      parts.push(question.slice(cursor));
+      break;
+    }
+    const end = question.indexOf("]", start + 7);
+    if (end === -1) {
+      parts.push(question.slice(cursor));
+      break;
+    }
+    if (start > cursor) parts.push(question.slice(cursor, start));
+    parts.push(" ");
+    tags.push(question.slice(start + 7, end).trim().toLowerCase());
+    cursor = end + 1;
+  }
+  return {
+    tags,
+    bare: parts.join("").replace(/\s+/gu, " ").trim(),
+  };
+}
 
 /**
  * The charted question with exactly one canonical `[FACET:<ID>]` tag, and that facet. A `facet`
@@ -681,7 +792,7 @@ const FACET_TAG = /\[FACET:([^\]]*)\]/giu;
  * same facet from ALL_FACET_IDS.
  */
 export function normalizeFacetQuestion(question: string, facet?: string): { question: string; facet?: SemanticFacetId } {
-  const embedded = [...question.matchAll(FACET_TAG)].map((m) => (m[1] ?? "").trim().toLowerCase());
+  const { tags: embedded, bare } = extractFacetTags(question);
   const requested = facet?.trim().toLowerCase() || undefined;
   const named = [...new Set([...(requested ? [requested] : []), ...embedded])];
   for (const id of named) {
@@ -693,7 +804,6 @@ export function normalizeFacetQuestion(question: string, facet?: string): { ques
     throw new WaymarkError("INVALID_ARGUMENT", `A chart entry belongs to one facet; got ${named.join(", ")}.`);
   }
   const id = named[0] as SemanticFacetId | undefined;
-  const bare = question.replace(FACET_TAG, " ").replace(/\s+/gu, " ").trim();
   if (!id) return { question: bare };
   return { question: `${SEMANTIC_FACETS[id].tag} ${bare}`.trim(), facet: id };
 }
@@ -731,7 +841,7 @@ export async function chartMemoryEntry(
   input: { question: string; answer: string; facet?: string; files: string[] },
 ): Promise<ChartMemoryResult> {
   const normalized = normalizeFacetQuestion(input.question.trim(), input.facet);
-  const bareQuestion = normalized.question.replace(FACET_TAG, "").trim();
+  const bareQuestion = extractFacetTags(normalized.question).bare;
   // A facet tag alone is a valid question; otherwise the question text is bounded like the CLI.
   if (!normalized.facet || bareQuestion) boundedChartText(bareQuestion, MAX_CHART_QUESTION_CHARS, "question");
   const answer = boundedChartText(input.answer.trim(), MAX_CHART_ANSWER_CHARS, "answer");

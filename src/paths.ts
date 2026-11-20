@@ -7,7 +7,7 @@ import { LineRange, LineRangeLike, StructuralSignature, WaymarkError } from "./t
 
 const decoder = new TextDecoder("utf-8", { fatal: true });
 
-export function sha256(value: Buffer | string): string {
+export function sha256(value: Uint8Array | string): string {
   return crypto.createHash("sha256").update(value).digest("hex");
 }
 
@@ -50,13 +50,79 @@ export async function repoRootAsync(cwd = process.cwd()): Promise<string> {
   }
 }
 
+function isLexicallyInside(root: string, candidate: string): boolean {
+  const normRoot = path.resolve(root);
+  const normCand = path.resolve(candidate);
+  const relative = path.relative(normRoot, normCand);
+  return relative === "" || (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
+}
+
 function isInside(root: string, candidate: string): boolean {
   let normRoot = path.resolve(root);
   let normCand = path.resolve(candidate);
   try { normRoot = fs.realpathSync.native(normRoot); } catch {}
   try { normCand = fs.realpathSync.native(normCand); } catch {}
-  const relative = path.relative(normRoot, normCand);
-  return relative === "" || (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
+  return isLexicallyInside(normRoot, normCand);
+}
+
+/**
+ * Resolve `targetPath` through the filesystem even when the leaf does not exist
+ * (handling symlinked roots such as macOS `/var` -> `/private/var`, escaping
+ * symlinked directories with missing leaves, and dangling symlinks).
+ */
+function resolvePathThroughExistingAncestor(targetPath: string): { resolved: string; exists: boolean } {
+  let current = path.resolve(targetPath);
+  for (let hop = 0; hop < 16; hop++) {
+    try {
+      return { resolved: fs.realpathSync.native(current), exists: true };
+    } catch {
+      // Path does not exist yet or traverses a dangling symlink.
+    }
+
+    const trailing: string[] = [];
+    let cursor = current;
+    let expandedDangling = false;
+    while (true) {
+      let lstat: fs.Stats | null = null;
+      try {
+        lstat = fs.lstatSync(cursor);
+      } catch {
+        // Walk up until an existing ancestor or symlink is found.
+      }
+      if (lstat !== null) {
+        try {
+          const realAncestor = fs.realpathSync.native(cursor);
+          const combined = trailing.length > 0 ? path.resolve(realAncestor, ...trailing.reverse()) : realAncestor;
+          return { resolved: combined, exists: false };
+        } catch {
+          if (lstat.isSymbolicLink()) {
+            let parentReal = path.dirname(cursor);
+            try {
+              parentReal = fs.realpathSync.native(parentReal);
+            } catch {}
+            try {
+              const linkTarget = fs.readlinkSync(cursor);
+              const resolvedLink = path.resolve(parentReal, linkTarget);
+              current = trailing.length > 0 ? path.resolve(resolvedLink, ...trailing.reverse()) : resolvedLink;
+              expandedDangling = true;
+              break;
+            } catch {
+              return { resolved: current, exists: false };
+            }
+          }
+          return { resolved: current, exists: false };
+        }
+      }
+      const parent = path.dirname(cursor);
+      if (parent === cursor) {
+        return { resolved: current, exists: false };
+      }
+      trailing.push(path.basename(cursor));
+      cursor = parent;
+    }
+    if (!expandedDangling) break;
+  }
+  return { resolved: current, exists: false };
 }
 
 export function normalizeRelativePath(input: string, root?: string): string {
@@ -65,13 +131,16 @@ export function normalizeRelativePath(input: string, root?: string): string {
   }
   const slashPath = input.replaceAll("\\", "/");
   if (root && (path.isAbsolute(input) || /^[A-Za-z]:/u.test(slashPath) || path.posix.isAbsolute(slashPath))) {
-    let normRoot = path.resolve(root);
-    let normInput = path.resolve(slashPath);
-    try { normRoot = fs.realpathSync.native(normRoot); } catch {}
-    try { normInput = fs.realpathSync.native(normInput); } catch {}
+    const lexicalRoot = path.resolve(root);
+    const lexicalInput = path.resolve(slashPath);
+    const normRoot = resolvePathThroughExistingAncestor(lexicalRoot).resolved;
+    const { resolved: normInput } = resolvePathThroughExistingAncestor(lexicalInput);
     if (isInside(normRoot, normInput)) {
       const rel = path.relative(normRoot, normInput).replaceAll("\\", "/");
       return rel === "" ? "." : rel.replace(/^\.\//u, "");
+    }
+    if (isLexicallyInside(lexicalRoot, lexicalInput) || isLexicallyInside(normRoot, lexicalInput)) {
+      throw new WaymarkError("SYMLINK_ESCAPE", "Referenced symlink escapes repository root", 2);
     }
     throw new WaymarkError("INVALID_PATH", `Absolute path "${input}" escapes repository root`);
   }
@@ -88,21 +157,25 @@ export function normalizeRelativePath(input: string, root?: string): string {
 export function resolveRepositoryFile(root: string, storedPath: string): { lexical: string; real: string } {
   const relative = normalizeRelativePath(storedPath, root);
   const lexical = path.resolve(root, ...relative.split("/"));
-  if (!isInside(root, lexical)) throw new WaymarkError("INVALID_PATH", "Path escapes repository root");
+  if (!isLexicallyInside(root, lexical)) throw new WaymarkError("INVALID_PATH", "Path escapes repository root");
+  const realRoot = resolvePathThroughExistingAncestor(root).resolved;
   let real: string;
   try {
     real = fs.realpathSync.native(lexical);
   } catch {
+    const { resolved } = resolvePathThroughExistingAncestor(lexical);
+    if (!isLexicallyInside(realRoot, resolved)) {
+      throw new WaymarkError("SYMLINK_ESCAPE", "Referenced symlink escapes repository root", 2);
+    }
     throw new WaymarkError("FILE_MISSING", `Referenced file is missing: ${relative}`, 2);
   }
-  const realRoot = fs.realpathSync.native(root);
-  if (!isInside(realRoot, real)) throw new WaymarkError("SYMLINK_ESCAPE", "Referenced symlink escapes repository root", 2);
+  if (!isLexicallyInside(realRoot, real)) throw new WaymarkError("SYMLINK_ESCAPE", "Referenced symlink escapes repository root", 2);
   const stat = fs.statSync(real);
   if (!stat.isFile()) throw new WaymarkError("NOT_REGULAR_FILE", `Referenced path is not a regular file: ${relative}`, 2);
   return { lexical, real };
 }
 
-export function readFileBytes(root: string, storedPath: string, maxBytes?: number): { path: string; bytes: Buffer } {
+export function readFileBytes(root: string, storedPath: string, maxBytes?: number): { path: string; bytes: Uint8Array } {
   const file = resolveRepositoryFile(root, storedPath);
   if (maxBytes === undefined) {
     return { path: file.real, bytes: fs.readFileSync(file.real) };
@@ -137,7 +210,7 @@ export function readFileBytes(root: string, storedPath: string, maxBytes?: numbe
   }
 }
 
-export function readFileText(root: string, storedPath: string, maxBytes?: number): { path: string; bytes: Buffer; text: string } {
+export function readFileText(root: string, storedPath: string, maxBytes?: number): { path: string; bytes: Uint8Array; text: string } {
   const result = readFileBytes(root, storedPath, maxBytes);
   try {
     return { ...result, text: decoder.decode(result.bytes) };

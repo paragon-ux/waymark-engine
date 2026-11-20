@@ -184,7 +184,7 @@ export interface ResolvedCapnCommand {
   viaCmdShim: boolean;
 }
 
-export function assertSupportedCapnCommand(command: ResolvedCapnCommand, platform = process.platform): void {
+export function assertSupportedCapnCommand(command: ResolvedCapnCommand, platform: string = process.platform): void {
   if (command.file.includes("\0") || command.prefix.some((p) => p.includes("\0"))) {
     throw new WaymarkError("CAPN_UNSAFE_ARGUMENT", "Capn executable path and arguments must not contain null bytes", 2);
   }
@@ -342,6 +342,18 @@ export function assertLexicalStore(root: string): void {
     );
   }
   if (config.embedding !== false) {
+    throw new WaymarkError(
+      "CAPN_NON_DETERMINISTIC_MODE",
+      "Capn store is in embedding (QMD hybrid) mode. Re-initialize with the lexical-only @paragon-ux/capn-hook — the engine requires deterministic lexical recall.",
+      2,
+    );
+  }
+}
+
+/** Fail closed if an existing store is configured in non-deterministic embedding mode. */
+function assertNoNonDeterministicStore(root: string): void {
+  const config = readCapnConfig(root);
+  if (config !== null && config.embedding !== false) {
     throw new WaymarkError(
       "CAPN_NON_DETERMINISTIC_MODE",
       "Capn store is in embedding (QMD hybrid) mode. Re-initialize with the lexical-only @paragon-ux/capn-hook — the engine requires deterministic lexical recall.",
@@ -604,6 +616,7 @@ async function runCapnSimple(root: string, executable: string, args: readonly st
 
 /** Delete one chart entry by id. */
 export async function unchart(root: string, executable: string, id: string, ifExists: boolean = false): Promise<Record<string, unknown>> {
+  assertNoNonDeterministicStore(root);
   return await withMemoryStoreLock(root, async () => {
     const result = await runCapnSimple(root, executable, ["unchart", id]);
     if (!result.ok && ifExists && (result.output.toLowerCase().includes("unknown id") || result.output.toLowerCase().includes("not found"))) {
@@ -621,6 +634,7 @@ export async function unchart(root: string, executable: string, id: string, ifEx
 
 /** Delete every chart entry backed by one file. */
 export async function bust(root: string, executable: string, file: string): Promise<Record<string, unknown>> {
+  assertNoNonDeterministicStore(root);
   const normalized = normalizeRelativePath(normalizeFilePath(file), root);
   return await withMemoryStoreLock(root, async () => {
     const result = await runCapnSimple(root, executable, ["bust", normalized]);
@@ -630,6 +644,7 @@ export async function bust(root: string, executable: string, file: string): Prom
 
 /** Delete every chart entry whose backing files changed or vanished. */
 export async function prune(root: string, executable = ""): Promise<Record<string, unknown>> {
+  assertNoNonDeterministicStore(root);
   return await withMemoryStoreLock(root, async () => {
     const result = await runCapnSimple(root, executable, ["prune"]);
     return { waymark: 1, kind: "prune", ok: result.ok, exitCode: result.exitCode, ...(result.ok ? { output: result.output } : { error: result.output }) };
@@ -649,6 +664,7 @@ export async function listEntries(root: string, executable = ""): Promise<Record
       output: `No charted entries (store uninitialized). Run waymark_memory(action: "init") or chart an entry with waymark_memory(action: "chart") (CLI: waymark memory init / waymark memory chart) to create consensus memory.`,
     };
   }
+  assertNoNonDeterministicStore(root);
   // `capn list` first deletes every entry whose backing files changed; report which ones.
   // Serialize under the store lock so concurrent list/ask/chart never race SQLite rebuilds.
   return await withMemoryStoreLockIfWritable(root, async () => {
@@ -670,7 +686,7 @@ export async function listEntries(root: string, executable = ""): Promise<Record
 export async function context(root: string, executable = ""): Promise<Record<string, unknown>> {
   const routingHints = [
     "<waymark-engine>",
-    "waymark_ask (CLI: waymark ask; alias waymark-ask routes questions across 4 deterministic tiers and fails closed, never hallucinating):",
+    "waymark_ask (CLI: waymark ask) / waymark-ask routes questions across 4 deterministic tiers and fails closed, never hallucinating:",
     "",
     "  Tier 1 — AST Structural & Call Graph (exact codedb / tree-sitter):",
     "    \"Who calls <name>?\" / \"Callers of <name>\" / \"Callees of <name>\" / \"Trace <name>\" (supports depth: 1-5, direction, exclude_tests)",
@@ -701,6 +717,7 @@ export async function context(root: string, executable = ""): Promise<Record<str
       output: routingHints + `Store is currently uninitialized (${MEMORY_STORE_LABEL} missing). Run waymark_memory(action: "init") (CLI: waymark memory init) to enable Tier 4 semantic memory.`,
     };
   }
+  assertNoNonDeterministicStore(root);
   const result = await runCapnSimple(root, executable, ["context"]);
   return { waymark: 1, kind: "context", ok: result.ok, exitCode: result.exitCode, ...(result.ok ? { output: routingHints + waymarkChartingContract(result.output) } : { error: result.output }) };
 }

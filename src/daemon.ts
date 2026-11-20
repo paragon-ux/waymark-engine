@@ -30,7 +30,7 @@ function sleepSync(ms: number): void {
   }
 }
 
-function ensurePrivateRuntimeDir(dir: string, platform = process.platform): string {
+function ensurePrivateRuntimeDir(dir: string, platform: string = process.platform): string {
   if (platform === "win32") {
     fs.mkdirSync(dir, { recursive: true });
     return dir;
@@ -95,7 +95,7 @@ function fitsPosixSocketPath(dir: string): boolean {
  * Resolve and validate the per-user private runtime directory (`0700` on POSIX)
  * for daemon Unix domain sockets, PID files, and daemon registry persistence.
  */
-export function getDaemonRuntimeDir(platform = process.platform): string {
+export function getDaemonRuntimeDir(platform: string = process.platform): string {
   if (platform === "win32") {
     const base = process.env.WAYMARK_RUNTIME_DIR?.trim() || path.join(os.tmpdir(), "waymark");
     return ensurePrivateRuntimeDir(base, platform);
@@ -170,7 +170,7 @@ function atomicWritePrivateFile(filePath: string, content: string): void {
   }
 }
 
-export function canonicalRoot(root: string, platform = process.platform): string {
+export function canonicalRoot(root: string, platform: string = process.platform): string {
   let canonical = path.resolve(root);
   try { canonical = fs.realpathSync.native(canonical); } catch {}
   return platform === "win32" ? canonical.toLowerCase() : canonical;
@@ -194,7 +194,7 @@ export function getDaemonAddress(root: string): string {
 
 /**
  * Informational PID record, always in the per-user private runtime directory beside the socket
- * and registry. Never used to choose a process to kill (audit finding F-01).
+ * and registry. Never used to choose a process to kill.
  */
 export function getPidFilePath(root: string): string {
   const canonical = canonicalRoot(root);
@@ -392,6 +392,7 @@ export async function tryDaemonQuery(
       const queryTimeout = setTimeout(() => {
         if (!settled) {
           settled = true;
+          rl.close();
           socket.destroy();
           resolve({ ok: false, payload: null, error: `Daemon query timed out after ${timeoutMs}ms` });
         }
@@ -399,10 +400,20 @@ export async function tryDaemonQuery(
       queryTimeout.unref();
 
       const rl = readline.createInterface({ input: socket });
+      rl.on("error", () => {});
+      socket.once("close", () => {
+        if (!settled) {
+          settled = true;
+          clearTimeout(queryTimeout);
+          rl.close();
+          resolve(null);
+        }
+      });
       rl.on("line", (line) => {
         if (!settled) {
           settled = true;
           clearTimeout(queryTimeout);
+          rl.close();
           try {
             const parsed = JSON.parse(line) as CodedbRun;
             resolve(parsed);
@@ -450,10 +461,20 @@ export async function tryDaemonPing(
 
     socket.on("connect", () => {
       const rl = readline.createInterface({ input: socket });
+      rl.on("error", () => {});
+      socket.once("close", () => {
+        if (!settled) {
+          settled = true;
+          clearTimeout(timer);
+          rl.close();
+          resolve(null);
+        }
+      });
       rl.on("line", (line) => {
         if (!settled) {
           settled = true;
           clearTimeout(timer);
+          rl.close();
           try {
             const parsed = JSON.parse(line);
             resolve(parsed);
@@ -500,10 +521,20 @@ export async function tryDaemonReload(
 
     socket.on("connect", () => {
       const rl = readline.createInterface({ input: socket });
+      rl.on("error", () => {});
+      socket.once("close", () => {
+        if (!settled) {
+          settled = true;
+          clearTimeout(timer);
+          rl.close();
+          resolve(null);
+        }
+      });
       rl.on("line", (line) => {
         if (!settled) {
           settled = true;
           clearTimeout(timer);
+          rl.close();
           try {
             const parsed = JSON.parse(line);
             resolve(parsed);
@@ -552,10 +583,20 @@ export async function tryDaemonResolvePath(
 
     socket.on("connect", () => {
       const rl = readline.createInterface({ input: socket });
+      rl.on("error", () => {});
+      socket.once("close", () => {
+        if (!settled) {
+          settled = true;
+          clearTimeout(timer);
+          rl.close();
+          resolve(null);
+        }
+      });
       rl.on("line", (line) => {
         if (!settled) {
           settled = true;
           clearTimeout(timer);
+          rl.close();
           try {
             const parsed = JSON.parse(line);
             if (parsed.ok && Array.isArray(parsed.matches)) {
@@ -604,10 +645,20 @@ export async function stopDaemon(root: string, options?: { force?: boolean; time
 
     socket.on("connect", () => {
       const rl = readline.createInterface({ input: socket });
+      rl.on("error", () => {});
+      socket.once("close", () => {
+        if (!settled) {
+          settled = true;
+          clearTimeout(timer);
+          rl.close();
+          resolve(false);
+        }
+      });
       rl.on("line", () => {
         if (!settled) {
           settled = true;
           clearTimeout(timer);
+          rl.close();
           socket.end();
           resolve(true);
         }
@@ -617,6 +668,12 @@ export async function stopDaemon(root: string, options?: { force?: boolean; time
   });
 
   if (stoppedGracefully) {
+    const deadline = Date.now() + Math.min(timeoutMs, 1000);
+    while (Date.now() < deadline) {
+      const stillAlive = await tryDaemonPing(root, 150);
+      if (!stillAlive || !stillAlive.ok) break;
+      await new Promise((r) => setTimeout(r, 25));
+    }
     unregisterDaemon(root);
     return true;
   }
@@ -775,7 +832,7 @@ export class WaymarkDaemon {
    * answers for it, or when `signal` aborts before the listener opens. `paths` seeds the
    * prefix trie so a caller that already walked the tree skips the synchronous walk.
    */
-  async start(options: { paths?: string[]; signal?: AbortSignal } = {}): Promise<boolean> {
+  async start(options: { paths?: string[]; signal?: { readonly aborted: boolean } } = {}): Promise<boolean> {
     const active = await tryDaemonPing(this.root, 300);
     if (active && active.ok) {
       return false;
@@ -804,7 +861,12 @@ export class WaymarkDaemon {
 
     this.server = net.createServer((socket) => {
       this.resetIdle();
+      socket.on("error", () => {});
       const rl = readline.createInterface({ input: socket });
+      rl.on("error", () => {});
+      socket.once("close", () => {
+        rl.close();
+      });
 
       rl.on("line", async (line) => {
         const trimmed = line.trim();
@@ -824,7 +886,7 @@ export class WaymarkDaemon {
               }) + "\n",
             );
           } else if (req.action === "stop") {
-            socket.write(JSON.stringify({ ok: true, status: "stopping" }) + "\n");
+            socket.end(JSON.stringify({ ok: true, status: "stopping" }) + "\n");
             setTimeout(() => {
               this.stop();
               if (process.argv.includes("--worker")) process.exit(0);

@@ -10,7 +10,7 @@ import {
 } from "./paths.js";
 
 interface FileSnapshot {
-  bytes: Buffer;
+  bytes: Uint8Array;
   lines: string[];
   hash: string;
 }

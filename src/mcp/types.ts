@@ -29,6 +29,8 @@ export interface McpToolProperty {
   description?: string;
   enum?: string[];
   items?: { type: string };
+  minimum?: number;
+  maximum?: number;
 }
 
 export interface McpToolInputSchema {

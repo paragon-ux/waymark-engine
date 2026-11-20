@@ -348,6 +348,7 @@ function errorOutput(error: unknown): CommandResult {
 interface CommandResult {
   value: unknown;
   exitCode?: number;
+  exit?: boolean;
 }
 
 function resolveProfile(parsed: ParsedArgs): AdapterProfile {
@@ -468,10 +469,30 @@ async function runCommand(command: string, rawArgs: readonly string[]): Promise<
     }
 
     const replExit = await startRepl({ rootDir: root, plain, dev, live, sessionPath, port });
-    return { value: null, exitCode: typeof replExit === "number" ? replExit : 0 };
+    return {
+      value: null,
+      exitCode: typeof replExit === "number" ? replExit : 0,
+      ...(live ? {} : { exit: true }),
+    };
   }
 
   if (command === "ask") {
+    const rawDepth = parsed.values.get("depth");
+    let depth: number | undefined;
+    if (rawDepth !== undefined) {
+      if (!/^[1-5]$/u.test(rawDepth)) {
+        throw new WaymarkError("INVALID_ARGUMENT", `Invalid --depth value "${rawDepth}". Expected integer 1-5.`);
+      }
+      depth = Number(rawDepth);
+    }
+    const rawDirection = parsed.values.get("direction");
+    let direction: "callers" | "callees" | "both" | undefined;
+    if (rawDirection !== undefined) {
+      if (rawDirection !== "callers" && rawDirection !== "callees" && rawDirection !== "both") {
+        throw new WaymarkError("INVALID_ARGUMENT", `Invalid --direction value "${rawDirection}". Expected callers, callees, or both.`);
+      }
+      direction = rawDirection;
+    }
     if (parsed.values.has("symbols")) {
       const symbolsList = parsed.values.get("symbols")!.split(",").map((s) => s.trim()).filter(Boolean);
       const { queryMultiSymbols } = await import("./codedbAdapter.js");
@@ -511,19 +532,6 @@ async function runCommand(command: string, rawArgs: readonly string[]): Promise<
     const daemon = parsed.values.has("daemon");
     const excludeTests = parsed.values.has("exclude-tests");
     const dev = parsed.values.has("dev");
-    const rawDepth = parsed.values.get("depth");
-    let depth: number | undefined;
-    if (rawDepth !== undefined) {
-      const parsedDepth = Number(rawDepth);
-      if (!Number.isInteger(parsedDepth) || parsedDepth < 1) {
-        throw new WaymarkError("INVALID_ARGUMENT", `Invalid --depth value "${rawDepth}". Expected integer 1-5.`);
-      }
-      depth = Math.min(parsedDepth, 5);
-    }
-    const rawDirection = parsed.values.get("direction");
-    const direction = (rawDirection === "callers" || rawDirection === "callees" || rawDirection === "both")
-      ? rawDirection
-      : undefined;
     const includeDirs = (parsed.multiValues.get("include-dir") ?? [])
       .flatMap((entry) => entry.split(","))
       .map((entry) => entry.trim())
@@ -966,8 +974,8 @@ export async function runCli(command: string, args: readonly string[]): Promise<
       // CLI call. All output is flushed synchronously by this point, so hard-exit
       // with the intended code.
       process.exit(result.exitCode ?? 0);
-    } else if (result.exitCode !== undefined && result.exitCode !== 0) {
-      process.exit(result.exitCode);
+    } else if (result.exit || (result.exitCode !== undefined && result.exitCode !== 0)) {
+      process.exit(result.exitCode ?? 0);
     }
   } catch (error) {
     const result = errorOutput(error);

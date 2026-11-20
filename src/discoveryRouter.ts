@@ -35,6 +35,8 @@ export interface AstIntent {
   query?: string;
   /** search_graph: a dotted query never widens to its bare name (`mutex.lock` stays `mutex.lock`). */
   strictQualified?: boolean;
+  /** get_architecture: prioritize entrypoint files when the query specifically asks for entrypoints. */
+  architectureFocus?: "entrypoints" | "overview";
 }
 
 // ---------------------------------------------------------------------------
@@ -119,7 +121,12 @@ export function detectAstIntent(question: string): AstIntent {
     /\bwhat\s+(is|are)\s+(the\s+)?(main\s+)?entry\s*points?\b/i.test(q);
 
   if (architectureMatch) {
-    return { requiresParser: true, tool: "get_architecture" };
+    const isEntrypointFocus = /\bentry\s*points?\b/i.test(q) && !/\barchitecture\b/i.test(q);
+    return {
+      requiresParser: true,
+      tool: "get_architecture",
+      ...(isEntrypointFocus ? { architectureFocus: "entrypoints" as const } : {}),
+    };
   }
 
   // 2. Call-graph / Tracing intent
@@ -387,7 +394,7 @@ export interface RepoWalkBudget {
   maxFiles: number;
   /** Give up once the walk has run longer than this. */
   timeoutMs: number;
-  signal?: AbortSignal;
+  signal?: { readonly aborted: boolean };
 }
 
 export type RepoWalkResult =
@@ -645,6 +652,16 @@ async function routeDiscoveryCore(ctx: DiscoveryRouteContext, diag: RuntimeDiagT
   };
   if (options?.subsystem?.trim()) {
     throw new WaymarkError("UNSUPPORTED_SUBSYSTEM", "Subsystem-scoped discovery is not supported; query the repository root or omit subsystem.");
+  }
+  if (options?.depth !== undefined) {
+    if (typeof options.depth !== "number" || !Number.isInteger(options.depth) || options.depth < 1 || options.depth > 5) {
+      throw new WaymarkError("INVALID_ARGUMENT", `Invalid depth value "${String(options.depth)}". Expected integer 1-5.`);
+    }
+  }
+  if (options?.direction !== undefined) {
+    if (options.direction !== "callers" && options.direction !== "callees" && options.direction !== "both") {
+      throw new WaymarkError("INVALID_ARGUMENT", `Invalid direction value "${String(options.direction)}". Expected callers, callees, or both.`);
+    }
   }
   const startTime = performance.now();
   const timings: Record<string, number> = {};
@@ -974,7 +991,7 @@ async function routeDiscoveryCore(ctx: DiscoveryRouteContext, diag: RuntimeDiagT
         continuation: {
           tool: "waymark_ask",
           args: { question, tier: "capn" },
-          cliCommand: `waymark-ask "${question}" --tier capn`,
+          cliCommand: `waymark ask "${question}" --tier capn`,
         },
       };
 
@@ -987,9 +1004,9 @@ async function routeDiscoveryCore(ctx: DiscoveryRouteContext, diag: RuntimeDiagT
         options: [executedOption, alternativeOption],
         executedOption,
         alternativeOption,
-        chartHint: "This answer can be charted with waymark_memory(action: \"chart\") (CLI: waymark-chart) regardless of which option resolved it.",
+        chartHint: "This answer can be charted with waymark_memory(action: \"chart\") (CLI: waymark memory chart; alias waymark-chart) regardless of which option resolved it.",
         recommendation: `Recommended tier: fuzzy-lexical. Found match '${topFuzzy.candidate.name}' in ${topFuzzy.candidate.path}:${topFuzzy.candidate.line}.`,
-        tip: `To search charted semantic memory instead: waymark-ask "${question}" --tier capn`,
+        tip: `To search charted semantic memory instead: waymark ask "${question}" --tier capn`,
         ...(recordTiming ? { timings } : {}),
       };
     }
@@ -1061,7 +1078,7 @@ async function routeDiscoveryCore(ctx: DiscoveryRouteContext, diag: RuntimeDiagT
         continuation: {
           tool: "waymark_ask",
           args: { question, tier: "fuzzy" },
-          cliCommand: `waymark-ask "${question}" --tier fuzzy`,
+          cliCommand: `waymark ask "${question}" --tier fuzzy`,
         },
       };
 
@@ -1074,9 +1091,9 @@ async function routeDiscoveryCore(ctx: DiscoveryRouteContext, diag: RuntimeDiagT
         options: [executedOption, alternativeOption],
         executedOption,
         alternativeOption,
-        chartHint: "This answer can be charted with waymark_memory(action: \"chart\") (CLI: waymark-chart) regardless of which option resolved it.",
+        chartHint: "This answer can be charted with waymark_memory(action: \"chart\") (CLI: waymark memory chart; alias waymark-chart) regardless of which option resolved it.",
         recommendation: `Recommended tier: capn-cli. Queried charted memory for "${question}".`,
-        tip: `To search code symbols fuzzily instead: waymark-ask "${question}" --tier fuzzy`,
+        tip: `To search code symbols fuzzily instead: waymark ask "${question}" --tier fuzzy`,
         ...(recordTiming ? { timings } : {}),
       };
     }
@@ -1170,7 +1187,7 @@ async function routeDiscoveryCore(ctx: DiscoveryRouteContext, diag: RuntimeDiagT
       continuation: {
         tool: "waymark_ask",
         args: { question, tier: "capn" },
-        cliCommand: `waymark-ask "${question}" --tier capn`,
+        cliCommand: `waymark ask "${question}" --tier capn`,
       },
     };
 
@@ -1183,9 +1200,9 @@ async function routeDiscoveryCore(ctx: DiscoveryRouteContext, diag: RuntimeDiagT
       options: [executedOption, alternativeOption],
       executedOption,
       alternativeOption,
-      chartHint: "This answer can be charted with waymark_memory(action: \"chart\") (CLI: waymark-chart) regardless of which option resolved it.",
+      chartHint: "This answer can be charted with waymark_memory(action: \"chart\") (CLI: waymark memory chart; alias waymark-chart) regardless of which option resolved it.",
       recommendation: `Recommended tier: fuzzy-lexical. Found match '${bestFuzzyResult.candidate.name}' in ${bestFuzzyResult.candidate.path}:${bestFuzzyResult.candidate.line}.`,
-      tip: `To query charted semantic memory instead: waymark-ask "${question}" --tier capn`,
+      tip: `To query charted semantic memory instead: waymark ask "${question}" --tier capn`,
       ...(recordTiming ? { timings } : {}),
     };
   }
@@ -1242,7 +1259,7 @@ async function routeDiscoveryCore(ctx: DiscoveryRouteContext, diag: RuntimeDiagT
       continuation: {
         tool: "waymark_ask",
         args: { question, tier: "fuzzy" },
-        cliCommand: `waymark-ask "${question}" --tier fuzzy`,
+        cliCommand: `waymark ask "${question}" --tier fuzzy`,
       },
     };
 
@@ -1255,9 +1272,9 @@ async function routeDiscoveryCore(ctx: DiscoveryRouteContext, diag: RuntimeDiagT
       options: [executedOption, alternativeOption],
       executedOption,
       alternativeOption,
-      chartHint: "This answer can be charted with waymark_memory(action: \"chart\") (CLI: waymark-chart) regardless of which option resolved it.",
+      chartHint: "This answer can be charted with waymark_memory(action: \"chart\") (CLI: waymark memory chart; alias waymark-chart) regardless of which option resolved it.",
       recommendation: `Recommended tier: capn-cli. Queried charted memory.`,
-      tip: `To search code symbols fuzzily instead: waymark-ask "${question}" --tier fuzzy`,
+      tip: `To search code symbols fuzzily instead: waymark ask "${question}" --tier fuzzy`,
       ...(recordTiming ? { timings } : {}),
     };
   }
@@ -1372,9 +1389,9 @@ async function routeDiscoveryCore(ctx: DiscoveryRouteContext, diag: RuntimeDiagT
       options: [executedOption, alternativeOption],
       executedOption,
       alternativeOption,
-      chartHint: "This answer can be charted with waymark_memory(action: \"chart\") (CLI: waymark-chart) regardless of which option resolved it.",
+      chartHint: "This answer can be charted with waymark_memory(action: \"chart\") (CLI: waymark memory chart; alias waymark-chart) regardless of which option resolved it.",
       recommendation: `Recommended tier: fuzzy-lexical. Matched '${exhaustiveHit.candidate.name}' via exhaustive fuzzy pass on '${exhaustiveToken}'.`,
-      tip: `To chart this answer for fast retrieval next time: waymark-chart --question "${question}" --answer "<details>" --files "${exhaustiveHit.candidate.path}"`,
+      tip: `To chart this answer for fast retrieval next time: waymark memory chart --question "${question}" --answer "<details>" --files "${exhaustiveHit.candidate.path}"`,
       ...(recordTiming ? { timings } : {}),
     };
   }

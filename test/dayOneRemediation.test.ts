@@ -7,14 +7,16 @@ import path from "node:path";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
-import { ask, assertSupportedCapnCommand, migrateMemoryStore } from "../src/capnAdapter.js";
-import { bundledCodedbBinary } from "../src/codedbAdapter.js";
+import { ask, assertSupportedCapnCommand, bust, context, listEntries, migrateMemoryStore, prune, unchart } from "../src/capnAdapter.js";
+import { bundledCodedbBinary, queryMultiHopCallGraph, queryStructural } from "../src/codedbAdapter.js";
 import { discoverSymbolsInFile, MAX_SYMBOL_DISCOVERY_FILE_BYTES } from "../src/astExtractor.js";
-import { collectRepoPaths, invalidatePathsCache, matchLiteralPath } from "../src/discoveryRouter.js";
+import { collectRepoPaths, detectAstIntent, invalidatePathsCache, matchLiteralPath } from "../src/discoveryRouter.js";
+import { anchorForRange, normalizeRelativePath, resolveRepositoryFile } from "../src/paths.js";
 import { PrefixTrie } from "../src/prefixTrie.js";
 import { readChartedEntries, staleChartedEntries } from "../src/memoryEntries.js";
-import { chartMemoryEntry, getSemanticMapStatus } from "../src/semanticMap.js";
+import { chartMemoryEntry, getSemanticMapStatus, renderSemanticMapExport } from "../src/semanticMap.js";
 import {
+  autoStartDaemon,
   getDaemonAddress,
   getDaemonRuntimeDir,
   getPidFilePath,
@@ -1278,4 +1280,458 @@ test("SVC-006 + MCP-004 regression: waymark-mcp stdio enforces 8 MiB frame cap, 
   assert.equal(JSON.parse(parsed[3].result.content[0].text).status, "hit");
   assert.equal(parsed[4].id, 5);
   assert.ok(parsed[4].result);
+});
+
+// ---------------------------------------------------------------------------
+// RAW-RUN-001: SYMLINK_ESCAPE (exit 2) reachable for file/dir/absolute symlinks
+// ---------------------------------------------------------------------------
+test("RAW-RUN-001: symlink escapes emit SYMLINK_ESCAPE (exit 2) while traversal emits INVALID_PATH (exit 1)", () => {
+  const repo = createSampleRepo("waymark-raw-run-001-");
+  const outside = mkTrackedTempDir("waymark-raw-run-001-outside-");
+  const outsideFile = path.join(outside, "secret.ts");
+  fs.writeFileSync(outsideFile, "export const leaked = true;\n", "utf8");
+
+  const fileLink = path.join(repo, "src", "symlink_escape.ts");
+  const dirLink = path.join(repo, "src", "escaped_dir");
+  const internalLink = path.join(repo, "src", "internal_link.ts");
+  try {
+    fs.symlinkSync(outsideFile, fileLink, "file");
+    fs.symlinkSync(outside, dirLink, process.platform === "win32" ? "junction" : "dir");
+    fs.symlinkSync(path.join(repo, "src", "app.ts"), internalLink, "file");
+  } catch (err: any) {
+    if (process.platform === "win32" && (err?.code === "EPERM" || err?.code === "EACCES")) {
+      return;
+    }
+    throw err;
+  }
+
+  // Relative file symlink -> SYMLINK_ESCAPE (exitCode 2)
+  assert.throws(
+    () => resolveRepositoryFile(repo, "src/symlink_escape.ts"),
+    (err: any) => err?.code === "SYMLINK_ESCAPE" && err?.exitCode === 2,
+  );
+  // Directory symlink -> SYMLINK_ESCAPE (exitCode 2)
+  assert.throws(
+    () => resolveRepositoryFile(repo, "src/escaped_dir/secret.ts"),
+    (err: any) => err?.code === "SYMLINK_ESCAPE" && err?.exitCode === 2,
+  );
+  // Absolute path pointing to a symlink inside repo that escapes -> SYMLINK_ESCAPE (exitCode 2)
+  assert.throws(
+    () => resolveRepositoryFile(repo, fileLink),
+    (err: any) => err?.code === "SYMLINK_ESCAPE" && err?.exitCode === 2,
+  );
+  // anchorForRange preserves SYMLINK_ESCAPE (exitCode 2)
+  assert.throws(
+    () => anchorForRange(repo, "src/symlink_escape.ts", { start: 1, end: 1 }),
+    (err: any) => err?.code === "SYMLINK_ESCAPE" && err?.exitCode === 2,
+  );
+  // CLI outline returns SYMLINK_ESCAPE with exit code 2
+  const cliRes = spawnSync(
+    process.execPath,
+    [cliPath, "ask", "--outline", "--path", "src/symlink_escape.ts", "--root", repo],
+    { encoding: "utf8", windowsHide: true, timeout: 15_000 },
+  );
+  assert.equal(cliRes.status, 2, `Expected exit 2, got ${cliRes.status}: ${cliRes.stdout}\n${cliRes.stderr}`);
+  assert.equal(JSON.parse(cliRes.stdout).code, "SYMLINK_ESCAPE");
+
+  // Regular traversal & outside absolute path still emit INVALID_PATH (exitCode 1)
+  assert.throws(
+    () => resolveRepositoryFile(repo, "../../etc/passwd"),
+    (err: any) => err?.code === "INVALID_PATH" && err?.exitCode === 1,
+  );
+  assert.throws(
+    () => resolveRepositoryFile(repo, outsideFile),
+    (err: any) => err?.code === "INVALID_PATH" && err?.exitCode === 1,
+  );
+  // Intra-repo symlink remains permitted
+  const resolvedInternal = resolveRepositoryFile(repo, "src/internal_link.ts");
+  assert.equal(path.basename(resolvedInternal.real), "app.ts");
+
+  // Escaping directory symlink with missing leaf and dangling symlink escape emit SYMLINK_ESCAPE (no existence oracle)
+  const danglingEscape = path.join(repo, "src", "dangling_escape.ts");
+  const danglingInternal = path.join(repo, "src", "dangling_internal.ts");
+  const symParent = mkTrackedTempDir("waymark-raw-run-001-symroot-");
+  const symRepo = path.join(symParent, "repo-link");
+  fs.symlinkSync(path.join(outside, "nonexistent.ts"), danglingEscape, "file");
+  fs.symlinkSync("./does_not_exist.ts", danglingInternal, "file");
+  fs.symlinkSync(repo, symRepo, process.platform === "win32" ? "junction" : "dir");
+
+  assert.throws(
+    () => resolveRepositoryFile(repo, "src/escaped_dir/nonexistent.ts"),
+    (err: any) => err?.code === "SYMLINK_ESCAPE" && err?.exitCode === 2,
+  );
+  assert.throws(
+    () => resolveRepositoryFile(repo, path.join(repo, "src", "escaped_dir", "nonexistent.ts")),
+    (err: any) => err?.code === "SYMLINK_ESCAPE" && err?.exitCode === 2,
+  );
+  assert.throws(
+    () => resolveRepositoryFile(repo, "src/dangling_escape.ts"),
+    (err: any) => err?.code === "SYMLINK_ESCAPE" && err?.exitCode === 2,
+  );
+  assert.throws(
+    () => resolveRepositoryFile(repo, "src/dangling_internal.ts"),
+    (err: any) => err?.code === "FILE_MISSING" && err?.exitCode === 2,
+  );
+  // Symlinked repo root (macOS /var -> /private/var) with nonexistent absolute path resolves to FILE_MISSING, not INVALID_PATH
+  const missingUnderSymRoot = path.join(symRepo, "src", "missing.ts");
+  assert.equal(normalizeRelativePath(missingUnderSymRoot, symRepo), "src/missing.ts");
+  assert.throws(
+    () => resolveRepositoryFile(symRepo, missingUnderSymRoot),
+    (err: any) => err?.code === "FILE_MISSING" && err?.exitCode === 2,
+  );
+});
+
+// ---------------------------------------------------------------------------
+// RAW-RUN-002: Reject invalid --direction and --depth > 5 across CLI, MCP, SDK, REPL
+// ---------------------------------------------------------------------------
+test("RAW-RUN-002: invalid direction and depth > 5 fail closed with INVALID_ARGUMENT across CLI, MCP, and SDK", async () => {
+  const repo = createSampleRepo("waymark-raw-run-002-");
+
+  // CLI checks
+  for (const [extraArgs, expectedCode] of [
+    [["--direction", "sideways"], "INVALID_ARGUMENT"],
+    [["--direction", "CALLERS"], "INVALID_ARGUMENT"],
+    [["--direction", ""], "MISSING_OPTION_VALUE"],
+    [["--depth", "99"], "INVALID_ARGUMENT"],
+    [["--depth", "6"], "INVALID_ARGUMENT"],
+    [["--depth", "0"], "INVALID_ARGUMENT"],
+    [["--depth", "-1"], "INVALID_ARGUMENT"],
+    [["--depth", "0x2"], "INVALID_ARGUMENT"],
+    [["--outline", "--path", "src/app.ts", "--depth", "99"], "INVALID_ARGUMENT"],
+    [["--symbols", "computeBilling", "--direction", "sideways"], "INVALID_ARGUMENT"],
+    [["--facet", "status", "--depth", "99"], "INVALID_ARGUMENT"],
+  ] as const) {
+    const res = spawnSync(
+      process.execPath,
+      [cliPath, "ask", "computeBilling", ...extraArgs, "--root", repo],
+      { encoding: "utf8", windowsHide: true, timeout: 15_000 },
+    );
+    assert.equal(res.status, 1, `CLI args ${extraArgs.join(" ")} must exit 1, got ${res.status}: ${res.stdout}`);
+    assert.equal(JSON.parse(res.stdout).code, expectedCode);
+  }
+
+  // MCP checks
+  const server = new McpServer({ root: repo, enableDaemon: false });
+  try {
+    for (const [id, extra] of [
+      [1, { direction: "sideways" }],
+      [2, { depth: 99 }],
+      [3, { depth: 6 }],
+      [4, { depth: 0 }],
+    ] as const) {
+      const raw = await server.handleMessage(JSON.stringify({
+        jsonrpc: "2.0",
+        id,
+        method: "tools/call",
+        params: { name: "waymark_ask", arguments: { root: repo, query: "computeBilling", ...extra } },
+      }));
+      const res = JSON.parse(raw!).result;
+      assert.equal(res.isError, true, `MCP ${JSON.stringify(extra)} must return isError: true`);
+      assert.equal(JSON.parse(res.content[0].text).code, "INVALID_ARGUMENT");
+    }
+  } finally {
+    server.close();
+  }
+
+  // SDK checks
+  await assert.rejects(
+    () => ask(repo, "capn-cli", "", "computeBilling", { depth: 99 }),
+    (err: any) => err?.code === "INVALID_ARGUMENT",
+  );
+  await assert.rejects(
+    () => ask(repo, "capn-cli", "", "computeBilling", { direction: "sideways" as any }),
+    (err: any) => err?.code === "INVALID_ARGUMENT",
+  );
+  await assert.rejects(
+    () => queryMultiHopCallGraph(repo, "computeBilling", 99, "both"),
+    (err: any) => err?.code === "INVALID_ARGUMENT",
+  );
+  await assert.rejects(
+    () => queryMultiHopCallGraph(repo, "computeBilling", 1, "sideways" as any),
+    (err: any) => err?.code === "INVALID_ARGUMENT",
+  );
+  await assert.rejects(
+    () => queryStructural({ requiresParser: true, tool: "trace_path", functionName: "computeBilling" }, repo, undefined, { depth: 6 }),
+    (err: any) => err?.code === "INVALID_ARGUMENT",
+  );
+});
+
+// ---------------------------------------------------------------------------
+// RAW-RUN-003 + RAW-PKG-001: REPL daemon lifecycle teardown & custom /battery --path
+// ---------------------------------------------------------------------------
+test("RAW-RUN-003 + RAW-PKG-001: REPL stops daemon it spawned on exit, preserves pre-existing daemon, and supports /battery --path", { skip: skipCodedb() }, async () => {
+  const repo = createSampleRepo("waymark-raw-run-003-");
+  const customManifest = path.join(repo, "custom.jsonl");
+  fs.writeFileSync(
+    customManifest,
+    `${JSON.stringify({ id: "C-01", category: "custom", name: "app_path", query: "src/app.ts", tier: "path", expected_routing: "literal-path", expected_status: "hit", expected_file: "src/app.ts" })}\n`,
+    "utf8",
+  );
+
+  try {
+    // 1. Fresh REPL (no pre-existing daemon): runs custom /battery --path, rejects bad REPL --depth/--direction, and stops its daemon on /exit
+    assert.equal(await tryDaemonPing(repo, 300), null, "No daemon should be running initially");
+    const repl1 = spawnSync(
+      process.execPath,
+      [cliPath, "repl", "--root", repo],
+      {
+        cwd: repo,
+        input: "ask computeBilling --depth 99\nask computeBilling --depth=7\nask computeBilling --direction sideways\nask computeBilling --direction=diagonal\n/battery --path custom.jsonl\n/exit\n",
+        encoding: "utf8",
+        timeout: 25_000,
+        windowsHide: true,
+        env: { ...process.env, CODEDB_ALLOW_TEMP: "1" },
+      },
+    );
+    assert.equal(repl1.status, 0, `REPL failed: ${repl1.stderr}`);
+    assert.match(repl1.stdout, /Invalid --depth value "99"/);
+    assert.match(repl1.stdout, /Invalid --depth value "7"/);
+    assert.match(repl1.stdout, /Invalid --direction value "sideways"/);
+    assert.match(repl1.stdout, /Invalid --direction value "diagonal"/);
+    assert.match(repl1.stdout, /Prompt Battery Scoreboard/);
+    assert.match(repl1.stdout, /Passed:\s+1 \(100%\)/);
+    assert.match(repl1.stdout, /Goodbye\./);
+    assert.equal(await tryDaemonPing(repo, 400), null, "REPL must stop the daemon it auto-spawned on /exit");
+
+    // 2. Piped EOF without explicit /exit also stops REPL-spawned daemon
+    const replEof = spawnSync(
+      process.execPath,
+      [cliPath, "repl", "--root", repo],
+      {
+        cwd: repo,
+        input: "/status\n",
+        encoding: "utf8",
+        timeout: 25_000,
+        windowsHide: true,
+        env: { ...process.env, CODEDB_ALLOW_TEMP: "1" },
+      },
+    );
+    assert.equal(replEof.status, 0, `REPL EOF failed: ${replEof.stderr}`);
+    assert.equal(await tryDaemonPing(repo, 400), null, "REPL must stop the daemon it auto-spawned on stdin EOF");
+
+    // 2b. On POSIX, duplicate SIGTERM during active session and early SIGTERM during startup both clean up the spawned daemon
+    if (process.platform !== "win32") {
+      // Duplicate SIGTERM right after prompt appears
+      await new Promise<void>((resolve, reject) => {
+        const child = spawn(process.execPath, [cliPath, "repl", "--root", repo], {
+          cwd: repo,
+          stdio: ["pipe", "pipe", "pipe"],
+          env: { ...process.env, CODEDB_ALLOW_TEMP: "1" },
+        });
+        let out = "";
+        let sent = false;
+        const timer = setTimeout(() => { child.kill("SIGKILL"); reject(new Error("REPL SIGTERM test timed out")); }, 15_000);
+        child.stdout.on("data", (chunk) => {
+          out += chunk.toString();
+          if (!sent && out.includes("waymark>")) {
+            sent = true;
+            child.kill("SIGTERM");
+            setTimeout(() => { try { child.kill("SIGTERM"); } catch {} }, 15);
+          }
+        });
+        child.on("close", (code, sig) => {
+          clearTimeout(timer);
+          if (code !== 0 || sig !== null) {
+            reject(new Error(`Expected clean exit 0 on duplicate SIGTERM, got code=${code} sig=${sig}`));
+            return;
+          }
+          resolve();
+        });
+      });
+      assert.equal(await tryDaemonPing(repo, 400), null, "REPL must stop spawned daemon even on duplicate SIGTERM");
+
+      // Early SIGTERM during daemon startup
+      await new Promise<void>((resolve, reject) => {
+        const child = spawn(process.execPath, [cliPath, "repl", "--root", repo], {
+          cwd: repo,
+          stdio: ["pipe", "pipe", "pipe"],
+          env: { ...process.env, CODEDB_ALLOW_TEMP: "1" },
+        });
+        let out = "";
+        let sent = false;
+        const timer = setTimeout(() => { child.kill("SIGKILL"); reject(new Error("REPL early SIGTERM test timed out")); }, 15_000);
+        child.stdout.on("data", (chunk) => {
+          out += chunk.toString();
+          if (!sent && out.includes("Connecting to Waymark")) {
+            sent = true;
+            setTimeout(() => { try { child.kill("SIGTERM"); } catch {} }, 80);
+          }
+        });
+        child.on("close", (code, sig) => {
+          clearTimeout(timer);
+          if (code !== 0 || sig !== null) {
+            reject(new Error(`Expected clean exit 0 on early startup SIGTERM, got code=${code} sig=${sig}`));
+            return;
+          }
+          resolve();
+        });
+      });
+      assert.equal(await tryDaemonPing(repo, 400), null, "REPL must stop spawned daemon even on SIGTERM during startup");
+    }
+
+    // 3. Pre-existing daemon is NOT killed when REPL exits
+    const started = await autoStartDaemon(repo, 15_000);
+    assert.equal(started, true, "Pre-existing daemon should start");
+    const beforePing = await tryDaemonPing(repo, 500);
+    assert.ok(beforePing?.ok);
+
+    const repl2 = spawnSync(
+      process.execPath,
+      [cliPath, "repl", "--root", repo],
+      {
+        cwd: repo,
+        input: "/exit\n",
+        encoding: "utf8",
+        timeout: 20_000,
+        windowsHide: true,
+        env: { ...process.env, CODEDB_ALLOW_TEMP: "1" },
+      },
+    );
+    assert.equal(repl2.status, 0, `REPL with pre-existing daemon failed: ${repl2.stderr}`);
+    const afterPing = await tryDaemonPing(repo, 500);
+    assert.ok(afterPing?.ok && afterPing.pid === beforePing.pid, "REPL must preserve a pre-existing user-started daemon");
+  } finally {
+    await stopDaemon(repo);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// RAW-RUN-006: CAPN_NON_DETERMINISTIC_MODE enforced across all Tier 4 memory commands
+// ---------------------------------------------------------------------------
+test("RAW-RUN-006: CAPN_NON_DETERMINISTIC_MODE blocks list, bust, prune, status, unchart, context, and export across CLI, MCP, and SDK", async () => {
+  const repo = createSampleRepo("waymark-raw-run-006-");
+  fs.mkdirSync(memoryStoreDir(repo), { recursive: true });
+  fs.writeFileSync(path.join(memoryStoreDir(repo), "config.json"), JSON.stringify({ embedding: true }), "utf8");
+
+  // SDK checks
+  await assert.rejects(() => listEntries(repo), (err: any) => err?.code === "CAPN_NON_DETERMINISTIC_MODE" && err?.exitCode === 2);
+  await assert.rejects(() => bust(repo, "", "src/app.ts"), (err: any) => err?.code === "CAPN_NON_DETERMINISTIC_MODE" && err?.exitCode === 2);
+  await assert.rejects(() => prune(repo), (err: any) => err?.code === "CAPN_NON_DETERMINISTIC_MODE" && err?.exitCode === 2);
+  await assert.rejects(() => unchart(repo, "", "deadbeef", true), (err: any) => err?.code === "CAPN_NON_DETERMINISTIC_MODE" && err?.exitCode === 2);
+  await assert.rejects(() => context(repo), (err: any) => err?.code === "CAPN_NON_DETERMINISTIC_MODE" && err?.exitCode === 2);
+  assert.throws(() => getSemanticMapStatus(repo), (err: any) => err?.code === "CAPN_NON_DETERMINISTIC_MODE" && err?.exitCode === 2);
+
+  // CLI checks (all exit 2 with CAPN_NON_DETERMINISTIC_MODE)
+  for (const args of [
+    ["memory", "list"],
+    ["memory", "bust", "src/app.ts"],
+    ["memory", "prune"],
+    ["memory", "status"],
+    ["memory", "unchart", "deadbeef", "--if-exists"],
+    ["memory", "context"],
+    ["memory", "export"],
+  ]) {
+    const res = spawnSync(
+      process.execPath,
+      [cliPath, ...args, "--root", repo],
+      { encoding: "utf8", windowsHide: true, timeout: 15_000 },
+    );
+    assert.equal(res.status, 2, `CLI ${args.join(" ")} must exit 2, got ${res.status}: ${res.stdout}`);
+    assert.equal(JSON.parse(res.stdout).code, "CAPN_NON_DETERMINISTIC_MODE");
+  }
+
+  // MCP checks
+  const server = new McpServer({ root: repo, enableDaemon: false });
+  try {
+    let reqId = 1;
+    for (const toolArgs of [
+      { action: "list" },
+      { action: "bust", file: "src/app.ts" },
+      { action: "prune" },
+      { action: "status" },
+      { action: "unchart", id: "deadbeef", if_exists: true },
+      { action: "context" },
+      { action: "export" },
+    ]) {
+      const raw = await server.handleMessage(JSON.stringify({
+        jsonrpc: "2.0",
+        id: reqId++,
+        method: "tools/call",
+        params: { name: "waymark_memory", arguments: { root: repo, ...toolArgs } },
+      }));
+      const res = JSON.parse(raw!).result;
+      assert.equal(res.isError, true, `MCP memory ${toolArgs.action} must set isError: true`);
+      assert.equal(JSON.parse(res.content[0].text).code, "CAPN_NON_DETERMINISTIC_MODE");
+    }
+  } finally {
+    server.close();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// RAW-RUN-005: Entrypoints & Architecture queries return bounded, ranked summaries
+// ---------------------------------------------------------------------------
+test("RAW-RUN-005: Architecture and Entrypoints queries cap output, exclude test/0-symbol noise, and rank entrypoints first", { skip: skipCodedb() }, async () => {
+  const repo = createSampleRepo("waymark-raw-run-005-");
+  fs.mkdirSync(path.join(repo, "src", "modules"), { recursive: true });
+  fs.mkdirSync(path.join(repo, "test"), { recursive: true });
+  fs.mkdirSync(path.join(repo, "docs"), { recursive: true });
+  fs.writeFileSync(path.join(repo, "src", "index.ts"), "export function bootEntry(): number { return 1; }\n", "utf8");
+  for (let i = 0; i < 32; i++) {
+    fs.writeFileSync(
+      path.join(repo, "src", "modules", `mod_${String(i).padStart(2, "0")}.ts`),
+      `export function fnA_${i}(): number { return ${i}; }\nexport function fnB_${i}(): number { return ${i + 1}; }\n`,
+      "utf8",
+    );
+  }
+  fs.writeFileSync(path.join(repo, "test", "noise.test.ts"), "export function testNoise(): void {}\n", "utf8");
+  fs.writeFileSync(path.join(repo, "docs", "notes.txt"), "plain text note\n", "utf8");
+
+  assert.equal(detectAstIntent("Entrypoints").architectureFocus, "entrypoints");
+  assert.equal(detectAstIntent("Architecture").architectureFocus, undefined);
+
+  const archRes = await ask(repo, "capn-cli", "", "Architecture");
+  assert.equal(archRes.status, "hit");
+  const archOut = String((archRes as any).result);
+  assert.match(archOut, /^total_files: \d+/m);
+  assert.match(archOut, /omitted_files: \d+/);
+  const archFileLines = archOut.split("\n").filter((l) => l.startsWith("  "));
+  assert.ok(archFileLines.length <= 25, `Expected <= 25 files, got ${archFileLines.length}`);
+  assert.equal(archOut.includes("test/noise.test.ts"), false, "Test files should not clutter bounded overview");
+  assert.equal(archOut.includes("docs/notes.txt"), false, "Zero-symbol text files should not clutter bounded overview");
+
+  const entryRes = await ask(repo, "capn-cli", "", "Entrypoints");
+  assert.equal(entryRes.status, "hit");
+  const entryLines = String((entryRes as any).result).split("\n").filter((l) => l.startsWith("  "));
+  assert.ok(entryLines.length <= 25);
+  assert.ok(
+    entryLines.slice(0, 3).some((l) => l.includes("src/index.ts") || l.includes("src/app.ts")),
+    `Expected entrypoint files ranked first, got:\n${entryLines.slice(0, 5).join("\n")}`,
+  );
+
+  // Test-only repo with excludeTests: true must not include test files
+  const testOnlyRepo = mkTrackedTempDir("waymark-raw-run-005-testonly-");
+  fs.mkdirSync(path.join(testOnlyRepo, "test"), { recursive: true });
+  fs.writeFileSync(path.join(testOnlyRepo, "test", "only.test.ts"), "export function onlyTest(): number { return 1; }\n", "utf8");
+  const testOnlyArch = await queryStructural({ requiresParser: true, tool: "get_architecture" }, testOnlyRepo, undefined, { excludeTests: true });
+  assert.equal(testOnlyArch.hit, true);
+  assert.equal(String(testOnlyArch.output).includes("test/only.test.ts"), false, "excludeTests must exclude test files even on a test-only repo");
+});
+
+// ---------------------------------------------------------------------------
+// RAW-DOC-003 + RAW-DOC-004: Canonical CLI hints, balanced context parens, MD export spacing
+// ---------------------------------------------------------------------------
+test("RAW-DOC-003 + RAW-DOC-004: junction hints use canonical 'waymark ask', context parens are balanced, and export separates missing facets", async () => {
+  const repo = createSampleRepo("waymark-raw-doc-");
+
+  // Junction tips/continuations use canonical 'waymark ask' and lead chartHint with 'waymark memory chart'
+  const junctionRes = await ask(repo, "capn-cli", "", "computBillng");
+  assert.equal(junctionRes.status, "junction");
+  const j = junctionRes as any;
+  assert.match(j.alternativeOption.continuation.cliCommand, /^waymark ask /);
+  assert.match(j.tip, /waymark ask /);
+  assert.match(j.chartHint, /CLI: waymark memory chart; alias waymark-chart/);
+
+  // memory context has balanced parentheses on the header line
+  const ctxRes = await context(repo);
+  assert.equal(ctxRes.ok, true);
+  const firstRuleLine = String(ctxRes.output).split("\n").find((l) => l.includes("waymark_ask")) ?? "";
+  assert.match(firstRuleLine, /^waymark_ask \(CLI: waymark ask\) \/ waymark-ask routes questions/);
+  assert.equal((firstRuleLine.match(/\(/g) ?? []).length, (firstRuleLine.match(/\)/g) ?? []).length);
+
+  // Markdown export separates consecutive missing facets with a blank line
+  const status = getSemanticMapStatus(repo);
+  const exported = renderSemanticMapExport(status);
+  assert.doesNotMatch(exported, /- \*\*Files\*\*: None\n## Facet:/);
+  assert.match(exported, /- \*\*Files\*\*: None\n\n## Facet:/);
 });

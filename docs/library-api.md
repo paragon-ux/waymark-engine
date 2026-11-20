@@ -37,7 +37,7 @@ const result = await ask(root, "capn-cli", "", "Who calls verifyHop?", {
 console.log(renderPlainText(result));
 
 // 2. Concurrent Batch Symbol Extraction
-const symbols = await queryMultiSymbols(root, ["McpServer", "DiscoveryRouter", "FuzzyMatcher"]);
+const symbols = await queryMultiSymbols(root, ["McpServer", "WaymarkDaemon", "PrefixTrie"]);
 console.log(symbols);
 
 // 3. Single-File Structured Tree-Sitter Outline
@@ -55,6 +55,7 @@ console.log(`Match score: ${score}`);
 
 ```ts
 import {
+  initCapn,
   publish,
   unchart,
   bust,
@@ -67,7 +68,11 @@ import {
 
 const root = repoRoot();
 
-// Enforce fail-closed determinism check on SQLite store (synchronous guard)
+// Initialize the deterministic lexical store (.waymark/memory) once per repository (idempotent)
+await initCapn(root);
+
+// Enforce fail-closed determinism check on SQLite store (synchronous guard;
+// throws CAPN_STORE_UNINITIALIZED before init or CAPN_NON_DETERMINISTIC_MODE if embeddings are enabled)
 assertLexicalStore(root);
 
 // Publish architectural consensus memory entry
@@ -139,14 +144,14 @@ if (check.status === "FRESH") {
 
 ## Error Handling
 
-Waymark exports typed errors with deterministic status codes:
+Lookup misses in `ask()` resolve cleanly to a structured `{ status: "miss", missCode }` envelope rather than throwing. Boundary, validation, and guard violations (such as path traversal, symlink escapes, invalid traversal options, or uninitialized/non-deterministic stores) throw `WaymarkError` with deterministic `code` and `exitCode` fields:
 
 ```ts
-import { ask, repoRoot, WaymarkError } from "waymark-engine";
+import { anchorForRange, repoRoot, WaymarkError } from "waymark-engine";
 
 const root = repoRoot();
 try {
-  await ask(root, "capn-cli", "", "nonExistentSymbol");
+  anchorForRange(root, "../etc/passwd", { start: 1, end: 5 });
 } catch (err) {
   if (err instanceof WaymarkError) {
     console.error(`Code: ${err.code}, Exit: ${err.exitCode}, Message: ${err.message}`);

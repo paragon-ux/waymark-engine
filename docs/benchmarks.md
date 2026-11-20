@@ -41,14 +41,14 @@ Supporting raw captures live under `benchmarks/data/grafana_pre_hardening/`, `be
 
 ## Automated 105-Prompt Evaluation Battery
 
-Waymark ships an automated 105-prompt evaluation manifest at `docs/prompts/CATALOGUE_MANIFEST.jsonl` covering 15 operational categories (exact path normalization, AST call graphs, bounded multi-hop BFS, test exclusion, single-file tree-sitter outlines, fuzzy transposition, batch symbol lookup, fail-closed adversarial misses, path-traversal sandboxing, SHA-256 range anchor integrity, multi-step workflows, forced-tier isolation, concurrency, plain-text compression, and Discovery Junction consensus).
+The `waymark-engine` source repository includes an automated 105-prompt evaluation manifest at `docs/prompts/CATALOGUE_MANIFEST.jsonl` covering 15 operational categories (exact path normalization, AST call graphs, bounded multi-hop BFS, test exclusion, single-file tree-sitter outlines, fuzzy transposition, batch symbol lookup, fail-closed adversarial misses, path-traversal sandboxing, SHA-256 range anchor integrity, multi-step workflows, forced-tier isolation, concurrency, plain-text compression, and Discovery Junction consensus).
 
-Run it locally or in CI via:
+Run it inside a `waymark-engine` source checkout locally or in CI via:
 
 ```bash
 npm run test:prompts
 # or directly:
 node docs/prompts/run_battery.mjs
-# or interactively inside `waymark repl`:
+# or interactively inside `waymark repl` (use `/battery --path <manifest.jsonl>` in external projects):
 /battery
 ```

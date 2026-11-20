@@ -18,7 +18,7 @@ export interface ResolvedCodedbCommand {
   viaCmdShim: boolean;
 }
 
-export function assertSupportedCodedbCommand(command: ResolvedCodedbCommand, platform = process.platform): void {
+export function assertSupportedCodedbCommand(command: ResolvedCodedbCommand, platform: string = process.platform): void {
   if (platform === "win32" && command.viaCmdShim) {
     throw new WaymarkError("CODEDB_UNSUPPORTED_SHIM", "Windows .cmd/.bat codedb shims are unsupported; configure WAYMARK_CODEDB_EXECUTABLE with a native .exe to avoid shell argument expansion.", 2);
   }
@@ -38,7 +38,7 @@ function codedbRunError(message: string): WaymarkError {
  * On Windows ARM64 (where no native win32-arm64 binary is shipped), falls back
  * to the bundled `codedb-win32-x64.exe` binary which runs under Windows x64 emulation.
  */
-export function bundledCodedbBinary(platform = process.platform, arch = process.arch): string | null {
+export function bundledCodedbBinary(platform: string = process.platform, arch: string = process.arch): string | null {
   try {
     if (platform === process.platform && arch === process.arch) {
       const mod = require("@paragon-ux/codedb-core") as { codedbBinaryPath: () => string | null };
@@ -472,8 +472,14 @@ export async function queryMultiHopCallGraph(
   autoDaemon = false,
   onDaemonIpc?: () => void,
 ): Promise<{ hit: boolean; output: CallGraphData | string; error?: boolean }> {
+  if (typeof depth !== "number" || !Number.isInteger(depth) || depth < 1 || depth > 5) {
+    throw new WaymarkError("INVALID_ARGUMENT", `Invalid depth value "${String(depth)}". Expected integer 1-5.`);
+  }
+  if (direction !== "callers" && direction !== "callees" && direction !== "both") {
+    throw new WaymarkError("INVALID_ARGUMENT", `Invalid direction value "${String(direction)}". Expected callers, callees, or both.`);
+  }
   const cmd = command ?? resolveCodedbCommand();
-  const maxDepth = Math.min(Math.max(1, depth), 5);
+  const maxDepth = depth;
   const runOpts = { autoDaemon, onDaemonIpc };
 
   // Fast-path ambiguity & existence check for bare identifiers
@@ -688,11 +694,35 @@ export async function queryMultiHopCallGraph(
   return { hit: true, output: callGraph };
 }
 
+const MAX_ARCHITECTURE_FILES = 25;
+const ENTRYPOINT_BASENAMES = new Set([
+  "index", "main", "cli", "app", "server", "mod", "lib", "entry", "entrypoint", "__main__", "capnindex",
+]);
+
+function isArchitectureEntrypoint(filePath: string): boolean {
+  const normalized = filePath.replace(/\\/g, "/");
+  if (normalized.startsWith("bin/") || normalized.startsWith("cmd/")) return true;
+  const slashIdx = normalized.lastIndexOf("/");
+  const base = (slashIdx === -1 ? normalized : normalized.slice(slashIdx + 1)).toLowerCase();
+  const dotIdx = base.lastIndexOf(".");
+  const stem = dotIdx === -1 ? base : base.slice(0, dotIdx);
+  return ENTRYPOINT_BASENAMES.has(stem);
+}
+
+function pathSegmentDepth(filePath: string): number {
+  const normalized = filePath.replace(/\\/g, "/");
+  let depth = 0;
+  for (let i = 0; i < normalized.length; i++) {
+    if (normalized[i] === "/") depth += 1;
+  }
+  return depth;
+}
+
 /**
- * Answer a structural intent with the deterministic codedb CLI. `trace_path`
- * uses the resolved fail-closed call graph (via single-pass `neighbors`);
- * `search_graph` resolves symbol definitions; `get_architecture` reports repo
- * topology. A clean miss returns `hit: false` — never a guess.
+ * Resolve a structural AST intent via the deterministic codedb CLI.
+ * `trace_path` builds call graphs (depth 1-5); `search_graph` resolves symbol
+ * definitions; `get_architecture` reports bounded, ranked repo topology.
+ * A clean miss returns `hit: false` — never a guess.
  */
 export async function queryStructural(
   intent: AstIntent,
@@ -700,6 +730,16 @@ export async function queryStructural(
   executable?: string,
   options?: { depth?: number; direction?: "callers" | "callees" | "both"; excludeTests?: boolean; autoDaemon?: boolean; onDaemonIpc?: () => void },
 ): Promise<{ hit: boolean; output: string | CallGraphData; error?: boolean }> {
+  if (options?.depth !== undefined) {
+    if (typeof options.depth !== "number" || !Number.isInteger(options.depth) || options.depth < 1 || options.depth > 5) {
+      throw new WaymarkError("INVALID_ARGUMENT", `Invalid depth value "${String(options.depth)}". Expected integer 1-5.`);
+    }
+  }
+  if (options?.direction !== undefined) {
+    if (options.direction !== "callers" && options.direction !== "callees" && options.direction !== "both") {
+      throw new WaymarkError("INVALID_ARGUMENT", `Invalid direction value "${String(options.direction)}". Expected callers, callees, or both.`);
+    }
+  }
   const command = resolveCodedbCommand(executable);
   const runOpts = { autoDaemon: options?.autoDaemon, onDaemonIpc: options?.onDaemonIpc };
 
@@ -722,10 +762,47 @@ export async function queryStructural(
       }
     }
     const totalSymbols = files.reduce((n, f) => n + (f.sym_count ?? 0), 0);
+    const excludeTests = Boolean(options?.excludeTests);
+    const nonTestFiles = files.filter((f) => !isTestFile(f.path));
+    const symbolizedNonTest = nonTestFiles.filter((f) => (f.sym_count ?? 0) > 0);
+    const symbolizedAny = (excludeTests ? nonTestFiles : files).filter((f) => (f.sym_count ?? 0) > 0);
+    const pool = symbolizedNonTest.length > 0
+      ? symbolizedNonTest
+      : symbolizedAny.length > 0
+        ? symbolizedAny
+        : nonTestFiles.length > 0
+          ? nonTestFiles
+          : (excludeTests ? nonTestFiles : files);
+
+    const entrypointFocus = intent.architectureFocus === "entrypoints";
+    const ranked = [...pool].sort((a, b) => {
+      if (entrypointFocus) {
+        const aEntry = isArchitectureEntrypoint(a.path) ? 0 : 1;
+        const bEntry = isArchitectureEntrypoint(b.path) ? 0 : 1;
+        if (aEntry !== bEntry) return aEntry - bEntry;
+        const depthDiff = pathSegmentDepth(a.path) - pathSegmentDepth(b.path);
+        if (depthDiff !== 0) return depthDiff;
+        const symDiff = (b.sym_count ?? 0) - (a.sym_count ?? 0);
+        if (symDiff !== 0) return symDiff;
+        return a.path.localeCompare(b.path);
+      }
+      const symDiff = (b.sym_count ?? 0) - (a.sym_count ?? 0);
+      if (symDiff !== 0) return symDiff;
+      const depthDiff = pathSegmentDepth(a.path) - pathSegmentDepth(b.path);
+      if (depthDiff !== 0) return depthDiff;
+      return a.path.localeCompare(b.path);
+    });
+    const shown = ranked.slice(0, MAX_ARCHITECTURE_FILES);
+    const omitted = files.length - shown.length;
+
     let out = `total_files: ${files.length}\n`;
     out += `total_symbols: ${totalSymbols}\n`;
-    for (const f of files) {
+    for (const f of shown) {
       out += `  ${f.path} ${f.language} ${f.line_count} lines ${f.sym_count} symbols\n`;
+    }
+    if (omitted > 0) {
+      const focusLabel = entrypointFocus ? "entrypoint/source" : "source";
+      out += `omitted_files: ${omitted} (showing top ${shown.length} ${focusLabel} files; use --path <file> to inspect a file or waymark memory status for the semantic map)\n`;
     }
     return { hit: true, output: out.trim() };
   }

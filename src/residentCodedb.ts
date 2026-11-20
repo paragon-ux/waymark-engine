@@ -181,11 +181,15 @@ export class ResidentCodedbClient {
         }
       });
 
+      this.proc.stdin?.on("error", () => {});
+      this.proc.stdout?.on("error", () => {});
+      this.proc.stderr?.on("error", () => {});
       this.proc.stderr?.on("data", (chunk: Buffer) => {
         this.stderrBuffer = (this.stderrBuffer + chunk.toString()).slice(-4096);
       });
 
       this.rl = readline.createInterface({ input: this.proc.stdout! });
+      this.rl.on("error", () => {});
       this.rl.on("line", (line: string) => {
         const trimmed = line.trim();
         if (!trimmed) return;
@@ -400,7 +404,7 @@ export class ResidentCodedbClient {
 
 const residentRegistry = new Map<string, ResidentCodedbClient>();
 
-export function normalizeKeyRoot(root: string, platform = process.platform): string {
+export function normalizeKeyRoot(root: string, platform: string = process.platform): string {
   const normalized = root.replace(/\\/g, "/");
   return platform === "win32" ? normalized.toLowerCase() : normalized;
 }

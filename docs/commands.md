@@ -101,7 +101,8 @@ waymark daemon [command]
 - **`stop`**: Gracefully terminates background daemon.
 - **`restart`**: Cycles the resident background process.
 - **`reload`**: Invalidates in-memory AST and trie indices after file changes.
-- **`status`**: Displays daemon PID, uptime, memory consumption, and cached entry count.
+- **`status`**: Displays daemon running state, PID, uptime, repository root, and IPC socket/pipe address.
+- **`list`**: Lists all currently active Waymark daemons registered for the current user.
 - **`ping`**: Validates IPC responsiveness over Named Pipes (Windows) or Unix Sockets (POSIX).
 
 ---
@@ -126,10 +127,10 @@ The viewer binds only to `127.0.0.1`, requires the per-session token in the prin
 `waymark daemon stop` always shuts down strictly through the root-specific daemon IPC endpoint and never signals a PID read from disk.
 
 ### Interactive REPL Commands (`waymark repl`)
-- `manifest` / `/battery`: Run the canonical 105-prompt evaluation manifest (`CATALOGUE_MANIFEST.jsonl`).
+- `manifest` / `/battery --path <manifest.jsonl>`: Run a custom JSONL prompt evaluation manifest against the active repository (with no `--path`, defaults to `docs/prompts/CATALOGUE_MANIFEST.jsonl`, the 105-prompt self-evaluation suite inside a `waymark-engine` source checkout).
 - `daemon status` / `/status`: Show daemon IPC connection status.
 - `clear` / `/clear`: Clear terminal screen.
-- `exit` / `quit` / `/exit`: Terminate REPL session.
+- `exit` / `quit` / `/exit`: Terminate REPL session (automatically stops the resident daemon if the REPL spawned it).
 
 ---
 

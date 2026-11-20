@@ -99,6 +99,8 @@ export const waymarkAskTool: McpToolHandler = {
         },
         depth: {
           type: "integer",
+          minimum: 1,
+          maximum: 5,
           description: "Call graph traversal depth (1-5) for structural AST queries. Defaults to 1.",
         },
         direction: {
@@ -151,14 +153,18 @@ export const waymarkAskTool: McpToolHandler = {
       const dev = args.dev === true;
       let depth: number | undefined;
       if (args.depth !== undefined) {
-        if (typeof args.depth !== "number" || !Number.isInteger(args.depth) || args.depth < 1) {
-          throw new WaymarkError("INVALID_ARGUMENT", "depth must be a positive integer (1-5).");
+        if (typeof args.depth !== "number" || !Number.isInteger(args.depth) || args.depth < 1 || args.depth > 5) {
+          throw new WaymarkError("INVALID_ARGUMENT", `Invalid depth value "${String(args.depth)}". Expected integer 1-5.`);
         }
-        depth = Math.min(args.depth, 5);
+        depth = args.depth;
       }
-      const direction = (args.direction === "callers" || args.direction === "callees" || args.direction === "both")
-        ? args.direction
-        : undefined;
+      let direction: "callers" | "callees" | "both" | undefined;
+      if (args.direction !== undefined) {
+        if (args.direction !== "callers" && args.direction !== "callees" && args.direction !== "both") {
+          throw new WaymarkError("INVALID_ARGUMENT", `Invalid direction value "${String(args.direction)}". Expected callers, callees, or both.`);
+        }
+        direction = args.direction;
+      }
       const excludeTests = args.exclude_tests === true || args.excludeTests === true;
       const facet = typeof args.facet === "string" ? args.facet.trim() : undefined;
       const rawPath = typeof args.path === "string" ? args.path.trim() : undefined;

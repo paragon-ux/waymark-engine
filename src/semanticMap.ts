@@ -4,7 +4,7 @@ import { resolveRepositoryFile } from "./paths.js";
 import { memoryStoreDir, MEMORY_STORE_LABEL } from "./stateDir.js";
 import { AdapterProfile, WaymarkError } from "./types.js";
 import { entryFreshness, readChartedEntries } from "./memoryEntries.js";
-import { publish, unchart, withMemoryStoreLock } from "./capnAdapter.js";
+import { assertLexicalStore, publish, unchart, withMemoryStoreLock } from "./capnAdapter.js";
 
 export type SemanticFacetId =
   | "lifecycle"
@@ -180,6 +180,8 @@ export function getSemanticMapStatus(root: string): SemanticMapStatus {
       message: `Consensus memory store (${MEMORY_STORE_LABEL}) is uninitialized. Run 'waymark memory init' (MCP: waymark_memory(action: "init")) to initialize it; bootstrap only collects unverified source-evidence drafts.`,
     };
   }
+
+  assertLexicalStore(root);
 
   const entries = readChartedEntries(root);
   const facets = {} as Record<SemanticFacetId, FacetStatus>;
@@ -803,8 +805,8 @@ export function renderSemanticMapExport(status: SemanticMapStatus): string {
     if (f.details) {
       lines.push("");
       lines.push(f.details);
-      lines.push("");
     }
+    lines.push("");
   }
-  return lines.join("\n");
+  return lines.join("\n").trimEnd() + "\n";
 }

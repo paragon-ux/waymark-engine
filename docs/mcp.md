@@ -3,7 +3,7 @@
 Waymark Engine implements the Model Context Protocol (MCP) dual-era specification (`2026-07-28` modern discovery + `2024-11-05` standard handshake) over stdio.
 
 - **Supported revisions**: `2026-07-28`, `2025-11-25`, `2024-11-05` (advertised by `server/discover`).
-- **`2026-07-28` results**: every result carries `resultType` and `_meta["io.modelcontextprotocol/serverInfo"]`; list and read results carry `ttlMs` and `cacheScope`. A request whose `_meta` protocol version is unsupported fails with `-32022`.
+- **`2026-07-28` results**: every result carries `resultType` and `_meta["io.modelcontextprotocol/serverInfo"]`; list and read results carry `ttlMs` and `cacheScope`. A request whose `_meta["io.modelcontextprotocol/protocolVersion"]` is unsupported fails with `-32022`.
 - **Startup**: the server answers the handshake immediately and indexes nothing. The first tool call on a repository (its `root` argument, else the server's working directory, resolved to the Git top level) warms a resident daemon for it in the background; that call and any made during warm-up take the cold path. A repository with more than 50,000 files, or whose file walk takes over 10 seconds, is never warmed. At most two repositories stay warm; the least recently used is stopped. See [Warm-up](#resident-daemon-warm-up).
 
 ---
@@ -53,7 +53,7 @@ Consolidates all discovery operations into a unified query interface:
 {
   "name": "waymark_ask",
   "arguments": {
-    "symbols": ["McpServer", "DiscoveryRouter", "FuzzyMatcher"],
+    "symbols": ["McpServer", "WaymarkDaemon", "PrefixTrie"],
     "plain": true
   }
 }

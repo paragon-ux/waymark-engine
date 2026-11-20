@@ -148,6 +148,130 @@ test("Packaging smoke test: npm pack and install --ignore-scripts extracts YAML 
     assert.equal(outlineBody.ok, true);
     assert.equal(outlineBody.language, "yaml");
 
+    // 6. Consumer TypeScript compilation check against packed .d.ts files (RAW-SDK-001):
+    // strict: true, skipLibCheck: false, types: [] (no @types/node installed in consumer project)
+    // across both NodeNext and bundler moduleResolution.
+    const consumerTs = [
+      'import {',
+      '  ask,',
+      '  renderPlainText,',
+      '  queryMultiSymbols,',
+      '  discoverSymbolsInFile,',
+      '  scoreFzf,',
+      '  rankFzf,',
+      '  repoRoot,',
+      '  initCapn,',
+      '  publish,',
+      '  assertLexicalStore,',
+      '  anchorForRange,',
+      '  verifyHop,',
+      '  sha256,',
+      '  WaymarkError,',
+      '  type HopRecord,',
+      '} from "waymark-engine";',
+      '',
+      'export async function typecheckConsumer(): Promise<void> {',
+      '  const root = repoRoot();',
+      '  const askRes = await ask(root, "capn-cli", "", "Who calls verifyHop?", { depth: 2, direction: "callers", excludeTests: true });',
+      '  const text: string = renderPlainText(askRes);',
+      '  const batch = await queryMultiSymbols(root, ["McpServer", "WaymarkDaemon", "PrefixTrie"]);',
+      '  const outline = await discoverSymbolsInFile(root, "src/types.ts");',
+      '  const score: number = scoreFzf("vrfyHp", "verifyHop");',
+      '  const ranked = rankFzf("vrfyHp", [{ name: "verifyHop", path: "src/integrity.ts", line: 66, kind: "function" }]);',
+      '  await initCapn(root);',
+      '  assertLexicalStore(root);',
+      '  const pub = await publish(root, "none", "", "q", "a", ["src/types.ts"]);',
+      '  const digest: string = sha256(new Uint8Array([1, 2, 3]));',
+      '  const anchor = anchorForRange(root, "src/types.ts", { start: 1, end: 5 });',
+      '  const hop: HopRecord = { index: 0, path: "src/types.ts", label: "x", inference: "y", range: { start: 1, end: 5 }, ...anchor };',
+      '  const check = verifyHop(root, hop, 50);',
+      '  try {',
+      '    void [text, batch, outline, score, ranked, pub, digest, check];',
+      '  } catch (err) {',
+      '    if (err instanceof WaymarkError) { void err.code; void err.exitCode; }',
+      '  }',
+      '}',
+      '',
+    ].join("\n");
+    fs.writeFileSync(path.join(installDir, "consumer.ts"), consumerTs, "utf8");
+    const tscBin = path.join(repoRoot, "node_modules", "typescript", "bin", "tsc");
+    assert.ok(fs.existsSync(tscBin), `Expected typescript compiler at ${tscBin}`);
+    for (const [cfgName, moduleOpt, resolutionOpt] of [
+      ["tsconfig.nodenext.json", "NodeNext", "NodeNext"],
+      ["tsconfig.bundler.json", "ESNext", "bundler"],
+    ] as const) {
+      fs.writeFileSync(
+        path.join(installDir, cfgName),
+        JSON.stringify({
+          compilerOptions: {
+            target: "ES2022",
+            lib: ["ES2022"],
+            module: moduleOpt,
+            moduleResolution: resolutionOpt,
+            strict: true,
+            skipLibCheck: false,
+            types: [],
+            noEmit: true,
+          },
+          include: ["consumer.ts"],
+        }, null, 2),
+        "utf8",
+      );
+      const tscRes = spawnSync(process.execPath, [tscBin, "-p", cfgName], {
+        cwd: installDir,
+        encoding: "utf8",
+        timeout: 30_000,
+        windowsHide: true,
+      });
+      assert.equal(
+        tscRes.status,
+        0,
+        `Consumer tsc (${cfgName}, strict + skipLibCheck:false + lib:ES2022 + types:[]) failed:\n${tscRes.stdout}\n${tscRes.stderr}`,
+      );
+    }
+
+    // Also typecheck every shipped .d.ts file directly under pure ES2022 (no DOM, no @types/node)
+    const packedDistSrc = path.join(installDir, "node_modules", "waymark-engine", "dist", "src");
+    const collectDts = (dir: string): string[] => {
+      const files: string[] = [];
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) files.push(...collectDts(full));
+        else if (entry.name.endsWith(".d.ts")) files.push(full);
+      }
+      return files;
+    };
+    const allDts = collectDts(packedDistSrc);
+    assert.ok(allDts.length > 0, "Expected packed .d.ts files in dist/src");
+    fs.writeFileSync(
+      path.join(installDir, "tsconfig.all-dts.json"),
+      JSON.stringify({
+        compilerOptions: {
+          target: "ES2022",
+          lib: ["ES2022"],
+          module: "NodeNext",
+          moduleResolution: "NodeNext",
+          strict: true,
+          skipLibCheck: false,
+          types: [],
+          noEmit: true,
+        },
+        files: allDts,
+      }, null, 2),
+      "utf8",
+    );
+    const allDtsRes = spawnSync(process.execPath, [tscBin, "-p", "tsconfig.all-dts.json"], {
+      cwd: installDir,
+      encoding: "utf8",
+      timeout: 30_000,
+      windowsHide: true,
+    });
+    assert.equal(
+      allDtsRes.status,
+      0,
+      `All-dts pure ES2022 typecheck failed:\n${allDtsRes.stdout}\n${allDtsRes.stderr}`,
+    );
+
     // Confirm web-tree-sitter/tree-sitter.js remained completely unmutated on disk
     const wtsAfter = fs.readFileSync(wtsFile, "utf8");
     assert.equal(wtsAfter, wtsBefore, "web-tree-sitter/tree-sitter.js must never be mutated in-place");

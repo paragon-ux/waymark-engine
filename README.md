@@ -74,7 +74,7 @@ waymark ask "verifyHop" --plain               # Token-minimal LLM output (~16-38
 Waymark provides two distinct REPL modes:
 
 ```bash
-# 1. Interactive diagnostic REPL (supports ask, symbols, /battery, /status, /clear, /exit)
+# 1. Interactive diagnostic REPL (supports ask, symbols, /status, /clear, /exit, and /battery --path <manifest.jsonl>)
 waymark repl
 
 # 2. Live read-only telemetry tailer & browser SSE viewer (default port 4141; keys: q/c/s)

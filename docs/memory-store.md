@@ -11,7 +11,7 @@ Waymark keeps everything it writes inside a repository under `.waymark/`. It nev
 | `.waymark/paths.v3.cache` | Tier 2 repository path cache | Path router (skipped when `WAYMARK_READ_ONLY=1`) |
 | `.waymark/sessions/active.jsonl` | Opt-in telemetry | Session logger (`WAYMARK_TELEMETRY=1`) |
 
-On POSIX hosts, the daemon Unix socket, PID record, and daemon registry live in a per-user `0700` runtime directory (`$XDG_RUNTIME_DIR/waymark` or `os.tmpdir()/waymark-<uid>`, falling back to `/tmp/waymark-<uid>` if the candidate would exceed the POSIX Unix domain socket `sun_path` length limit) with `0600` socket/file permissions and atomic writes (Windows uses Named Pipes and `os.tmpdir()/waymark`). The PID record is informational only: `waymark daemon stop` never uses it to choose a process to kill (audit finding F-01).
+On POSIX hosts, the daemon Unix socket, PID record, and daemon registry live in a per-user `0700` runtime directory (`$XDG_RUNTIME_DIR/waymark` or `os.tmpdir()/waymark-<uid>`, falling back to `/tmp/waymark-<uid>` if the candidate would exceed the POSIX Unix domain socket `sun_path` length limit) with `0600` socket/file permissions and atomic writes (Windows uses Named Pipes and `os.tmpdir()/waymark`). The PID record is informational only: `waymark daemon stop` never uses it to choose a process to kill.
 
 In code, `memoryStoreDir(root)` (`src/stateDir.ts`) is the only definition of the store location. Every store read and every capn invocation goes through it.
 

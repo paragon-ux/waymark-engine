@@ -30,7 +30,7 @@ import {
 import { ResidentCodedbClient } from "../src/residentCodedb.js";
 import { startLiveReplObserver } from "../src/repl.js";
 import { McpServer } from "../src/mcp/server.js";
-import { WAYMARK_TOOLS } from "../src/mcp/capnTools.js";
+import { WAYMARK_TOOLS, waymarkAskTool } from "../src/mcp/capnTools.js";
 import { memoryStoreDir, stateDir } from "../src/stateDir.js";
 import { hasCodedb, skipCodedb } from "./codedb.js";
 import { mkTrackedTempDir } from "./tempDirs.js";
@@ -606,6 +606,13 @@ test("RUN-004 + RUN-012: auto-mode surfaces CAPN_NON_DETERMINISTIC_MODE and CAPN
   });
   assert.equal(cliEmbed.status, 2);
   assert.equal(JSON.parse(cliEmbed.stdout).missCode, "CAPN_NON_DETERMINISTIC_MODE");
+
+  // R2-MCP-003: MCP waymark_ask sets isError: true on CAPN_NON_DETERMINISTIC_MODE (JSON and plain)
+  const mcpEmbedJson = await waymarkAskTool.handler({ question: "How does authentication work?", root: repo });
+  assert.equal(mcpEmbedJson.isError, true, "MCP waymark_ask must set isError: true on CAPN_NON_DETERMINISTIC_MODE");
+  assert.equal(JSON.parse(mcpEmbedJson.content[0]!.text).missCode, "CAPN_NON_DETERMINISTIC_MODE");
+  const mcpEmbedPlain = await waymarkAskTool.handler({ question: "How does authentication work?", root: repo, plain: true });
+  assert.equal(mcpEmbedPlain.isError, true, "MCP waymark_ask (plain) must set isError: true on CAPN_NON_DETERMINISTIC_MODE");
 
   // Invalid facet rejects with INVALID_FACET
   await assert.rejects(

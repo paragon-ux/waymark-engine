@@ -246,7 +246,7 @@ The resident stdio MCP server (`waymark-mcp`) provides two modes of tool exposur
       "files": {
         "type": "array",
         "items": { "type": "string" },
-        "description": "Array of repository-relative backing file paths (required for active facets)."
+        "description": "Array of repository-relative backing file paths (at least one file is required for any facet, including not_applicable)."
       },
       "file": { "type": "string", "description": "Repository-relative file path (required for action='bust')." },
       "id": { "type": "string", "description": "Entry hex ID to delete (required for action='unchart')." },
@@ -300,7 +300,7 @@ Programmatic TypeScript / JavaScript consumers import directly from `"waymark-en
 | `initCapn(root, bin)` | `Function` | Semantic Memory | **Stable** | Programmatic initialization of deterministic BM25 lexical store. |
 | `publish(root, profile, bin, q, a, files)` | `Function` | Semantic Memory | **Stable** | Charts consensus memory programmatically. |
 | `discoverSymbolsInFile(root, path, lang)` | `Function` | AST Extractor | **Stable** | Parses source files into structured symbol records using tree-sitter. |
-| `verifyHop(root, hop)` | `Function` | Hop Integrity | **Stable** | Verifies structural hash integrity of saved hop records across file revisions. |
+| `verifyHop(root, hop, maxWindows)` | `Function` | Hop Integrity | **Stable** | Verifies structural hash integrity of saved hop records across file revisions. |
 | `detectAstIntent(question)` | `Function` | Intent Classifier | **Stable** | Classifies questions into AST structural categories (`callers`, `callees`, etc.). |
 | `detectLiteralIntent(question)` | `Function` | Intent Classifier | **Stable** | Classifies path/filename targets from natural language queries. |
 | `scoreFzf(pattern, target)` | `Function` | Fuzzy Matching | **Stable** | Embedded two-pass Smith-Waterman scoring algorithm returning raw score and match matrix. |

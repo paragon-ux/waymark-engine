@@ -240,7 +240,9 @@ export const waymarkAskTool: McpToolHandler = {
         includeDirs: rawIncludeDirs,
       });
 
-      const isError = result.status === "error";
+      const isError =
+        result.status === "error" ||
+        (result.status === "miss" && "missCode" in result && result.missCode === "CAPN_NON_DETERMINISTIC_MODE");
       if (plain) {
         return {
           content: [{ type: "text", text: renderPlainText(result) }],
@@ -318,7 +320,7 @@ export const waymarkMemoryTool: McpToolHandler = {
         files: {
           type: "array",
           items: { type: "string" },
-          description: "Array of repository-relative backing file paths (required for active facets).",
+          description: "Array of repository-relative backing file paths (at least one file is required for any facet, including not_applicable).",
         },
         file: {
           type: "string",
@@ -855,7 +857,7 @@ export const waymarkDaemonStatusTool: McpToolHandler = {
         },
         reload: {
           type: "boolean",
-          description: "Optional. If true, reloads and invalidates the in-memory PrefixTrie and path cache for the resident daemon.",
+          description: "Optional. If true, restarts the resident codedb AST client and invalidates the in-memory PrefixTrie, path, fuzzy, and tree-sitter caches for the resident daemon.",
         },
       },
     },

@@ -7,9 +7,10 @@ import test from "node:test";
 import { ask, assertLexicalStore, readCapnConfig } from "../src/capnAdapter.js";
 import { hasCodedb } from "./codedb.js";
 import { memoryStoreDir } from "../src/stateDir.js";
+import { mkTrackedTempDir } from "./tempDirs.js";
 
 function setupRepo(): string {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "waymark-lexical-"));
+  const repo = mkTrackedTempDir("waymark-lexical-");
   execFileSync("git", ["init", "-q", "-b", "main"], { cwd: repo });
   fs.mkdirSync(path.join(repo, "src"), { recursive: true });
   fs.writeFileSync(

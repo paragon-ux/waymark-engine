@@ -26,7 +26,7 @@ npm run verify   # build + full test suite (covers success AND fail-closed paths
 - **Fail-closed routing**: The router must miss cleanly (`status: "miss"`) rather than fabricate an answer or speculate.
 - **Explicit invocation**: External tools run via explicit argv arrays (no shell), bounded output, hard timeouts.
 - **Bundled dependencies**: The bundled `@paragon-ux/capn-hook` and `@paragon-ux/codedb-core` are the default tested executables.
-- **Waymark-owned state only**: Everything Waymark writes in a repository goes under `.waymark/` (with `.waymark/.gitignore` = `*`); daemon socket and PID record go to the OS temp dir. Never read or write `.capn/`, which belongs to upstream capn. `memoryStoreDir(root)` (`src/stateDir.ts`) is the only store location, and every capn call passes `--root`/`--store-dir` (`capnStoreArgs`). A capn without those flags is refused with `CAPN_STORE_DIR_UNSUPPORTED`. See `docs/memory-store.md`.
+- **Waymark-owned state only**: Everything Waymark writes in a repository goes under `.waymark/` (with `.waymark/.gitignore` = `*`); daemon socket, PID record, and registry live in a per-user `0700` runtime directory (`XDG_RUNTIME_DIR/waymark` or `os.tmpdir()/waymark-<uid>` on POSIX, Named Pipes on Windows). Never read or write `.capn/`, which belongs to upstream capn. `memoryStoreDir(root)` (`src/stateDir.ts`) is the only store location, and every capn call passes `--root`/`--store-dir` (`capnStoreArgs`). A capn without those flags is refused with `CAPN_STORE_DIR_UNSUPPORTED`. See `docs/memory-store.md`.
 - **CPU & Resource Protection**: `CODEDB_MAX_THREADS` automatically defaults to `max(1, cpus - 1)` so 1 logical core remains free for host responsiveness.
 
 ---
@@ -44,16 +44,13 @@ Add to `%APPDATA%\Claude\claude_desktop_config.json` (Windows) or `~/Library/App
   "mcpServers": {
     "waymark-engine": {
       "command": "npx",
-      "args": ["-y", "waymark-engine"],
-      "env": {
-        "CODEDB_ALLOW_TEMP": "1"
-      }
+      "args": ["-y", "waymark-engine"]
     }
   }
 }
 ```
 
-*(For local source development, replace `"command": "npx"` with `"command": "node"`, and `"args": ["/path/to/waymark-engine/dist/src/mcp/capnIndex.js"]`).*
+*(Waymark defaults `CODEDB_ALLOW_TEMP=1` internally so temporary repositories work out of the box; set `"env": { "CODEDB_ALLOW_TEMP": "0" }` to disallow indexing repositories under OS temp directories. For local source development, replace `"command": "npx"` with `"command": "node"`, and `"args": ["/path/to/waymark-engine/dist/src/mcp/capnIndex.js"]`.)*
 
 ### Important: Passing the Target Repository (`root`)
 When Claude Desktop runs the MCP server via stdio, the server defaults its working directory to the user's home or workspace. When investigating a repository located elsewhere on disk, always provide the optional `root` parameter in tool calls:
@@ -66,7 +63,7 @@ When Claude Desktop runs the MCP server via stdio, the server defaults its worki
 ```
 
 ### Available MCP Tools & Capabilities (Two-Verb Interface)
-* `waymark_ask` (alias: `capn_ask`): Consolidates 4-tier discovery, bounded call graphs (`depth`, `direction`, `exclude_tests`), batch symbol resolution (`symbols`), single-file AST outlines (`path`, `outline`, `language`), and Semantic Repo Map facet lookups (`facet`). Supports `tier` (`"auto"|"ast"|"path"|"fuzzy"|"capn"`), `auto_resolve`, `timing`, `plain`, and `daemon`.
+* `waymark_ask`: Consolidates 4-tier discovery, bounded call graphs (`depth`, `direction`, `exclude_tests`), batch symbol resolution (`symbols`), single-file AST outlines (`path`, `outline`, `language`), and Semantic Repo Map facet lookups (`facet`). Supports `tier` (`"auto"|"ast"|"path"|"fuzzy"|"capn"`), `auto_resolve`, `timing`, `plain`, `dev`, `include_dirs`, and `daemon`.
 * `waymark_memory`: Consolidates consensus memory and Semantic Repo Map operations via `action` (`"bootstrap"`, `"status"`, `"chart"`, `"heal"`, `"export"`, `"bust"`, `"prune"`, `"list"`, `"unchart"`, `"init"`, `"context"`, `"evict"`, `"close"`). Supports `plain: true` across all actions.
 * *(Legacy verbose tools `waymark_discover_symbols`, `waymark_chart`, `waymark_unchart`, `waymark_bust`, `waymark_prune`, `waymark_list`, `waymark_context`, `waymark_init`, `waymark_map_status`, and `waymark_daemon_status` remain callable and can be listed via `WAYMARK_MCP_VERBOSE=1`)*.
 * Prompts: `explore-subsystem` (`query`, `root`), `architectural-map` (`topic`, `root`), `bootstrap-semantic-map` (`root`).

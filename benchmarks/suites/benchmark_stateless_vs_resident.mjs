@@ -1,15 +1,58 @@
 import fs from "node:fs";
 import path from "node:path";
 import {
+  WAYMARK_INIT,
   WAYMARK_ASK,
   WAYMARK_CHART,
   WAYMARK_BUST,
-  GRAFANA_ROOT,
+  TARGET_ROOT,
+  OUT_DIR,
   runWaymark,
 } from "./benchmark_runner.mjs";
-import { WaymarkDaemon, stopDaemon } from "../../../dist/src/daemon.js";
+import { WaymarkDaemon, stopDaemon } from "../../dist/src/daemon.js";
+import { collectRepoPaths } from "../../dist/src/discoveryRouter.js";
 
-const OUT_PATH = path.resolve("./scratch/benchmark_results_post_hardening/stateless_vs_resident_comparison.json");
+const OUT_PATH = path.join(OUT_DIR, "stateless_vs_resident_comparison.json");
+
+function buildBenchmarkOps(targetRoot) {
+  if (fs.existsSync(path.join(targetRoot, "embed.go"))) {
+    return {
+      chartFile: "embed.go",
+      ops: [
+        { label: "Tier 1: Full Structural Scan", args: ["Architecture"] },
+        { label: "Tier 1: Exact Symbol Query", args: ["Where is SaveDashboardDiff declared?"] },
+        { label: "Tier 2: Literal Path Lookup", args: ["embed.go"] },
+        { label: "Tier 3: Deterministic Fuzzy", args: ["DataSourc", "-t", "fuzzy"] },
+        { label: "Tier 4: Charted Memory Recall", args: ["Perf comparison fact", "--auto-resolve"] },
+      ],
+    };
+  }
+
+  const candidateFile = ["package.json", "README.md", "src/daemon.ts"].find((rel) =>
+    fs.existsSync(path.join(targetRoot, rel))
+  );
+  const paths = collectRepoPaths(targetRoot);
+  const chartFile = candidateFile || paths[0] || "README.md";
+  const isWaymarkRepo = fs.existsSync(path.join(targetRoot, "src", "daemon.ts"));
+  return {
+    chartFile,
+    ops: isWaymarkRepo
+      ? [
+          { label: "Tier 1: Full Structural Scan", args: ["Who calls verifyHop?"] },
+          { label: "Tier 1: Exact Symbol Query", args: ["Where is WaymarkDaemon declared?"] },
+          { label: "Tier 2: Literal Path Lookup", args: ["src/daemon.ts"] },
+          { label: "Tier 3: Deterministic Fuzzy", args: ["WaymrkDaemon", "-t", "fuzzy"] },
+          { label: "Tier 4: Charted Memory Recall", args: ["Perf comparison fact", "--auto-resolve"] },
+        ]
+      : [
+          { label: "Tier 1: Full Structural Scan", args: ["main"] },
+          { label: "Tier 1: Exact Symbol Query", args: ["Where is main declared?"] },
+          { label: "Tier 2: Literal Path Lookup", args: [chartFile] },
+          { label: "Tier 3: Deterministic Fuzzy", args: ["init", "-t", "fuzzy"] },
+          { label: "Tier 4: Charted Memory Recall", args: ["Perf comparison fact", "--auto-resolve"] },
+        ],
+  };
+}
 
 function parseTimingFromOutput(stdout) {
   const match = stdout.match(/\[timing\]\s*(.*)/i);
@@ -29,14 +72,14 @@ async function measureOperation(label, args, isDaemonActive) {
   console.log(`  [${isDaemonActive ? "RESIDENT" : "STATELESS"}] Measuring "${label}"...`);
 
   // First run (cold for this mode)
-  const coldRes = await runWaymark(WAYMARK_ASK, [...args, "-b", "--plain"], GRAFANA_ROOT);
+  const coldRes = await runWaymark(WAYMARK_ASK, [...args, "-b", "--plain"], TARGET_ROOT);
   const coldTimings = parseTimingFromOutput(coldRes.stdout);
 
   // 3 warm iterations
   const warmSamples = [];
   const warmInternalTimings = [];
   for (let i = 0; i < 3; i++) {
-    const res = await runWaymark(WAYMARK_ASK, [...args, "-b", "--plain"], GRAFANA_ROOT);
+    const res = await runWaymark(WAYMARK_ASK, [...args, "-b", "--plain"], TARGET_ROOT);
     warmSamples.push(res.durationMs);
     warmInternalTimings.push(parseTimingFromOutput(res.stdout));
   }
@@ -70,64 +113,62 @@ async function measureOperation(label, args, isDaemonActive) {
 }
 
 async function runComparison() {
+  const repoFilesCount = collectRepoPaths(TARGET_ROOT).length;
+  const { chartFile, ops } = buildBenchmarkOps(TARGET_ROOT);
+
   console.log("================================================================================");
   console.log("        WAYMARK ENGINE: STATELESS CLI vs RESIDENT DAEMON BENCHMARK              ");
-  console.log(`Target Repository: ${GRAFANA_ROOT} (21,144 files, ~347,845 AST symbols)`);
+  console.log(`Target Repository: ${TARGET_ROOT} (${repoFilesCount} indexed files)`);
   console.log("================================================================================\n");
 
   // 1. Ensure any lingering daemons are stopped first
   console.log("Ensuring clean baseline (stopping any active daemons)...");
-  await stopDaemon(GRAFANA_ROOT, { force: true });
-  await new Promise((r) => setTimeout(r, 500));
+  await stopDaemon(TARGET_ROOT, { force: true });
+  await new Promise((r) => setTimeout(r, 300));
 
-  // Setup charted fact for Tier 4
+  // Ensure lexical store exists and setup charted fact for Tier 4
   console.log("Setting up Tier 4 memory fact...");
+  await runWaymark(WAYMARK_INIT, [], TARGET_ROOT);
   await runWaymark(WAYMARK_CHART, [
     "--question", "Perf comparison fact",
     "--answer", "Architecture verification fact for comparative benchmarking",
-    "--files", "embed.go",
-  ], GRAFANA_ROOT);
+    "--files", chartFile,
+  ], TARGET_ROOT);
 
-  const ops = [
-    { label: "Tier 1: Full Structural Scan", args: ["Architecture"] },
-    { label: "Tier 1: Exact Symbol Query", args: ["Where is SaveDashboardDiff declared?"] },
-    { label: "Tier 2: Literal Path Lookup", args: ["embed.go"] },
-    { label: "Tier 3: Deterministic Fuzzy", args: ["DataSourc", "-t", "fuzzy"] },
-    { label: "Tier 4: Charted Memory Recall", args: ["Perf comparison fact", "--auto-resolve"] },
-  ];
+  const daemon = new WaymarkDaemon(TARGET_ROOT, 0); // 0 = persistent during benchmark
+  let statelessResults = [];
+  let residentResults = [];
+  try {
+    console.log("\n--- MODE A: STATELESS DEFAULT CLI (Zero Persistent Daemon) ---");
+    for (const op of ops) {
+      const result = await measureOperation(op.label, op.args, false);
+      statelessResults.push(result);
+    }
 
-  console.log("\n--- MODE A: STATELESS DEFAULT CLI (Zero Persistent Daemon) ---");
-  const statelessResults = [];
-  for (const op of ops) {
-    const result = await measureOperation(op.label, op.args, false);
-    statelessResults.push(result);
+    console.log("\n--- STARTING PERSISTENT RESIDENT DAEMON ---");
+    await daemon.start();
+    console.log("Resident daemon active and listening on IPC socket/pipe.\n");
+
+    console.log("--- MODE B: PERSISTENT RESIDENT DAEMON / MCP SESSION ---");
+    for (const op of ops) {
+      const result = await measureOperation(op.label, op.args, true);
+      residentResults.push(result);
+    }
+  } finally {
+    console.log("\n--- STOPPING RESIDENT DAEMON ---");
+    daemon.stop();
+    await stopDaemon(TARGET_ROOT, { force: true });
+    console.log("Daemon stopped cleanly. Verifying zero background processes.");
+    // Cleanup charted fact
+    await runWaymark(WAYMARK_BUST, [chartFile], TARGET_ROOT);
   }
-
-  console.log("\n--- STARTING PERSISTENT RESIDENT DAEMON ---");
-  const daemon = new WaymarkDaemon(GRAFANA_ROOT, 0); // 0 = persistent during benchmark
-  await daemon.start();
-  console.log("Resident daemon active and listening on IPC socket/pipe.\n");
-
-  console.log("--- MODE B: PERSISTENT RESIDENT DAEMON / MCP SESSION ---");
-  const residentResults = [];
-  for (const op of ops) {
-    const result = await measureOperation(op.label, op.args, true);
-    residentResults.push(result);
-  }
-
-  console.log("\n--- STOPPING RESIDENT DAEMON ---");
-  daemon.stop();
-  await stopDaemon(GRAFANA_ROOT, { force: true });
-  console.log("Daemon stopped cleanly. Verifying zero background processes.");
-
-  // Cleanup charted fact
-  await runWaymark(WAYMARK_BUST, ["embed.go"], GRAFANA_ROOT);
 
   // Compile comparison data
   const comparison = ops.map((op, idx) => {
     const st = statelessResults[idx];
     const res = residentResults[idx];
-    const cliSpeedup = st.warmMedianCliMs / res.warmMedianCliMs;
+    const cliSpeedup = res.warmMedianCliMs > 0 ? st.warmMedianCliMs / res.warmMedianCliMs : 0;
+    const warmRatio = st.coldCliMs > 0 ? (res.warmMedianCliMs / st.coldCliMs) * 100 : 0;
 
     return {
       operation: op.label,
@@ -142,15 +183,15 @@ async function runComparison() {
         warmInternalMs: res.warmMedianInternalTimings.ast ?? res.warmMedianInternalTimings.path ?? res.warmMedianInternalTimings.fuzzy ?? res.warmMedianInternalTimings.capn ?? 0,
       },
       cliSpeedupMultiplier: parseFloat(cliSpeedup.toFixed(2)),
-      warmRatioPercent: parseFloat(((res.warmMedianCliMs / st.coldCliMs) * 100).toFixed(2)),
+      warmRatioPercent: parseFloat(warmRatio.toFixed(2)),
     };
   });
 
   const report = {
     benchmark: "stateless_vs_resident_comparison",
     timestamp: new Date().toISOString(),
-    repository: GRAFANA_ROOT,
-    filesCount: 21144,
+    repository: TARGET_ROOT,
+    filesCount: repoFilesCount,
     comparison,
     details: {
       stateless: statelessResults,

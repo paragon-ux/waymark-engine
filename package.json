@@ -1,6 +1,6 @@
 {
   "name": "waymark-engine",
-  "version": "4.1.0",
+  "version": "4.1.1",
   "description": "Sub-millisecond AST structural & lexical BM25 code intelligence for AI coding agents. Ask your codebase a question, get exact file + symbol + line span in milliseconds.",
   "type": "module",
   "main": "./dist/src/index.js",
@@ -32,6 +32,7 @@
   },
   "files": [
     "dist/src",
+    "!dist/src/**/*.map",
     "bin",
     "scripts",
     "README.md",
@@ -63,8 +64,7 @@
   ],
   "license": "MIT",
   "scripts": {
-    "postinstall": "node scripts/patch-web-tree-sitter.cjs",
-    "build": "node scripts/patch-web-tree-sitter.cjs --strict && tsc -p tsconfig.json && node -e \"fs.copyFileSync('src/viewer.html', 'dist/src/viewer.html')\"",
+    "build": "node scripts/patch-web-tree-sitter.cjs --check && tsc -p tsconfig.json && node -e \"fs.copyFileSync('src/viewer.html', 'dist/src/viewer.html')\"",
     "test": "npm run build && node --test \"dist/test/**/*.test.js\"",
     "verify": "npm run build && node --test \"dist/test/**/*.test.js\"",
     "test:prompts": "npm run build && node dist/src/cli.js repl --manifest docs/prompts/CATALOGUE_MANIFEST.jsonl",
@@ -79,7 +79,7 @@
   "dependencies": {
     "@paragon-ux/capn-hook": "^2.0.0",
     "@paragon-ux/codedb-core": "^2.1.1",
-    "markdown-it": "^15.0.2",
+    "markdown-it": "^15.0.3",
     "tree-sitter-wasms": "0.1.13",
     "web-tree-sitter": "0.24.0"
   }

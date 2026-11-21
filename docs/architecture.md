@@ -70,7 +70,7 @@ Consensus memories are structured across 5 distinct domains:
 | `data_state` | State stores, caching, migrations | "Where is the in-memory trie cache held?" |
 | `boundaries` | IPC protocols, network APIs, CLI/MCP surfaces | "What protocol connects the REPL to the daemon?" |
 | `invariants` | Security rules, fail-closed guards, constraints | "What prevents non-deterministic recall?" |
-| `failure` | Error handling, fallback fallbacks, timeouts | "How does the engine handle missing tree-sitter grammars?" |
+| `failure` | Error handling, fallback chains, timeouts | "How does the engine handle missing tree-sitter grammars?" |
 
 ---
 

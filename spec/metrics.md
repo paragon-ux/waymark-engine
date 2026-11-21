@@ -52,8 +52,8 @@ The following matrix compares all four discovery tiers and the Discovery Junctio
 
 ### 3.1 Token Economy Optimization
 Waymark Engine prioritizes LLM agent token limits by designing outputs around concise, single-line declarations:
-- **Plain Text Mode (`-p`, `--plain`)**: Default format designed for agent tool ingestion. Omits verbose envelope metadata, nested objects, and redundant labels.
-- **Structured JSON Mode (`-j`, `--json`)**: Full programmatic payload for machine consumption or UI visualization.
+- **Structured JSON Mode (`-j`, `--json`)**: Default CLI output format providing full machine-readable envelopes for programmatic pipelines and MCP parity.
+- **Plain Text Mode (`-p`, `--plain`)**: Compact opt-in format designed for agent tool ingestion (~16–38 tokens). Omits verbose envelope metadata, nested objects, and redundant labels.
 
 ### 3.2 Confidence Calibration
 - **Tier 1 & Tier 2 (`exact`)**: 1.0 confidence. Backed by verified AST nodes or existing filesystem inodes.

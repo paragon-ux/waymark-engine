@@ -41,8 +41,14 @@ jobs:
           test "${package_version}" = "${tag_version}"
       - name: Install from lockfile
         run: npm ci
+      - name: Audit runtime dependencies
+        run: npm audit --audit-level=high
       - name: Verify build and tests
         run: npm run verify
+        env:
+          CODEDB_ALLOW_TEMP: "1"
+      - name: Run 105-prompt evaluation battery
+        run: npm run test:prompts
         env:
           CODEDB_ALLOW_TEMP: "1"
 
@@ -110,4 +116,4 @@ jobs:
           if [ -n "${NPM_TOKEN_SECRET}" ]; then
             export NODE_AUTH_TOKEN="${NPM_TOKEN_SECRET}"
           fi
-          npm publish --access public --provenance
+          npm publish "${{ steps.pack.outputs.tarball }}" --access public --provenance

@@ -1,5 +1,7 @@
 import path from "node:path";
 import fs from "node:fs";
+import crypto from "node:crypto";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { createRequire } from "node:module";
@@ -8,7 +10,7 @@ import { collectRepoPaths, detectAstIntent, detectLiteralIntent, matchLiteralPat
 import { queryStructural } from "./codedbAdapter.js";
 import { resolveWindowsExecutable } from "./executable.js";
 import { normalizeRelativePath, resolveRepositoryFile } from "./paths.js";
-import { ensureStateDir, memoryStoreDir, LEGACY_STORE_DIR_NAME, MEMORY_STORE_LABEL } from "./stateDir.js";
+import { ensureStateDir, memoryStoreDir, stateDir, LEGACY_STORE_DIR_NAME, MEMORY_STORE_LABEL } from "./stateDir.js";
 import { entryFreshness, readChartedEntries, staleChartedEntries } from "./memoryEntries.js";
 
 export { resolveWindowsExecutable };
@@ -37,11 +39,162 @@ function uniqueFiles(files: readonly string[]): string[] {
   return selected;
 }
 
-function quoteCmdArgument(value: string): string {
-  if (value.length === 0) return '""';
-  if (/[\r\n%"]/u.test(value)) throw new WaymarkError("CAPN_UNSAFE_ARGUMENT", "Capn batch adapters reject percent signs, quotes, and newlines; use a direct executable for those values");
-  if (/^[A-Za-z0-9_./\\:@+=,-]+$/u.test(value)) return value;
-  return `"${value.replace(/["^&|<>]/gu, "^$&")}"`;
+const inProcessStoreQueues = new Map<string, Promise<unknown>>();
+const activeStoreLocks = new AsyncLocalStorage<Set<string>>();
+const STORE_LOCK_STALE_MS = 30_000;
+const STORE_LOCK_TIMEOUT_MS = 15_000;
+
+function isPidAlive(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+function tryClearStaleLock(lockPath: string): boolean {
+  try {
+    const stat = fs.statSync(lockPath);
+    const ageMs = Date.now() - stat.mtimeMs;
+    const raw = fs.readFileSync(lockPath, "utf8");
+    let stale = ageMs > STORE_LOCK_STALE_MS;
+    if (!stale && raw.trim().length > 0) {
+      try {
+        const parsed = JSON.parse(raw) as { pid?: unknown };
+        if (typeof parsed.pid === "number" && parsed.pid !== process.pid && !isPidAlive(parsed.pid)) {
+          stale = true;
+        }
+      } catch {
+        // Lock file may still be mid-write by a live peer; wait until age exceeds stale threshold.
+      }
+    }
+    if (!stale) return false;
+    // Re-check content/inode right before reclaiming so a freshly-created peer lock is not removed.
+    const recheckStat = fs.statSync(lockPath);
+    const recheckRaw = fs.readFileSync(lockPath, "utf8");
+    if (recheckStat.mtimeMs !== stat.mtimeMs || recheckRaw !== raw) {
+      return false;
+    }
+    const staleTmp = `${lockPath}.stale.${process.pid}.${crypto.randomBytes(4).toString("hex")}`;
+    fs.renameSync(lockPath, staleTmp);
+    try {
+      fs.unlinkSync(staleTmp);
+    } catch {
+      // ignore
+    }
+    return true;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return true;
+  }
+  return false;
+}
+
+/**
+ * Serialize operations against `.waymark/memory` across both concurrent async
+ * calls in the same process and parallel CLI/MCP subprocesses via an atomic O_EXCL lockfile.
+ * Re-entrant within the same async execution context via AsyncLocalStorage.
+ */
+export async function withMemoryStoreLock<T>(root: string, fn: () => Promise<T>): Promise<T> {
+  const resolved = capnRoot(root);
+  const lockKey = process.platform === "win32" ? resolved.toLowerCase() : resolved;
+  const held = activeStoreLocks.getStore();
+  if (held?.has(lockKey)) {
+    return await fn();
+  }
+
+  const prev = inProcessStoreQueues.get(lockKey) ?? Promise.resolve();
+  let releaseQueue!: () => void;
+  const currentTurn = new Promise<void>((resolve) => {
+    releaseQueue = resolve;
+  });
+  const chained = prev.then(() => currentTurn, () => currentTurn);
+  inProcessStoreQueues.set(lockKey, chained);
+
+  await prev.catch(() => undefined);
+
+  const lockPath = path.join(stateDir(resolved), "memory.lock");
+  const ownerToken = crypto.randomBytes(8).toString("hex");
+  let acquired = false;
+  const deadline = Date.now() + STORE_LOCK_TIMEOUT_MS;
+  try {
+    ensureStateDir(resolved);
+    while (!acquired) {
+      try {
+        const fd = fs.openSync(lockPath, fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY, 0o600);
+        try {
+          fs.writeFileSync(fd, JSON.stringify({ pid: process.pid, token: ownerToken, createdAt: Date.now() }), "utf8");
+        } finally {
+          fs.closeSync(fd);
+        }
+        acquired = true;
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code;
+        if (code !== "EEXIST") throw err;
+        if (tryClearStaleLock(lockPath)) continue;
+        if (Date.now() >= deadline) {
+          throw new WaymarkError("CAPN_LOCK_TIMEOUT", `Timed out waiting for memory store lock: ${lockPath}`, 2);
+        }
+        await new Promise((resolve) => setTimeout(resolve, 15 + Math.floor(Math.random() * 25)));
+      }
+    }
+
+    const nextHeld = new Set(held);
+    nextHeld.add(lockKey);
+    return await activeStoreLocks.run(nextHeld, fn);
+  } finally {
+    if (acquired) {
+      try {
+        const current = JSON.parse(fs.readFileSync(lockPath, "utf8")) as { token?: unknown };
+        if (current.token === ownerToken) {
+          fs.unlinkSync(lockPath);
+        }
+      } catch {
+        // ignore if already removed or unreadable
+      }
+    }
+    releaseQueue();
+    if (inProcessStoreQueues.get(lockKey) === chained) {
+      inProcessStoreQueues.delete(lockKey);
+    }
+  }
+}
+
+async function withMemoryStoreLockIfWritable<T>(root: string, fn: () => Promise<T>): Promise<T> {
+  if (process.env.WAYMARK_READ_ONLY === "1") return await fn();
+  let entered = false;
+  try {
+    return await withMemoryStoreLock(root, async () => {
+      entered = true;
+      return await fn();
+    });
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException)?.code;
+    if (!entered && (code === "EACCES" || code === "EROFS" || code === "EPERM")) {
+      return await fn();
+    }
+    throw err;
+  }
+}
+
+export interface ResolvedCapnCommand {
+  file: string;
+  prefix: string[];
+  viaCmdShim: boolean;
+}
+
+export function assertSupportedCapnCommand(command: ResolvedCapnCommand, platform: string = process.platform): void {
+  if (command.file.includes("\0") || command.prefix.some((p) => p.includes("\0"))) {
+    throw new WaymarkError("CAPN_UNSAFE_ARGUMENT", "Capn executable path and arguments must not contain null bytes", 2);
+  }
+  if (platform === "win32" && command.viaCmdShim) {
+    throw new WaymarkError(
+      "CAPN_UNSUPPORTED_SHIM",
+      "Windows .cmd/.bat capn shims are unsupported; configure WAYMARK_CAPN_EXECUTABLE with a .js/.mjs/.cjs entry or native .exe to avoid shell execution.",
+      2,
+    );
+  }
 }
 
 /**
@@ -57,12 +210,6 @@ function bundledCapnEntry(): string | null {
   } catch {
     return null;
   }
-}
-
-interface ResolvedCapnCommand {
-  file: string;
-  prefix: string[];
-  viaCmdShim: boolean;
 }
 
 /**
@@ -131,19 +278,13 @@ function storeDirUnsupported(): WaymarkError {
 }
 
 async function execute(root: string, command: ResolvedCapnCommand, args: readonly string[]): Promise<{ stdout: string; stderr: string }> {
+  assertSupportedCapnCommand(command);
   const fullArgs = [...command.prefix, ...capnStoreArgs(root), ...args];
+  if (fullArgs.some((arg) => arg.includes("\0"))) {
+    throw new WaymarkError("CAPN_UNSAFE_ARGUMENT", "Capn arguments must not contain null bytes", 2);
+  }
   const cwd = capnRoot(root);
   try {
-    if (process.platform === "win32" && command.viaCmdShim) {
-      const commandLine = [command.file, ...fullArgs].map(quoteCmdArgument).join(" ");
-      return await execFileAsync(process.env.ComSpec || "cmd.exe", ["/d", "/v:off", "/s", "/c", commandLine], {
-        cwd,
-        windowsHide: true,
-        shell: false,
-        timeout: 15_000,
-        maxBuffer: 64 * 1024,
-      });
-    }
     return await execFileAsync(command.file, fullArgs, {
       cwd,
       windowsHide: true,
@@ -159,7 +300,9 @@ async function execute(root: string, command: ResolvedCapnCommand, args: readonl
 
 export function capnChartArgs(question: string, answer: string, files: readonly string[]): string[] {
   // capn-hook >= 0.2: the answer moved from a positional to --details.
-  return ["chart", question, ...uniqueFiles(files).flatMap((file) => ["--files", file]), "--details", answer];
+  // Use `--flag=value` and `--` before positional question so values beginning with `-`
+  // (e.g., markdown bullets like "- Item") are never rejected by Node's util.parseArgs in capn-hook.
+  return ["chart", ...uniqueFiles(files).map((file) => `--files=${file}`), `--details=${answer}`, "--", question];
 }
 
 function capnConfigPath(root: string): string {
@@ -207,6 +350,18 @@ export function assertLexicalStore(root: string): void {
   }
 }
 
+/** Fail closed if an existing store is configured in non-deterministic embedding mode. */
+function assertNoNonDeterministicStore(root: string): void {
+  const config = readCapnConfig(root);
+  if (config !== null && config.embedding !== false) {
+    throw new WaymarkError(
+      "CAPN_NON_DETERMINISTIC_MODE",
+      "Capn store is in embedding (QMD hybrid) mode. Re-initialize with the lexical-only @paragon-ux/capn-hook — the engine requires deterministic lexical recall.",
+      2,
+    );
+  }
+}
+
 /**
  * Chart a question + answer (+ optional file references) into Capn memory.
  * Profile "none" disables publication (deterministic no-op for tests and
@@ -226,28 +381,30 @@ export async function publish(
   for (const file of selectedFiles) resolveRepositoryFile(root, file);
   if (profile === "none") return { published: false, adapter: profile, output: "publication disabled" };
 
-  if (readCapnConfig(root) === null) {
-    const initialized = await initCapn(root, executable);
-    if (!initialized.ok) return { published: false, adapter: profile, output: "", error: String(initialized.error) };
-  }
-  assertLexicalStore(root);
-  const args = capnChartArgs(question, answer, selectedFiles);
-  try {
-    const result = await execute(root, resolveCapnCommand(executable), args);
-    return { published: true, adapter: profile, output: digestOutput(result.stdout || result.stderr || "capn chart completed") };
-  } catch (error) {
-    if (error instanceof WaymarkError) {
-      return { published: false, adapter: profile, output: "", error: `${error.code}: ${error.message}` };
+  return await withMemoryStoreLock(root, async () => {
+    if (readCapnConfig(root) === null) {
+      const initialized = await initCapn(root, executable);
+      if (!initialized.ok) return { published: false, adapter: profile, output: "", error: String(initialized.error) };
     }
-    const candidate = error as { message?: string; stdout?: string; stderr?: string; code?: string | number };
-    const detail = candidate.stderr || candidate.stdout || candidate.message || "Capn publication failed";
-    return {
-      published: false,
-      adapter: profile,
-      output: "",
-      error: digestOutput(`${candidate.code ?? "CAPN_ERROR"}: ${detail}`),
-    };
-  }
+    assertLexicalStore(root);
+    const args = capnChartArgs(question, answer, selectedFiles);
+    try {
+      const result = await execute(root, resolveCapnCommand(executable), args);
+      return { published: true, adapter: profile, output: digestOutput(result.stdout || result.stderr || "capn chart completed") };
+    } catch (error) {
+      if (error instanceof WaymarkError) {
+        return { published: false, adapter: profile, output: "", error: `${error.code}: ${error.message}` };
+      }
+      const candidate = error as { message?: string; stdout?: string; stderr?: string; code?: string | number };
+      const detail = candidate.stderr || candidate.stdout || candidate.message || "Capn publication failed";
+      return {
+        published: false,
+        adapter: profile,
+        output: "",
+        error: digestOutput(`${candidate.code ?? "CAPN_ERROR"}: ${detail}`),
+      };
+    }
+  });
 }
 
 /**
@@ -330,43 +487,45 @@ async function queryCapnMemory(
       note: "Capn store is in embedding mode. Re-initialize with deterministic lexical mode.",
     };
   }
-  const exactHit = lookupExactCapnEntry(root, question);
-  if (exactHit !== null) {
-    return { hit: true, result: exactHit };
-  }
-  // `capn ask` deletes every entry whose backing files changed before it answers; name them so
-  // the deletion is never silent.
-  const stale = describeStaleEntries(staleChartedEntries(root));
-  const prunedFields = stale.length > 0 ? { pruned: stale } : {};
-  try {
-    const result = await execute(root, resolveCapnCommand(executable), ["ask", question]);
-    const stdout = (result.stdout || "").trim();
-    if (stdout && !stdout.startsWith("No charted answer.")) {
-      const candidates = stdout.split(/\r?\n/u).flatMap((line) => {
-        try {
-          const value: unknown = JSON.parse(line);
-          return value && typeof value === "object" && !Array.isArray(value) ? [value as Record<string, unknown>] : [];
-        } catch { return []; }
-      });
-      const relevant = candidates.find((candidate) => isRelevantMemoryCandidate(question, candidate));
-      if (relevant) return { hit: true, result: relevant, ...prunedFields };
+  return await withMemoryStoreLockIfWritable(root, async () => {
+    const exactHit = lookupExactCapnEntry(root, question);
+    if (exactHit !== null) {
+      return { hit: true, result: exactHit };
     }
-    return { hit: false, result: null, ...prunedFields };
-  } catch (error) {
-    if (error instanceof WaymarkError) {
-      return { hit: false, result: null, error: `${error.code}: ${error.message}` };
-    }
-    const candidate = error as { message?: string; stderr?: string; stdout?: string; code?: string | number };
-    const combined = `${candidate.stdout || ""}\n${candidate.stderr || ""}`;
-    if (combined.includes("No charted answer.")) {
+    // `capn ask` deletes every entry whose backing files changed before it answers; name them so
+    // the deletion is never silent. Serializing under the store lock prevents SQLite rebuild races.
+    const stale = describeStaleEntries(staleChartedEntries(root));
+    const prunedFields = stale.length > 0 ? { pruned: stale } : {};
+    try {
+      const result = await execute(root, resolveCapnCommand(executable), ["ask", question]);
+      const stdout = (result.stdout || "").trim();
+      if (stdout && !stdout.startsWith("No charted answer.")) {
+        const candidates = stdout.split(/\r?\n/u).flatMap((line) => {
+          try {
+            const value: unknown = JSON.parse(line);
+            return value && typeof value === "object" && !Array.isArray(value) ? [value as Record<string, unknown>] : [];
+          } catch { return []; }
+        });
+        const relevant = candidates.find((candidate) => isRelevantMemoryCandidate(question, candidate));
+        if (relevant) return { hit: true, result: relevant, ...prunedFields };
+      }
       return { hit: false, result: null, ...prunedFields };
+    } catch (error) {
+      if (error instanceof WaymarkError) {
+        return { hit: false, result: null, reason: error.code, error: `${error.code}: ${error.message}` };
+      }
+      const candidate = error as { message?: string; stderr?: string; stdout?: string; code?: string | number };
+      const combined = `${candidate.stdout || ""}\n${candidate.stderr || ""}`;
+      if (combined.includes("No charted answer.")) {
+        return { hit: false, result: null, ...prunedFields };
+      }
+      return {
+        hit: false,
+        result: null,
+        error: digestOutput(`${candidate.code ?? "CAPN_ERROR"}: ${candidate.stderr || candidate.message || "Capn ask failed"}`),
+      };
     }
-    return {
-      hit: false,
-      result: null,
-      error: digestOutput(`${candidate.code ?? "CAPN_ERROR"}: ${candidate.stderr || candidate.message || "Capn ask failed"}`),
-    };
-  }
+  });
 }
 
 /**
@@ -457,34 +616,43 @@ async function runCapnSimple(root: string, executable: string, args: readonly st
 
 /** Delete one chart entry by id. */
 export async function unchart(root: string, executable: string, id: string, ifExists: boolean = false): Promise<Record<string, unknown>> {
-  const result = await runCapnSimple(root, executable, ["unchart", id]);
-  if (!result.ok && ifExists && (result.output.toLowerCase().includes("unknown id") || result.output.toLowerCase().includes("not found"))) {
-    return {
-      waymark: 1,
-      kind: "unchart",
-      ok: true,
-      exitCode: 0,
-      output: `Entry ${id} not found (already removed or invalid).`,
-    };
-  }
-  return { waymark: 1, kind: "unchart", ok: result.ok, exitCode: result.exitCode, ...(result.ok ? { output: result.output } : { error: result.output }) };
+  assertNoNonDeterministicStore(root);
+  return await withMemoryStoreLock(root, async () => {
+    const result = await runCapnSimple(root, executable, ["unchart", id]);
+    if (!result.ok && ifExists && (result.output.toLowerCase().includes("unknown id") || result.output.toLowerCase().includes("not found"))) {
+      return {
+        waymark: 1,
+        kind: "unchart",
+        ok: true,
+        exitCode: 0,
+        output: `Entry ${id} not found (already removed or invalid).`,
+      };
+    }
+    return { waymark: 1, kind: "unchart", ok: result.ok, exitCode: result.exitCode, ...(result.ok ? { output: result.output } : { error: result.output }) };
+  });
 }
 
 /** Delete every chart entry backed by one file. */
 export async function bust(root: string, executable: string, file: string): Promise<Record<string, unknown>> {
+  assertNoNonDeterministicStore(root);
   const normalized = normalizeRelativePath(normalizeFilePath(file), root);
-  const result = await runCapnSimple(root, executable, ["bust", normalized]);
-  return { waymark: 1, kind: "bust", ok: result.ok, exitCode: result.exitCode, ...(result.ok ? { output: result.output } : { error: result.output }) };
+  return await withMemoryStoreLock(root, async () => {
+    const result = await runCapnSimple(root, executable, ["bust", normalized]);
+    return { waymark: 1, kind: "bust", ok: result.ok, exitCode: result.exitCode, ...(result.ok ? { output: result.output } : { error: result.output }) };
+  });
 }
 
 /** Delete every chart entry whose backing files changed or vanished. */
-export async function prune(root: string, executable: string): Promise<Record<string, unknown>> {
-  const result = await runCapnSimple(root, executable, ["prune"]);
-  return { waymark: 1, kind: "prune", ok: result.ok, exitCode: result.exitCode, ...(result.ok ? { output: result.output } : { error: result.output }) };
+export async function prune(root: string, executable = ""): Promise<Record<string, unknown>> {
+  assertNoNonDeterministicStore(root);
+  return await withMemoryStoreLock(root, async () => {
+    const result = await runCapnSimple(root, executable, ["prune"]);
+    return { waymark: 1, kind: "prune", ok: result.ok, exitCode: result.exitCode, ...(result.ok ? { output: result.output } : { error: result.output }) };
+  });
 }
 
 /** List charted entries, human-readable. */
-export async function listEntries(root: string, executable: string): Promise<Record<string, unknown>> {
+export async function listEntries(root: string, executable = ""): Promise<Record<string, unknown>> {
   if (readCapnConfig(root) === null) {
     return {
       waymark: 1,
@@ -496,41 +664,45 @@ export async function listEntries(root: string, executable: string): Promise<Rec
       output: `No charted entries (store uninitialized). Run waymark_memory(action: "init") or chart an entry with waymark_memory(action: "chart") (CLI: waymark memory init / waymark memory chart) to create consensus memory.`,
     };
   }
+  assertNoNonDeterministicStore(root);
   // `capn list` first deletes every entry whose backing files changed; report which ones.
-  const stale = describeStaleEntries(staleChartedEntries(root));
-  const result = await runCapnSimple(root, executable, ["list"]);
-  const notice = stale.length > 0 ? `Pruned ${stale.length} stale entr${stale.length === 1 ? "y" : "ies"} whose backing files changed or vanished:\n${stale.map((line) => `  - ${line}`).join("\n")}\n\n` : "";
-  return {
-    waymark: 1,
-    kind: "list",
-    ok: result.ok,
-    exitCode: result.exitCode,
-    ...(stale.length > 0 ? { pruned: stale } : {}),
-    ...(result.ok ? { output: `${notice}${result.output}` } : { error: result.output }),
-  };
+  // Serialize under the store lock so concurrent list/ask/chart never race SQLite rebuilds.
+  return await withMemoryStoreLockIfWritable(root, async () => {
+    const stale = describeStaleEntries(staleChartedEntries(root));
+    const result = await runCapnSimple(root, executable, ["list"]);
+    const notice = stale.length > 0 ? `Pruned ${stale.length} stale entr${stale.length === 1 ? "y" : "ies"} whose backing files changed or vanished:\n${stale.map((line) => `  - ${line}`).join("\n")}\n\n` : "";
+    return {
+      waymark: 1,
+      kind: "list",
+      ok: result.ok,
+      exitCode: result.exitCode,
+      ...(stale.length > 0 ? { pruned: stale } : {}),
+      ...(result.ok ? { output: `${notice}${result.output}` } : { error: result.output }),
+    };
+  });
 }
 
 /** Print the ask-first charting contract. */
-export async function context(root: string, executable: string): Promise<Record<string, unknown>> {
+export async function context(root: string, executable = ""): Promise<Record<string, unknown>> {
   const routingHints = [
     "<waymark-engine>",
-    "waymark-ask routes questions in two phases. Use exact phrasing for the symbolic (codedb) phase:",
+    "waymark_ask (CLI: waymark ask) / waymark-ask routes questions across 4 deterministic tiers and fails closed, never hallucinating:",
     "",
-    "  Symbolic (exact codedb match, resolved call graph):",
-    "    \"Who calls <name>?\" / \"Callers of <name>\" / \"Callees of <name>\" / \"Trace <name>\"",
-    "    \"What calls <name>?\" / \"Which functions call <name>?\" / \"Call hierarchy for <name>\"",
-    "    \"Where is <name> declared?\" / \"Where is <name> defined?\" / \"Where is <name> implemented?\"",
-    "    \"Definition of <name>\" / \"Declaration of <name>\" / \"Implementation of <name>\"",
-    "    \"Find method <name>\" / \"Find function <name>\" / \"Find symbol <name>\"",
-    "    \"Line numbers of <name>\" / \"Method signature of <name>\" / \"Locate symbol <name>\"",
-    "    \"Entrypoints\" / \"Architecture\" / \"Overview of the repo\" / \"Hotspots\"",
+    "  Tier 1 — AST Structural & Call Graph (exact codedb / tree-sitter):",
+    "    \"Who calls <name>?\" / \"Callers of <name>\" / \"Callees of <name>\" / \"Trace <name>\" (supports depth: 1-5, direction, exclude_tests)",
+    "    \"Where is <name> declared?\" / \"Definition of <name>\" / \"Find method <name>\" / \"Entrypoints\" / \"Architecture\"",
+    "    Single-file AST outlines: waymark_ask(path: \"<file>\", outline: true)  |  Batch lookup: waymark_ask(symbols: [\"A\", \"B\"])",
     "",
-    "  Semantic (BM25, charted memory):",
-    "    Any conceptual question, e.g. \"How does authentication work?\"",
+    "  Tier 2 — Literal Path Router (in-memory PrefixTrie):",
+    "    Exact paths, unique basenames, or segment suffixes (e.g. \"src/paths.ts\", \"package.json\"). Never extrapolates missing paths.",
     "",
-    "  <name> must be an exact identifier (case-sensitive). If no codedb hit, the query falls",
-    "  through to semantic. Call waymark_memory(action: \"context\") (CLI: waymark memory context)",
-    "  to see this contract again.",
+    "  Tier 3 & Tier 4 — Discovery Junction (Fuzzy Lexical <-> Charted Consensus Memory):",
+    "    Identifier-shaped misses route to deterministic fzf scoring; architectural/conceptual questions route to lexical BM25 memory.",
+    "    Filter Semantic Repo Map facets with facet: \"lifecycle\" | \"data_state\" | \"boundaries\" | \"invariants\" | \"failure\" | \"status\".",
+    "    System 1 (structural/literal) fails closed on misses and never guesses from System 2 memory.",
+    "",
+    "  Chart verified findings via waymark_memory(action: \"chart\", question, answer, files, facet?).",
+    "  Call waymark_memory(action: \"context\") (CLI: waymark memory context) to see this contract again.",
     "</waymark-engine>",
     "",
   ].join("\n");
@@ -545,6 +717,7 @@ export async function context(root: string, executable: string): Promise<Record<
       output: routingHints + `Store is currently uninitialized (${MEMORY_STORE_LABEL} missing). Run waymark_memory(action: "init") (CLI: waymark memory init) to enable Tier 4 semantic memory.`,
     };
   }
+  assertNoNonDeterministicStore(root);
   const result = await runCapnSimple(root, executable, ["context"]);
   return { waymark: 1, kind: "context", ok: result.ok, exitCode: result.exitCode, ...(result.ok ? { output: routingHints + waymarkChartingContract(result.output) } : { error: result.output }) };
 }
@@ -572,9 +745,11 @@ export function waymarkChartingContract(capnContext: string): string {
 
 /** Initialize the repository's lexical memory store (`.waymark/memory`) using the bundled fork. */
 export async function initCapn(root: string, executable?: string): Promise<Record<string, unknown>> {
-  ensureStateDir(root);
-  const result = await runCapnSimple(root, executable ?? "", ["init"]);
-  return { waymark: 1, kind: "init", ok: result.ok, exitCode: result.exitCode, ...(result.ok ? { output: result.output } : { error: result.output }) };
+  return await withMemoryStoreLock(root, async () => {
+    ensureStateDir(root);
+    const result = await runCapnSimple(root, executable ?? "", ["init"]);
+    return { waymark: 1, kind: "init", ok: result.ok, exitCode: result.exitCode, ...(result.ok ? { output: result.output } : { error: result.output }) };
+  });
 }
 
 const LEGACY_ENTRY_FILE = /^[0-9a-f]{8}\.md$/u;
@@ -617,23 +792,71 @@ export async function migrateMemoryStore(root: string, executable: string, from 
     return refuse("MIGRATE_DESTINATION_NOT_EMPTY", `${MEMORY_STORE_LABEL} already holds charted entries; migration never merges stores.`);
   }
 
-  const initialized = await initCapn(root, executable);
-  if (!initialized.ok) return { ...initialized, kind: "migrate", copied: 0 };
-  for (const file of files) {
-    fs.copyFileSync(path.join(sourceEntries, file), path.join(targetEntries, file), fs.constants.COPYFILE_EXCL);
-  }
-  // Re-running init rebuilds the lexical index and file map from the copied entries.
-  const reindexed = await runCapnSimple(root, executable, ["init"]);
-  return {
-    waymark: 1,
-    kind: "migrate",
-    ok: reindexed.ok,
-    exitCode: reindexed.exitCode,
-    copied: files.length,
-    from: source,
-    to: target,
-    ...(reindexed.ok
-      ? { output: `Copied ${files.length} charted entries from ${from} into ${MEMORY_STORE_LABEL}. ${from} was only read and is unchanged.` }
-      : { error: reindexed.output }),
-  };
+  return await withMemoryStoreLock(root, async () => {
+    if (fs.existsSync(targetEntries) && fs.readdirSync(targetEntries).some((file) => file.endsWith(".md"))) {
+      return refuse("MIGRATE_DESTINATION_NOT_EMPTY", `${MEMORY_STORE_LABEL} already holds charted entries; migration never merges stores.`);
+    }
+
+    const initialized = await initCapn(root, executable);
+    if (!initialized.ok) return { ...initialized, kind: "migrate", copied: 0 };
+
+    const copiedPaths: string[] = [];
+    const rollback = (): void => {
+      for (const destPath of copiedPaths) {
+        try {
+          fs.unlinkSync(destPath);
+        } catch {
+          // ignore
+        }
+      }
+    };
+
+    try {
+      for (const file of files) {
+        const destPath = path.join(targetEntries, file);
+        fs.copyFileSync(path.join(sourceEntries, file), destPath, fs.constants.COPYFILE_EXCL);
+        copiedPaths.push(destPath);
+      }
+      // Re-running init rebuilds the lexical index and file map from the copied entries.
+      const reindexed = await runCapnSimple(root, executable, ["init"]);
+      if (!reindexed.ok) {
+        rollback();
+        return {
+          waymark: 1,
+          kind: "migrate",
+          ok: false,
+          exitCode: reindexed.exitCode,
+          copied: 0,
+          rolledBack: true,
+          from: source,
+          to: target,
+          error: reindexed.output,
+        };
+      }
+      return {
+        waymark: 1,
+        kind: "migrate",
+        ok: true,
+        exitCode: 0,
+        copied: files.length,
+        from: source,
+        to: target,
+        output: `Copied ${files.length} charted entries from ${from} into ${MEMORY_STORE_LABEL}. ${from} was only read and is unchanged.`,
+      };
+    } catch (err) {
+      rollback();
+      const message = err instanceof Error ? err.message : String(err);
+      return {
+        waymark: 1,
+        kind: "migrate",
+        ok: false,
+        exitCode: 2,
+        copied: 0,
+        rolledBack: true,
+        from: source,
+        to: target,
+        error: `MIGRATE_FAILED: ${message}`,
+      };
+    }
+  });
 }

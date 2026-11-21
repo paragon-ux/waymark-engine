@@ -15,7 +15,8 @@ When structural and literal tiers miss, the **Discovery Junction** evaluates syn
 
 ```bash
 npm ci          # install dependencies (bundled capn fork included)
-npm run verify  # build + full node test suite (160/160 passing green)
+npm run verify  # build + full node test suite
+npm run test:prompts  # 105-prompt evaluation manifest battery
 ```
 
 Invariants:
@@ -28,7 +29,8 @@ Invariants:
 - `waymark memory bootstrap` returns source excerpts as unverified drafts; it never initializes the memory store or publishes facts. Verify and explicitly chart claims.
 - Subsystem-scoped operations return `UNSUPPORTED_SUBSYSTEM`; omit subsystem to target the selected repository root.
 - Query/session telemetry is not persisted unless `WAYMARK_TELEMETRY=1`; the loopback live viewer also requires opt-in and a per-session access token, validates Host/Origin, and blocks framing.
-- On Windows, `WAYMARK_CODEDB_EXECUTABLE` must name a native `.exe`; `.cmd` and `.bat` shims are rejected rather than run through a shell.
+- On Windows, `WAYMARK_CODEDB_EXECUTABLE` and `WAYMARK_CAPN_EXECUTABLE` must name native `.exe` or Node `.js`/`.mjs`/`.cjs` entries; `.cmd` and `.bat` shims are rejected (`CODEDB_UNSUPPORTED_SHIM` / `CAPN_UNSUPPORTED_SHIM`) rather than run through a shell.
+- MCP tool calls never accept caller-supplied executable paths; `WAYMARK_CAPN_EXECUTABLE` is read strictly from server environment.
 
 ---
 
@@ -56,15 +58,12 @@ When an agent or client editor launches `waymark-engine` via stdio, the server d
   "mcpServers": {
     "waymark-engine": {
       "command": "npx",
-      "args": ["-y", "waymark-engine"],
-      "env": {
-        "CODEDB_ALLOW_TEMP": "1"
-      }
+      "args": ["-y", "waymark-engine"]
     }
   }
 }
 ```
-*(For local source development, replace `"command": "npx"` with `"command": "node"`, and `"args": ["/path/to/waymark-engine/dist/src/mcp/capnIndex.js"]`).*
+*(For local source development, replace `"command": "npx"` with `"command": "node"`, and `"args": ["/path/to/waymark-engine/dist/src/mcp/capnIndex.js"]`. Waymark defaults `CODEDB_ALLOW_TEMP=1` internally; set `"env": { "CODEDB_ALLOW_TEMP": "0" }` only if you want to refuse temp-directory repositories.)*
 
 #### 2. Claude Desktop (`claude_desktop_config.json`)
 ```json
@@ -72,10 +71,7 @@ When an agent or client editor launches `waymark-engine` via stdio, the server d
   "mcpServers": {
     "waymark-engine": {
       "command": "npx",
-      "args": ["-y", "waymark-engine"],
-      "env": {
-        "CODEDB_ALLOW_TEMP": "1"
-      }
+      "args": ["-y", "waymark-engine"]
     }
   }
 }
@@ -84,13 +80,12 @@ When an agent or client editor launches `waymark-engine` via stdio, the server d
 #### 3. Cursor / Zed / Continue
 * **Command**: `npx -y waymark-engine`
 * **Transport**: `stdio`
-* **Environment**: `CODEDB_ALLOW_TEMP=1`
 
 ### Exposed MCP Surface: The Two-Verb Model & Subcommands
 
-Waymark Engine defaults to a high-efficiency **Two-Verb MCP Interface** that minimizes prompt token overhead (**<450 tokens default** vs 3,000+ tokens for flat tool sprawl) while maintaining 100% feature parity across CLI, MCP, and library APIs.
+Waymark Engine defaults to a lean **Two-Verb MCP Interface** that reduces tool-catalog prompt overhead by ~46% (**~1,500 tokens / 6.1 KB** serialized for 2 canonical tools vs **~2,850 tokens / 11.4 KB** for all 12 tools in verbose mode) while maintaining full feature parity across CLI, MCP, and library APIs.
 
-Zero configuration is required to benefit from the lean Two-Verb surface. *(Optional: to expose all 11 legacy granular tools in `tools/list`, set `"WAYMARK_MCP_VERBOSE": "1"`)*.
+Zero configuration is required to benefit from the lean Two-Verb surface. *(Optional: to expose all 10 legacy granular tools alongside the 2 canonical verbs — 12 tools total — in `tools/list`, set `"WAYMARK_MCP_VERBOSE": "1"`)*.
 
 ---
 
@@ -296,7 +291,7 @@ Consolidates all stateful operations, consensus memory management, and map maint
 ---
 
 #### 3. Granular Backward-Compatible Tools
-When running with `WAYMARK_MCP_VERBOSE=1` (or via direct invocation in `tools/call`), all 11 granular tools remain registered and fully functional for backward compatibility:
+When running with `WAYMARK_MCP_VERBOSE=1` (or via direct invocation in `tools/call`), all 10 legacy granular tools (12 tools total including `waymark_ask` and `waymark_memory`) remain registered and functional for backward compatibility:
 * `waymark_chart`: Alias for `waymark_memory(action="chart")`
 * `waymark_bust`: Alias for `waymark_memory(action="bust")`
 * `waymark_prune`: Alias for `waymark_memory(action="prune")`

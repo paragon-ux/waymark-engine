@@ -25,7 +25,7 @@ The examples ran in table order and build on each other. Bootstrap starts at 2/5
     ```
 
     ```bash
-    claude mcp add waymark-engine --scope user -e CODEDB_ALLOW_TEMP=1 -- node "$PWD/dist/src/mcp/capnIndex.js"
+    claude mcp add waymark-engine --scope user -- node "$PWD/dist/src/mcp/capnIndex.js"
     ```
 
 2. Open Claude Code in this repository and run one of the invocations above.

@@ -1,4 +1,4 @@
-import Parser from "web-tree-sitter";
+import type ParserType from "web-tree-sitter";
 import MarkdownIt from "markdown-it";
 import path from "node:path";
 import fs from "node:fs";
@@ -156,38 +156,40 @@ const STRUCTURED_LANGUAGE_WASM: Partial<Record<StructuredLanguage, string>> = {
   php: "tree-sitter-php.wasm",
 };
 
-let parserInitialized = false;
-let patchVerified = false;
+let parserClass: typeof ParserType | null = null;
+let parserInitPromise: Promise<typeof ParserType> | null = null;
 const loadedLanguages: Map<string, unknown> = new Map();
 
-function ensureWebTreeSitterPatched(): void {
-  if (patchVerified) return;
-  patchVerified = true;
-  try {
-    const treeSitterPath = require.resolve("web-tree-sitter");
-    const code = fs.readFileSync(treeSitterPath, "utf8");
-    if (!code.includes('wasmImports["_Znwm"]')) {
-      try {
-        const patchScript = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../scripts/patch-web-tree-sitter.cjs");
-        if (fs.existsSync(patchScript)) {
-          const { patchWebTreeSitter } = require(patchScript);
-          patchWebTreeSitter(false);
-        }
-      } catch {
-        console.warn("[waymark] Warning: web-tree-sitter C++ scanner patch was not applied (e.g. pnpm or --ignore-scripts). Run 'node scripts/patch-web-tree-sitter.cjs' to enable YAML parsing.");
-      }
+function loadParserClass(): typeof ParserType {
+  if (parserClass) return parserClass;
+  const currentDir = path.dirname(fileURLToPath(import.meta.url));
+  const candidates = [
+    path.resolve(currentDir, "../../scripts/patch-web-tree-sitter.cjs"),
+    path.resolve(currentDir, "../scripts/patch-web-tree-sitter.cjs"),
+  ];
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) {
+      const { loadPatchedWebTreeSitter } = require(candidate) as { loadPatchedWebTreeSitter: () => typeof ParserType };
+      parserClass = loadPatchedWebTreeSitter();
+      return parserClass;
     }
-  } catch {
-    // ignore
   }
+  parserClass = require("web-tree-sitter") as typeof ParserType;
+  return parserClass;
 }
 
 export async function initParser(): Promise<void> {
-  if (!parserInitialized) {
-    ensureWebTreeSitterPatched();
-    await Parser.init();
-    parserInitialized = true;
+  if (!parserInitPromise) {
+    parserInitPromise = (async () => {
+      const ParserCtor = loadParserClass();
+      await ParserCtor.init();
+      return ParserCtor;
+    })().catch((err) => {
+      parserInitPromise = null;
+      throw err;
+    });
   }
+  await parserInitPromise;
 }
 
 function resolveWasmPath(wasmName: string): string | null {
@@ -244,7 +246,8 @@ async function getLanguageForWasm(wasmName: string): Promise<unknown | null> {
   const wasmPath = resolveWasmPath(wasmName);
   if (!wasmPath) return null;
 
-  const Lang = await Parser.Language.load(wasmPath);
+  const ParserCtor = loadParserClass();
+  const Lang = await ParserCtor.Language.load(wasmPath);
   loadedLanguages.set(wasmName, Lang);
   return Lang;
 }
@@ -536,7 +539,7 @@ function isPythonModuleLevelAssignment(node: any): boolean {
 let mdParserInstance: InstanceType<typeof MarkdownIt> | null = null;
 function getMarkdownParser(): InstanceType<typeof MarkdownIt> {
   if (!mdParserInstance) {
-    mdParserInstance = new MarkdownIt({ html: true });
+    mdParserInstance = new MarkdownIt({ html: false });
   }
   return mdParserInstance;
 }
@@ -1081,7 +1084,8 @@ export async function parseSourceIndex(text: string, language: "javascript" | "t
   const wasmName = STRUCTURED_LANGUAGE_WASM[language];
   const grammar = wasmName ? await getLanguageForWasm(wasmName) : null;
   if (!grammar) return null;
-  const parser = new Parser();
+  const ParserCtor = loadParserClass();
+  const parser = new ParserCtor();
   let tree: any;
   try {
     parser.setLanguage(grammar as any);
@@ -1181,21 +1185,21 @@ export async function discoverSymbolsInFile(
 ): Promise<SymbolDiscoveryResult> {
   const storedPath = normalizeRelativePath(rawPath, repoRoot);
   const ext = path.extname(storedPath).toLowerCase();
-  const file = readFileText(repoRoot, storedPath);
-
-  if (file.bytes.byteLength > MAX_SYMBOL_DISCOVERY_FILE_BYTES) {
-    throw new WaymarkError("FILE_TOO_LARGE", `Discovery only accepts files up to ${MAX_SYMBOL_DISCOVERY_FILE_BYTES} bytes`, 2);
-  }
+  const file = readFileText(repoRoot, storedPath, MAX_SYMBOL_DISCOVERY_FILE_BYTES);
 
   let result: SymbolDiscoveryResult;
 
-  if (CODEDB_OUTLINE_EXTENSIONS.has(ext) && !STRUCTURED_EXTENSIONS[ext] && !requestedLanguage) {
-    result = await discoverSymbolsViaCodedbOutline(repoRoot, storedPath);
-  } else {
+  {
     let language: StructuredLanguage;
     try {
       language = resolveStructuredLanguage(storedPath, requestedLanguage);
     } catch (err) {
+      if (
+        err instanceof WaymarkError &&
+        (err.code === "LANGUAGE_EXTENSION_MISMATCH" || (err.code === "UNSUPPORTED_LANGUAGE" && Boolean(requestedLanguage?.trim())))
+      ) {
+        throw err;
+      }
       if (CODEDB_OUTLINE_EXTENSIONS.has(ext)) {
         result = await discoverSymbolsViaCodedbOutline(repoRoot, storedPath);
         if (query && query.trim()) {
@@ -1252,7 +1256,8 @@ export async function discoverSymbolsInFile(
         throw new WaymarkError("PARSER_UNAVAILABLE", `Waymark grammar is unavailable for ${language}`, 2);
       }
 
-      const parser = new Parser();
+      const ParserCtor = loadParserClass();
+  const parser = new ParserCtor();
       let tree: any;
       try {
         parser.setLanguage(grammar as any);

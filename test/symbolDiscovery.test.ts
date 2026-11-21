@@ -9,10 +9,11 @@ import { discoverSymbolsInFile, SUPPORTED_STRUCTURED_LANGUAGES } from "../src/as
 import { anchorForRange, normalizeRange } from "../src/paths.js";
 import { McpServer } from "../src/mcp/server.js";
 import type { AskMissResult } from "../src/types.js";
+import { mkTrackedTempDir } from "./tempDirs.js";
 
 
 function setupRepo(): string {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "waymark-symbol-discovery-"));
+  const repo = mkTrackedTempDir("waymark-symbol-discovery-");
   execFileSync("git", ["init", "-q", "-b", "main"], { cwd: repo, windowsHide: true });
   execFileSync("git", ["config", "user.name", "Waymark Test"], { cwd: repo, windowsHide: true });
   execFileSync("git", ["config", "user.email", "waymark-test@example.com"], { cwd: repo, windowsHide: true });

@@ -2,10 +2,16 @@ name: verify
 
 on:
   push:
+    branches:
+      - main
   pull_request:
 
 permissions:
   contents: read
+
+concurrency:
+  group: verify-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   verify:
@@ -31,7 +37,13 @@ jobs:
           cache: npm
       - name: Install from lockfile
         run: npm ci
+      - name: Audit runtime dependencies
+        run: npm audit --audit-level=high
       - name: Verify build and tests
         run: npm run verify
+        env:
+          CODEDB_ALLOW_TEMP: "1"
+      - name: Run 105-prompt evaluation battery
+        run: npm run test:prompts
         env:
           CODEDB_ALLOW_TEMP: "1"

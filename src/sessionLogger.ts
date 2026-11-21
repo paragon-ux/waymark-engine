@@ -98,11 +98,14 @@ export function logAskTelemetry(
     } else if (result.provider === "codedb" && typeof result.result === "string") {
       const lines = result.result.split("\n");
       const resLine = lines.find((l) => l.trim().startsWith("results:")) || lines[1] || "";
-      const match = resLine.match(/([^\s]+)\s+([^\s]+)\s+([^\s]+)\s+(\d+)/);
-      if (match) {
-        matchedSymbol = match[1];
-        matchedPath = match[3];
-        matchedLine = parseInt(match[4] || "0", 10);
+      const parts = resLine.trim().split(/\s+/);
+      for (let i = 0; i + 3 < parts.length; i++) {
+        if (/^\d+$/.test(parts[i + 3]!)) {
+          matchedSymbol = parts[i];
+          matchedPath = parts[i + 2];
+          matchedLine = parseInt(parts[i + 3]!, 10);
+          break;
+        }
       }
     }
   } else if (result.status === "junction") {

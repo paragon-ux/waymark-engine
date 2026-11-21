@@ -4,7 +4,6 @@
 
 [![npm version](https://img.shields.io/npm/v/waymark-engine)](https://www.npmjs.com/package/waymark-engine)
 [![CI](https://github.com/paragon-ux/waymark-engine/actions/workflows/verify.yml/badge.svg)](https://github.com/paragon-ux/waymark-engine/actions/workflows/verify.yml)
-[![tests](https://img.shields.io/badge/tests-160%2F160-brightgreen)](https://github.com/paragon-ux/waymark-engine)
 [![node](https://img.shields.io/badge/node-%3E%3D22-339933?logo=node.js)](https://nodejs.org)
 [![license](https://img.shields.io/badge/license-MIT-blue)](https://github.com/paragon-ux/waymark-engine/blob/main/LICENSE)
 [![recall](https://img.shields.io/badge/recall-lexical%20BM25%20(no%20embeddings)-informational)](https://github.com/paragon-ux/capn-hook)
@@ -29,7 +28,8 @@ When an AI agent needs to locate an implementation or trace a dependency, readin
          ▼               ▼               ▼             ▼
       Tier 1          Tier 2          Tier 3        Tier 4
    AST Call Graph   Path Router    Fuzzy Matcher  Lexical BM25
-  (@paragon/codedb) (PrefixTrie)   (algo.go fzf)  (capn-hook)
+  (@paragon-ux/     (PrefixTrie)   (algo.go fzf)  (capn-hook)
+   codedb-core)
          │               │               │             │
          └───────────────┼───────────────┘             │
                          ▼                             ▼
@@ -44,7 +44,7 @@ When an AI agent needs to locate an implementation or trace a dependency, readin
 | Dimension | Standard Agent Workflow | With Waymark Engine |
 | :--- | :--- | :--- |
 | **Context Window Cost** | 10,000–50,000 tokens per search | **16–38 tokens** (`--plain` output) |
-| **Tool Definition Overhead**| 3,000+ tokens (11 flat tools) | **<450 tokens** (Two-Verb MCP interface) |
+| **Tool Definition Overhead**| ~2,850 tokens (12 verbose tools) | **~1,500 tokens** (2 canonical MCP tools) |
 | **Query Latency** | 2,000–15,000 ms (embedding search) | **<10 ms** (Warm resident daemon) |
 | **Accuracy & Faithfulness** | Hallucinated line numbers | **100% deterministic** (AST-verified spans) |
 | **Memory Across Sessions** | Amnesia after session reset | **5-Facet Consensus Ledger** in SQLite |

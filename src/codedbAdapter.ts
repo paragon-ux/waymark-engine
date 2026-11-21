@@ -18,7 +18,7 @@ export interface ResolvedCodedbCommand {
   viaCmdShim: boolean;
 }
 
-export function assertSupportedCodedbCommand(command: ResolvedCodedbCommand, platform = process.platform): void {
+export function assertSupportedCodedbCommand(command: ResolvedCodedbCommand, platform: string = process.platform): void {
   if (platform === "win32" && command.viaCmdShim) {
     throw new WaymarkError("CODEDB_UNSUPPORTED_SHIM", "Windows .cmd/.bat codedb shims are unsupported; configure WAYMARK_CODEDB_EXECUTABLE with a native .exe to avoid shell argument expansion.", 2);
   }
@@ -33,19 +33,49 @@ function codedbRunError(message: string): WaymarkError {
   return new WaymarkError(code, message || "codedb process failed", 2);
 }
 
-/** Resolve the bundled `@paragon-ux/codedb-core` binary, if installed. */
-function bundledCodedbBinary(): string | null {
+/**
+ * Resolve the bundled `@paragon-ux/codedb-core` binary, if installed.
+ * On Windows ARM64 (where no native win32-arm64 binary is shipped), falls back
+ * to the bundled `codedb-win32-x64.exe` binary which runs under Windows x64 emulation.
+ */
+export function bundledCodedbBinary(platform: string = process.platform, arch: string = process.arch): string | null {
   try {
-    const mod = require("@paragon-ux/codedb-core") as { codedbBinaryPath: () => string | null };
-    const bin = mod.codedbBinaryPath();
-    if (bin && process.platform !== "win32") {
+    if (platform === process.platform && arch === process.arch) {
+      const mod = require("@paragon-ux/codedb-core") as { codedbBinaryPath: () => string | null };
+      const bin = mod.codedbBinaryPath();
+      if (bin) {
+        if (platform !== "win32") {
+          try {
+            fs.chmodSync(bin, 0o755);
+          } catch {
+            // ignore
+          }
+        }
+        return bin;
+      }
+    }
+    const pkgPath = require.resolve("@paragon-ux/codedb-core/package.json");
+    const distDir = path.join(path.dirname(pkgPath), "dist");
+    const fallbackNames: Record<string, string> = {
+      "win32-x64": "codedb-win32-x64.exe",
+      "win32-arm64": "codedb-win32-x64.exe",
+      "darwin-arm64": "codedb-darwin-arm64",
+      "darwin-x64": "codedb-darwin-x64",
+      "linux-x64": "codedb-linux-x64",
+      "linux-arm64": "codedb-linux-arm64",
+    };
+    const fileName = fallbackNames[`${platform}-${arch}`];
+    if (!fileName) return null;
+    const candidate = path.join(distDir, fileName);
+    if (!fs.existsSync(candidate)) return null;
+    if (platform !== "win32") {
       try {
-        fs.chmodSync(bin, 0o755);
+        fs.chmodSync(candidate, 0o755);
       } catch {
         // ignore
       }
     }
-    return bin;
+    return candidate;
   } catch {
     return null;
   }
@@ -145,7 +175,12 @@ async function runJsonCold(root: string, command: ResolvedCodedbCommand, args: r
 }
 
 /** Run one codedb query with `--json`, preferring resident daemon/client with cold fallback. */
-export async function runJson(root: string, command: ResolvedCodedbCommand, args: readonly string[], options?: { autoDaemon?: boolean }): Promise<CodedbRun> {
+export async function runJson(
+  root: string,
+  command: ResolvedCodedbCommand,
+  args: readonly string[],
+  options?: { autoDaemon?: boolean; onDaemonIpc?: () => void },
+): Promise<CodedbRun> {
   assertSupportedCodedbCommand(command);
   // 1. Explicit escape hatch to force one-shot cold execute
   if (process.env.WAYMARK_DISABLE_RESIDENT === "1") {
@@ -156,6 +191,7 @@ export async function runJson(root: string, command: ResolvedCodedbCommand, args
   try {
     const daemonRes = await tryDaemonQuery(root, args);
     if (daemonRes !== null) {
+      options?.onDaemonIpc?.();
       return daemonRes;
     }
   } catch {
@@ -171,6 +207,7 @@ export async function runJson(root: string, command: ResolvedCodedbCommand, args
       if (started) {
         const daemonRes = await tryDaemonQuery(root, args);
         if (daemonRes !== null) {
+          options?.onDaemonIpc?.();
           return daemonRes;
         }
       }
@@ -265,10 +302,10 @@ export async function lookupSymbolDefinitions(
   root: string,
   command: ResolvedCodedbCommand,
   query: string,
-  options?: { autoDaemon?: boolean; widenToBare?: boolean },
+  options?: { autoDaemon?: boolean; widenToBare?: boolean; onDaemonIpc?: () => void },
 ): Promise<SymbolLookup> {
   const q = query.trim();
-  const run = await runJson(root, command, ["symbol", q, "--json"], { autoDaemon: options?.autoDaemon });
+  const run = await runJson(root, command, ["symbol", q, "--json"], { autoDaemon: options?.autoDaemon, onDaemonIpc: options?.onDaemonIpc });
   if (!run.ok || !run.payload) return { ok: false, error: run.error || "codedb symbol lookup failed" };
   const direct = symbolRows(run.payload);
   if (direct.length > 0) return { ok: true, hits: direct, source: "codedb", widened: false };
@@ -276,7 +313,7 @@ export async function lookupSymbolDefinitions(
   const bare = bareFallback(q);
   let bareHits: SymbolDefinition[] = [];
   if (bare) {
-    const bareRun = await runJson(root, command, ["symbol", bare, "--max-results", "200", "--json"], { autoDaemon: options?.autoDaemon });
+    const bareRun = await runJson(root, command, ["symbol", bare, "--max-results", "200", "--json"], { autoDaemon: options?.autoDaemon, onDaemonIpc: options?.onDaemonIpc });
     if (!bareRun.ok || !bareRun.payload) return { ok: false, error: bareRun.error || "codedb symbol lookup failed" };
     bareHits = symbolRows(bareRun.payload);
     const qualified = bareHits.filter((r) => r.qualified === q);
@@ -334,12 +371,24 @@ const HIGH_COLLISION_NAMES = new Set([
   "load", "save", "flush", "clear", "open", "connect", "disconnect",
 ]);
 
+const TEST_FILE_MARKERS = [
+  ".test.", "_test.", "-test.",
+  ".spec.", "_spec.", "-spec.",
+  ".bench.", "_bench.", "-bench.",
+];
+
 export function isTestFile(filePath: string): boolean {
   const normalized = filePath.replace(/\\/g, "/");
-  return (
-    /(?:^|\/)(?:tests?|__tests__|spec|testing|benchmarks?|benches|examples|fixtures|testdata)\//i.test(normalized) ||
-    /(?:[._-]test|[._-]spec|[._-]bench)\.[^/]+$/i.test(normalized)
-  );
+  if (/(?:^|\/)(?:tests?|__tests__|spec|testing|benchmarks?|benches|examples|fixtures|testdata)\//i.test(normalized)) {
+    return true;
+  }
+  const slashIdx = normalized.lastIndexOf("/");
+  const base = (slashIdx === -1 ? normalized : normalized.slice(slashIdx + 1)).toLowerCase();
+  for (const marker of TEST_FILE_MARKERS) {
+    const idx = base.indexOf(marker);
+    if (idx !== -1 && idx + marker.length < base.length) return true;
+  }
+  return false;
 }
 
 function languageFamily(filePath: string): string | null {
@@ -421,13 +470,21 @@ export async function queryMultiHopCallGraph(
   command?: ResolvedCodedbCommand,
   excludeTests = false,
   autoDaemon = false,
+  onDaemonIpc?: () => void,
 ): Promise<{ hit: boolean; output: CallGraphData | string; error?: boolean }> {
+  if (typeof depth !== "number" || !Number.isInteger(depth) || depth < 1 || depth > 5) {
+    throw new WaymarkError("INVALID_ARGUMENT", `Invalid depth value "${String(depth)}". Expected integer 1-5.`);
+  }
+  if (direction !== "callers" && direction !== "callees" && direction !== "both") {
+    throw new WaymarkError("INVALID_ARGUMENT", `Invalid direction value "${String(direction)}". Expected callers, callees, or both.`);
+  }
   const cmd = command ?? resolveCodedbCommand();
-  const maxDepth = Math.min(Math.max(1, depth), 5);
+  const maxDepth = depth;
+  const runOpts = { autoDaemon, onDaemonIpc };
 
   // Fast-path ambiguity & existence check for bare identifiers
   if (!fn.includes(".") && !fn.includes(":")) {
-    const symRun = await runJson(root, cmd, ["symbol", fn, "--json"], { autoDaemon });
+    const symRun = await runJson(root, cmd, ["symbol", fn, "--json"], runOpts);
     if (symRun.ok && symRun.payload) {
       const cands = (symRun.payload.results as Neighbor[] | undefined) ?? [];
       if (cands.length >= 25) {
@@ -448,7 +505,7 @@ export async function queryMultiHopCallGraph(
     }
   }
 
-  const nRun = await runJson(root, cmd, ["neighbors", fn, "--json"], { autoDaemon });
+  const nRun = await runJson(root, cmd, ["neighbors", fn, "--json"], runOpts);
   if (!nRun.ok || !nRun.payload) {
     return { hit: false, output: nRun.error || `Function or method "${fn}" not found.`, error: true };
   }
@@ -471,7 +528,7 @@ export async function queryMultiHopCallGraph(
       const { fallbackCallGraph } = await import("./treeSitterIndex.js");
       const graph = await fallbackCallGraph(root, fn, depth, direction, excludeTests);
       if (graph) return { hit: true, output: graph };
-      return queryMultiHopCallGraph(root, bare, depth, direction, cmd, excludeTests, autoDaemon);
+      return queryMultiHopCallGraph(root, bare, depth, direction, cmd, excludeTests, autoDaemon, onDaemonIpc);
     }
     return { hit: false, output: `Function or method "${fn}" not found.` };
   }
@@ -481,7 +538,7 @@ export async function queryMultiHopCallGraph(
   let rootLine: number | undefined;
   let rootKind: string | undefined;
   const symArgs = bare ? ["symbol", bare, "--max-results", "200", "--json"] : ["symbol", fn, "--json"];
-  const symRun = await runJson(root, cmd, symArgs, { autoDaemon });
+  const symRun = await runJson(root, cmd, symArgs, runOpts);
   const symResults = (symRun.ok && Array.isArray(symRun.payload?.results) ? symRun.payload!.results : []) as Array<{ path?: string; line?: number; kind?: string; qualified?: string }>;
   const r0 = bare ? symResults.find((r) => r.qualified === fn) : symResults[0];
   if (r0) {
@@ -558,7 +615,7 @@ export async function queryMultiHopCallGraph(
           break;
         }
         if (parent.kind === "module") continue; // a module node has no callers
-        const hopRes = await runJson(root, cmd, ["neighbors", parent.name, "--json"], { autoDaemon });
+        const hopRes = await runJson(root, cmd, ["neighbors", parent.name, "--json"], runOpts);
         if (!hopRes.ok || !hopRes.payload) return { hit: false, output: hopRes.error || "codedb multi-hop lookup failed", error: true };
         if (hopRes.ok && hopRes.payload) {
           const hopCallersData = hopRes.payload.callers;
@@ -592,7 +649,7 @@ export async function queryMultiHopCallGraph(
           truncated = true;
           break;
         }
-        const hopRes = await runJson(root, cmd, ["neighbors", parent.name, "--json"], { autoDaemon });
+        const hopRes = await runJson(root, cmd, ["neighbors", parent.name, "--json"], runOpts);
         if (!hopRes.ok || !hopRes.payload) return { hit: false, output: hopRes.error || "codedb multi-hop lookup failed", error: true };
         if (hopRes.ok && hopRes.payload) {
           const hopCalleesData = hopRes.payload.callees;
@@ -637,22 +694,57 @@ export async function queryMultiHopCallGraph(
   return { hit: true, output: callGraph };
 }
 
+const MAX_ARCHITECTURE_FILES = 25;
+const ENTRYPOINT_BASENAMES = new Set([
+  "index", "main", "cli", "app", "server", "mod", "lib", "entry", "entrypoint", "__main__", "capnindex",
+]);
+
+function isArchitectureEntrypoint(filePath: string): boolean {
+  const normalized = filePath.replace(/\\/g, "/");
+  if (normalized.startsWith("bin/") || normalized.startsWith("cmd/")) return true;
+  const slashIdx = normalized.lastIndexOf("/");
+  const base = (slashIdx === -1 ? normalized : normalized.slice(slashIdx + 1)).toLowerCase();
+  const dotIdx = base.lastIndexOf(".");
+  const stem = dotIdx === -1 ? base : base.slice(0, dotIdx);
+  return ENTRYPOINT_BASENAMES.has(stem);
+}
+
+function pathSegmentDepth(filePath: string): number {
+  const normalized = filePath.replace(/\\/g, "/");
+  let depth = 0;
+  for (let i = 0; i < normalized.length; i++) {
+    if (normalized[i] === "/") depth += 1;
+  }
+  return depth;
+}
+
 /**
- * Answer a structural intent with the deterministic codedb CLI. `trace_path`
- * uses the resolved fail-closed call graph (via single-pass `neighbors`);
- * `search_graph` resolves symbol definitions; `get_architecture` reports repo
- * topology. A clean miss returns `hit: false` — never a guess.
+ * Resolve a structural AST intent via the deterministic codedb CLI.
+ * `trace_path` builds call graphs (depth 1-5); `search_graph` resolves symbol
+ * definitions; `get_architecture` reports bounded, ranked repo topology.
+ * A clean miss returns `hit: false` — never a guess.
  */
 export async function queryStructural(
   intent: AstIntent,
   root: string,
   executable?: string,
-  options?: { depth?: number; direction?: "callers" | "callees" | "both"; excludeTests?: boolean; autoDaemon?: boolean },
+  options?: { depth?: number; direction?: "callers" | "callees" | "both"; excludeTests?: boolean; autoDaemon?: boolean; onDaemonIpc?: () => void },
 ): Promise<{ hit: boolean; output: string | CallGraphData; error?: boolean }> {
+  if (options?.depth !== undefined) {
+    if (typeof options.depth !== "number" || !Number.isInteger(options.depth) || options.depth < 1 || options.depth > 5) {
+      throw new WaymarkError("INVALID_ARGUMENT", `Invalid depth value "${String(options.depth)}". Expected integer 1-5.`);
+    }
+  }
+  if (options?.direction !== undefined) {
+    if (options.direction !== "callers" && options.direction !== "callees" && options.direction !== "both") {
+      throw new WaymarkError("INVALID_ARGUMENT", `Invalid direction value "${String(options.direction)}". Expected callers, callees, or both.`);
+    }
+  }
   const command = resolveCodedbCommand(executable);
+  const runOpts = { autoDaemon: options?.autoDaemon, onDaemonIpc: options?.onDaemonIpc };
 
   if (intent.tool === "get_architecture") {
-    const tree = await runJson(root, command, ["tree", "--json"], { autoDaemon: options?.autoDaemon });
+    const tree = await runJson(root, command, ["tree", "--json"], runOpts);
     if (!tree.ok || !tree.payload) return { hit: false, output: tree.error, error: true };
     const files = (tree.payload.files ?? []) as Array<{ path: string; language: string; line_count: number; sym_count: number }>;
     if (files.some((f) => (!f.language || f.language === "unknown") && !f.sym_count)) {
@@ -670,10 +762,47 @@ export async function queryStructural(
       }
     }
     const totalSymbols = files.reduce((n, f) => n + (f.sym_count ?? 0), 0);
+    const excludeTests = Boolean(options?.excludeTests);
+    const nonTestFiles = files.filter((f) => !isTestFile(f.path));
+    const symbolizedNonTest = nonTestFiles.filter((f) => (f.sym_count ?? 0) > 0);
+    const symbolizedAny = (excludeTests ? nonTestFiles : files).filter((f) => (f.sym_count ?? 0) > 0);
+    const pool = symbolizedNonTest.length > 0
+      ? symbolizedNonTest
+      : symbolizedAny.length > 0
+        ? symbolizedAny
+        : nonTestFiles.length > 0
+          ? nonTestFiles
+          : (excludeTests ? nonTestFiles : files);
+
+    const entrypointFocus = intent.architectureFocus === "entrypoints";
+    const ranked = [...pool].sort((a, b) => {
+      if (entrypointFocus) {
+        const aEntry = isArchitectureEntrypoint(a.path) ? 0 : 1;
+        const bEntry = isArchitectureEntrypoint(b.path) ? 0 : 1;
+        if (aEntry !== bEntry) return aEntry - bEntry;
+        const depthDiff = pathSegmentDepth(a.path) - pathSegmentDepth(b.path);
+        if (depthDiff !== 0) return depthDiff;
+        const symDiff = (b.sym_count ?? 0) - (a.sym_count ?? 0);
+        if (symDiff !== 0) return symDiff;
+        return a.path.localeCompare(b.path);
+      }
+      const symDiff = (b.sym_count ?? 0) - (a.sym_count ?? 0);
+      if (symDiff !== 0) return symDiff;
+      const depthDiff = pathSegmentDepth(a.path) - pathSegmentDepth(b.path);
+      if (depthDiff !== 0) return depthDiff;
+      return a.path.localeCompare(b.path);
+    });
+    const shown = ranked.slice(0, MAX_ARCHITECTURE_FILES);
+    const omitted = files.length - shown.length;
+
     let out = `total_files: ${files.length}\n`;
     out += `total_symbols: ${totalSymbols}\n`;
-    for (const f of files) {
+    for (const f of shown) {
       out += `  ${f.path} ${f.language} ${f.line_count} lines ${f.sym_count} symbols\n`;
+    }
+    if (omitted > 0) {
+      const focusLabel = entrypointFocus ? "entrypoint/source" : "source";
+      out += `omitted_files: ${omitted} (showing top ${shown.length} ${focusLabel} files; use --path <file> to inspect a file or waymark memory status for the semantic map)\n`;
     }
     return { hit: true, output: out.trim() };
   }
@@ -683,7 +812,7 @@ export async function queryStructural(
 
     // Any traversal option asks for the structured graph; only a bare question gets the flat listing.
     if (options?.depth !== undefined || options?.excludeTests || options?.direction !== undefined) {
-      const graph = await queryMultiHopCallGraph(root, fn, options?.depth ?? 1, options?.direction ?? "both", command, Boolean(options?.excludeTests), Boolean(options?.autoDaemon));
+      const graph = await queryMultiHopCallGraph(root, fn, options?.depth ?? 1, options?.direction ?? "both", command, Boolean(options?.excludeTests), Boolean(options?.autoDaemon), options?.onDaemonIpc);
       return { ...graph, ...(graph.error ? { error: true } : {}) };
     }
 
@@ -692,7 +821,7 @@ export async function queryStructural(
     // rather than spending 25+ seconds computing and deduplicating massive caller sets.
     let singleRootPath: string | undefined;
     if (!fn.includes(".") && !fn.includes(":")) {
-      const symRun = await runJson(root, command, ["symbol", fn, "--json"], { autoDaemon: options?.autoDaemon });
+      const symRun = await runJson(root, command, ["symbol", fn, "--json"], runOpts);
       if (symRun.ok && symRun.payload) {
         const cands = (symRun.payload.results as Neighbor[] | undefined) ?? [];
         if (cands.length >= 25) {
@@ -716,7 +845,7 @@ export async function queryStructural(
     }
 
     // Priority: Try single-pass `neighbors` command first
-    const nRun = await runJson(root, command, ["neighbors", fn, "--json"], { autoDaemon: options?.autoDaemon });
+    const nRun = await runJson(root, command, ["neighbors", fn, "--json"], runOpts);
     if (nRun.ok && nRun.payload) {
       if (nRun.payload.ambiguous === true) {
         const cands = (nRun.payload.results as Neighbor[] | undefined) ?? [];
@@ -751,8 +880,8 @@ export async function queryStructural(
     }
 
     // Fallback for legacy codedb without `neighbors`
-    const callers = await runJson(root, command, ["callers", fn, "--json"], { autoDaemon: options?.autoDaemon });
-    const callees = await runJson(root, command, ["callees", fn, "--json"], { autoDaemon: options?.autoDaemon });
+    const callers = await runJson(root, command, ["callers", fn, "--json"], runOpts);
+    const callees = await runJson(root, command, ["callees", fn, "--json"], runOpts);
     if (!callers.ok || !callers.payload || !callees.ok || !callees.payload) {
       return { hit: false, output: callers.error || callees.error || "codedb call graph lookup failed", error: true };
     }
@@ -773,7 +902,7 @@ export async function queryStructural(
     const calleeNames = (callees.payload?.results as Neighbor[] | undefined)?.map(neighborLabel) ?? [];
 
     if (callerNames.length === 0 && calleeNames.length === 0) {
-      const symbol = await runJson(root, command, ["symbol", fn, "--json"], { autoDaemon: options?.autoDaemon });
+      const symbol = await runJson(root, command, ["symbol", fn, "--json"], runOpts);
       if (!symbol.ok || !symbol.payload) return { hit: false, output: symbol.error || "codedb symbol lookup failed", error: true };
       const symbolCount = (symbol.payload?.results as unknown[] | undefined)?.length ?? 0;
       if (symbolCount === 0) {
@@ -790,7 +919,7 @@ export async function queryStructural(
 
   // search_graph
   const query = intent.query || "";
-  const lookup = await lookupSymbolDefinitions(root, command, query, { autoDaemon: options?.autoDaemon, widenToBare: !intent.strictQualified });
+  const lookup = await lookupSymbolDefinitions(root, command, query, { autoDaemon: options?.autoDaemon, widenToBare: !intent.strictQualified, onDaemonIpc: options?.onDaemonIpc });
   if (!lookup.ok) return { hit: false, output: lookup.error, error: true };
   const results = lookup.hits;
   if (results.length === 0) {
@@ -819,6 +948,10 @@ export function pruneFuzzyCandidateCache(now = Date.now()): void {
   }
 }
 
+export function clearFuzzyCandidateCache(): void {
+  fuzzyCandidateCache.clear();
+}
+
 export function fuzzyCandidateCacheSize(): number {
   pruneFuzzyCandidateCache();
   return fuzzyCandidateCache.size;
@@ -842,7 +975,7 @@ export async function queryFuzzyCandidates(
   token: string,
   root: string,
   executable?: string,
-  options?: { autoDaemon?: boolean },
+  options?: { autoDaemon?: boolean; onDaemonIpc?: () => void },
 ): Promise<FuzzyCandidate[]> {
   const cacheKey = `${root}::${token}`;
   pruneFuzzyCandidateCache();

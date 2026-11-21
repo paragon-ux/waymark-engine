@@ -52,7 +52,7 @@ Before any query executes against Capn memory, `assertLexicalStore(root)` evalua
 | `bust` | `waymark-bust <path>` | Invalidate all entries backed by a specific file. |
 | `prune` | `waymark-prune` | Automatically purges entries whose backing files were modified or deleted. |
 | `list` | `waymark-list` | Formatted summary of all active charted entries in the repository. |
-| `context`| `waymark-context` | Emits the two-phase ask-first prompting hints for LLM system prompts. |
+| `context`| `waymark-context` | Emits the 4-tier ask-first routing & charting contract for LLM system prompts. |
 
 ---
 

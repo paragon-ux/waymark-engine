@@ -2,7 +2,9 @@ import fs from "node:fs";
 import { createRequire } from "node:module";
 import { canonicalRoot, WaymarkDaemon } from "../daemon.js";
 import { collectRepoPathsBounded } from "../discoveryRouter.js";
+import { readCapnConfig, resolveCapnCommand } from "../capnAdapter.js";
 import { repoRootAsync } from "../paths.js";
+import { memoryStoreDir } from "../stateDir.js";
 import { CAPN_TOOLS } from "./capnTools.js";
 import {
   JsonRpcNotification,
@@ -268,7 +270,7 @@ export class McpServer {
       });
     }
 
-    if (!parsed || typeof parsed !== "object") {
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
       return JSON.stringify({
         jsonrpc: "2.0",
         id: null,
@@ -277,11 +279,42 @@ export class McpServer {
     }
 
     const message = parsed as Record<string, unknown>;
-    const isNotification = message.id === undefined || message.id === null;
+    const hasId = Object.prototype.hasOwnProperty.call(message, "id") && message.id !== undefined;
+    const rawId = message.id;
+    const validId = typeof rawId === "string" || (typeof rawId === "number" && Number.isSafeInteger(rawId));
+    const responseId = validId ? (rawId as string | number) : null;
 
-    if (isNotification) {
+    if (message.jsonrpc !== "2.0" || typeof message.method !== "string" || message.method.trim().length === 0) {
+      return JSON.stringify({
+        jsonrpc: "2.0",
+        id: responseId,
+        error: { code: -32600, message: "Invalid Request" },
+      });
+    }
+
+    if (!hasId) {
       await this.handleNotification(message as unknown as JsonRpcNotification);
       return null;
+    }
+
+    if (!validId) {
+      return JSON.stringify({
+        jsonrpc: "2.0",
+        id: null,
+        error: { code: -32600, message: "Invalid Request: id must be a string or safe integer" },
+      });
+    }
+
+    if (
+      Object.prototype.hasOwnProperty.call(message, "params") &&
+      message.params !== undefined &&
+      (typeof message.params !== "object" || message.params === null || Array.isArray(message.params))
+    ) {
+      return JSON.stringify({
+        jsonrpc: "2.0",
+        id: responseId,
+        error: { code: -32602, message: "Invalid params: params must be an object" },
+      });
     }
 
     const request = message as unknown as JsonRpcRequest;
@@ -455,11 +488,23 @@ export class McpServer {
       const uri = typeof params?.uri === "string" ? params.uri : "";
 
       if (uri === "capn://status") {
+        const resolvedCmd = resolveCapnCommand();
+        let storeStatus: "uninitialized" | "lexical" | "embedding" | "corrupt" = "uninitialized";
+        try {
+          const cfg = readCapnConfig(this.root);
+          if (cfg === null) storeStatus = "uninitialized";
+          else storeStatus = cfg.embedding === false ? "lexical" : "embedding";
+        } catch {
+          storeStatus = "corrupt";
+        }
         const capnObj = {
           waymark: 1,
           kind: "capn-status",
           profile: process.env.WAYMARK_CAPN_PROFILE === "none" ? "none" : "capn-cli",
-          capnExecutable: process.env.WAYMARK_CAPN_EXECUTABLE || "capn",
+          capnExecutable: resolvedCmd.prefix[0] ?? resolvedCmd.file,
+          storeDir: memoryStoreDir(this.root),
+          storeStatus,
+          initialized: storeStatus === "lexical" || storeStatus === "embedding",
         };
         return {
           jsonrpc: "2.0",
@@ -716,35 +761,90 @@ export class McpServer {
   }
 
   public async runStdio(): Promise<void> {
+    const MAX_STDIO_FRAME_BYTES = 8 * 1024 * 1024;
     const cleanup = () => this.close();
-    process.once("SIGINT", cleanup);
-    process.once("SIGTERM", cleanup);
+    const onSignal = (signal: NodeJS.Signals) => {
+      this.close();
+      try {
+        process.stdin.pause();
+        process.stdin.destroy();
+      } catch {
+        // ignore
+      }
+      process.exit(signal === "SIGINT" ? 130 : 143);
+    };
+    process.once("SIGINT", () => onSignal("SIGINT"));
+    process.once("SIGTERM", () => onSignal("SIGTERM"));
     process.once("exit", cleanup);
 
     process.stdin.setEncoding("utf8");
     let buffer = "";
+    let droppingOversizedLine = false;
+    let pendingChain: Promise<void> = Promise.resolve();
 
-    process.stdin.on("data", async (chunk: string) => {
+    const enqueueLine = (line: string): void => {
+      if (!line.trim()) return;
+      pendingChain = pendingChain
+        .then(async () => {
+          const response = await this.handleMessage(line);
+          if (response) {
+            process.stdout.write(`${response}\n`);
+          }
+        })
+        .catch(() => {
+          // keep stdio pipeline alive after individual handler failures
+        });
+    };
+
+    const emitOversizedError = (): void => {
+      pendingChain = pendingChain.then(() => {
+        process.stdout.write(
+          `${JSON.stringify({
+            jsonrpc: "2.0",
+            id: null,
+            error: { code: -32600, message: `Invalid Request: message exceeds ${MAX_STDIO_FRAME_BYTES} byte limit` },
+          })}\n`,
+        );
+      });
+    };
+
+    process.stdin.on("data", (chunk: string) => {
+      if (droppingOversizedLine) {
+        const nl = chunk.indexOf("\n");
+        if (nl === -1) return;
+        droppingOversizedLine = false;
+        chunk = chunk.slice(nl + 1);
+      }
+
       buffer += chunk;
       const lines = buffer.split(/\r?\n/u);
       buffer = lines.pop() ?? "";
 
       for (const line of lines) {
-        if (!line.trim()) continue;
-        const response = await this.handleMessage(line);
-        if (response) {
-          process.stdout.write(`${response}\n`);
+        if (Buffer.byteLength(line, "utf8") > MAX_STDIO_FRAME_BYTES) {
+          emitOversizedError();
+          continue;
         }
+        enqueueLine(line);
+      }
+
+      if (Buffer.byteLength(buffer, "utf8") > MAX_STDIO_FRAME_BYTES) {
+        buffer = "";
+        droppingOversizedLine = true;
+        emitOversizedError();
       }
     });
 
     process.stdin.on("end", async () => {
-      if (buffer.trim()) {
-        const response = await this.handleMessage(buffer);
-        if (response) {
-          process.stdout.write(`${response}\n`);
+      if (!droppingOversizedLine && buffer.trim()) {
+        if (Buffer.byteLength(buffer, "utf8") > MAX_STDIO_FRAME_BYTES) {
+          emitOversizedError();
+        } else {
+          enqueueLine(buffer);
         }
       }
+      buffer = "";
+      await pendingChain;
       this.close();
     });
 

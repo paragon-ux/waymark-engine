@@ -8,9 +8,10 @@ import test from "node:test";
 import { ask, initCapn, publish, unchart, bust, prune, listEntries, context } from "../src/capnAdapter.js";
 import { memoryStoreDir } from "../src/stateDir.js";
 import { initMemoryStoreSync } from "./capnContract.js";
+import { mkTrackedTempDir } from "./tempDirs.js";
 
 function setupRepo(): string {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "waymark-capn-surface-"));
+  const repo = mkTrackedTempDir("waymark-capn-surface-");
   execFileSync("git", ["init", "-q", "-b", "main"], { cwd: repo });
   fs.mkdirSync(path.join(repo, "src"), { recursive: true });
   fs.writeFileSync(path.join(repo, "src", "payments.ts"), "export const webhook = true\n");
@@ -79,7 +80,7 @@ test("unchart with ifExists: true succeeds idempotently on missing id (LEDGER-08
 });
 
 test("initCapn initializes store in deterministic lexical mode", async () => {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "waymark-init-test-"));
+  const repo = mkTrackedTempDir("waymark-init-test-");
   execFileSync("git", ["init", "-q", "-b", "main"], { cwd: repo });
   const result = await initCapn(repo);
   assert.equal(result.ok, true);

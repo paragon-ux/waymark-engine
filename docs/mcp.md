@@ -3,16 +3,16 @@
 Waymark Engine implements the Model Context Protocol (MCP) dual-era specification (`2026-07-28` modern discovery + `2024-11-05` standard handshake) over stdio.
 
 - **Supported revisions**: `2026-07-28`, `2025-11-25`, `2024-11-05` (advertised by `server/discover`).
-- **`2026-07-28` results**: every result carries `resultType` and `_meta["io.modelcontextprotocol/serverInfo"]`; list and read results carry `ttlMs` and `cacheScope`. A request whose `_meta` protocol version is unsupported fails with `-32022`.
+- **`2026-07-28` results**: every result carries `resultType` and `_meta["io.modelcontextprotocol/serverInfo"]`; list and read results carry `ttlMs` and `cacheScope`. A request whose `_meta["io.modelcontextprotocol/protocolVersion"]` is unsupported fails with `-32022`.
 - **Startup**: the server answers the handshake immediately and indexes nothing. The first tool call on a repository (its `root` argument, else the server's working directory, resolved to the Git top level) warms a resident daemon for it in the background; that call and any made during warm-up take the cold path. A repository with more than 50,000 files, or whose file walk takes over 10 seconds, is never warmed. At most two repositories stay warm; the least recently used is stopped. See [Warm-up](#resident-daemon-warm-up).
 
 ---
 
-## The Two-Verb Interface (<450 Tokens)
+## The Two-Verb Interface (~1,500 Tokens)
 
-Traditional MCP servers register dozens of granular tools, bloating the agent's context window by 3,000+ tokens before the user even types a prompt. 
+Traditional MCP servers register dozens of granular tools, bloating the agent's context window before the user even types a prompt.
 
-Waymark Engine consolidates all capabilities into **two canonical verbs**, reducing tool definition overhead to **<450 tokens**:
+Waymark Engine consolidates all capabilities into **two canonical verbs**, reducing `tools/list` schema overhead by ~46% (**~1,500 tokens / 6.1 KB** serialized for 2 canonical tools vs **~2,850 tokens / 11.4 KB** across all 12 tools in verbose mode):
 
 1. **`waymark_ask`**: Read & Discovery (AST structural graphs, literal paths, fuzzy matching, BM25 memory, batch symbols, file outlines).
 2. **`waymark_memory`**: Write, Bootstrap & Lifecycle Maintenance (consensus SQLite memory, anchor healing, cache busting, pruning).
@@ -53,7 +53,7 @@ Consolidates all discovery operations into a unified query interface:
 {
   "name": "waymark_ask",
   "arguments": {
-    "symbols": ["McpServer", "DiscoveryRouter", "FuzzyMatcher"],
+    "symbols": ["McpServer", "WaymarkDaemon", "PrefixTrie"],
     "plain": true
   }
 }
@@ -93,7 +93,7 @@ Dispatches consensus memory and lifecycle operations using the **`action`** para
 | :--- | :--- | :--- |
 | **`bootstrap`** | `{"action": "bootstrap", "plain": true}` | Collect source excerpts as unverified drafts for every missing or drifted facet, from the repository's own entry and source files. Each excerpt is a line that names the facet's keywords, or an exported declaration when the file has none; imports and comments are skipped. It does not initialize the memory store or publish claims; verify and chart supported conclusions explicitly. |
 | **`status`** | `{"action": "status", "plain": true}` | Inspect Semantic Repo Map completion ratio, active facets, and file drift. |
-| **`chart`** | `{"action": "chart", "facet": "boundaries", "question": "IPC Protocol", "answer": "Named pipes on Windows...", "files": ["src/daemon.ts"]}` | Record architectural knowledge into consensus memory. Same bounds and facet rules as the CLI: question 1-240 characters, answer 1-4000, a facet from the five ids (also accepted as a `[FACET:<ID>]` tag in any case) with at least one backing file (unless `not_applicable: true`); charting a facet replaces its earlier entry. Returns `{ waymark: 1, kind: "chart", published, ... }`. |
+| **`chart`** | `{"action": "chart", "facet": "boundaries", "question": "IPC Protocol", "answer": "Named pipes on Windows...", "files": ["src/daemon.ts"]}` | Record architectural knowledge into consensus memory. Same bounds and facet rules as the CLI: question 1-240 characters, answer 1-4000, a facet from the five ids (also accepted as a `[FACET:<ID>]` tag in any case) with at least one repository backing file. To mark a facet as not applicable, start `answer` with `not_applicable` (or include a `status: not_applicable` line) while still citing at least one repository file that evidences why it does not apply. Charting a facet replaces its earlier entry atomically under a per-repository store lock. Returns `{ waymark: 1, kind: "chart", published, ... }`. |
 | **`heal`** | `{"action": "heal", "dry_run": true}` | Unchart drifted facet entries (backing file vanished or changed) and collect replacement drafts; `dry_run: true` only reports what it would unchart. Active entries are unchanged. |
 | **`export`** | `{"action": "export", "format": "md"}` | Export consensus architecture map as Markdown or JSON. |
 | **`bust`** | `{"action": "bust", "file": "src/daemon.ts"}` | Invalidate all consensus memories backed by a changed file. |
@@ -110,16 +110,15 @@ With `plain: true`, every action returns plain text; `export` with `format: "jso
 
 ## Configuration Snippets
 
+Waymark defaults `CODEDB_ALLOW_TEMP=1` internally so temporary repositories work out of the box; no extra `env` block is required in standard setups. Set `"CODEDB_ALLOW_TEMP": "0"` only if you want to prevent indexing repositories under OS temporary directories. Executable path overrides (`WAYMARK_CAPN_EXECUTABLE`, `WAYMARK_CODEDB_EXECUTABLE`) are strictly operator-controlled via server environment and are never accepted as MCP tool arguments.
+
 ### 1. Google Antigravity (`~/.gemini/config/mcp_config.json`)
 ```json
 {
   "mcpServers": {
     "waymark-engine": {
       "command": "npx",
-      "args": ["-y", "waymark-engine"],
-      "env": {
-        "CODEDB_ALLOW_TEMP": "1"
-      }
+      "args": ["-y", "waymark-engine"]
     }
   }
 }
@@ -127,7 +126,7 @@ With `plain: true`, every action returns plain text; `export` with `format: "jso
 
 ### 2. Claude Code and the Claude Desktop Code tab (`~/.claude.json`)
 ```bash
-claude mcp add waymark-engine --scope user -e CODEDB_ALLOW_TEMP=1 -- npx -y waymark-engine
+claude mcp add waymark-engine --scope user -- npx -y waymark-engine
 claude mcp get waymark-engine   # expect: Connected
 ```
 Claude Code starts the server in the current project directory, so `root` defaults to that project.
@@ -139,10 +138,7 @@ Edit this file only while Claude Desktop is fully quit; the running app rewrites
   "mcpServers": {
     "waymark-engine": {
       "command": "npx",
-      "args": ["-y", "waymark-engine"],
-      "env": {
-        "CODEDB_ALLOW_TEMP": "1"
-      }
+      "args": ["-y", "waymark-engine"]
     }
   }
 }
@@ -151,7 +147,6 @@ Edit this file only while Claude Desktop is fully quit; the running app rewrites
 ### 4. Cursor / Zed / Continue
 - **Command**: `npx -y waymark-engine`
 - **Transport**: `stdio`
-- **Environment**: `CODEDB_ALLOW_TEMP=1`
 
 ---
 
@@ -188,7 +183,7 @@ The file walk is asynchronous and skips the same directories as the literal path
 
 ## Backward Compatibility & Verbose Mode
 
-If your agent framework requires flat, single-purpose tools, enable **Verbose Mode** by setting `"WAYMARK_MCP_VERBOSE": "1"` in the environment. This exposes all 11 legacy granular tools in `tools/list`:
+If your agent framework requires flat, single-purpose tools, enable **Verbose Mode** by setting `"WAYMARK_MCP_VERBOSE": "1"` in the environment. This exposes all 10 legacy granular tools alongside the 2 canonical tools (12 tools total) in `tools/list`:
 - `waymark_chart`
 - `waymark_bust`
 - `waymark_prune`

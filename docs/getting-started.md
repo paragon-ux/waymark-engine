@@ -7,26 +7,36 @@ Get up and running with Waymark Engine as a CLI tool, background daemon, live vi
 ## Prerequisites
 
 - **Node.js**: v22.0.0 or higher.
-- **Operating Systems**: macOS, Linux, and Windows (PowerShell or Bash).
+- **Operating Systems & Prebuilt Architectures**:
+  - `linux-x64`, `linux-arm64`, `darwin-x64`, `darwin-arm64`, and `win32-x64` ship prebuilt `@paragon-ux/codedb-core` binaries.
+  - `win32-arm64` automatically falls back to the bundled `codedb-win32-x64.exe` binary under Windows x64 emulation.
 - **Git** (optional): While Git repositories are auto-detected (`git rev-parse --show-toplevel`), Waymark functions fully on unversioned directories by falling back to `process.cwd()`.
 
 ---
 
 ## Installation
 
-=== "Global CLI (Recommended)"
-    Install globally to access the `waymark` binary from any shell:
-    ```bash
-    npm install -g waymark-engine
-    ```
+### Global CLI (Recommended)
 
-=== "Local Project Dependency"
-    Install per-project for direct library access and `npx` execution:
-    ```bash
-    npm install waymark-engine
-    ```
+Install globally to access the `waymark` binary from any shell:
 
-Waymark ships with prebuilt artifacts in `dist/` â€” no TypeScript build steps or native compiler dependencies required for end users.
+```bash
+npm install -g waymark-engine
+```
+
+### Local Project Dependency
+
+Install per-project for direct library access and `npx` execution:
+
+```bash
+npm install waymark-engine
+```
+
+Waymark ships precompiled JavaScript in `dist/` and prebuilt `@paragon-ux/codedb-core` binaries; no TypeScript build step is needed and `postinstall` never mutates `node_modules/`. Note that Tier 4 consensus memory (`@paragon-ux/capn-hook`) depends on `better-sqlite3`, which downloads prebuilt SQLite binaries for standard Node 22 ABIs (falling back to `node-gyp` C++ compilation only if a host ABI/OS lacks a prebuild, e.g., Alpine musl or preview Node releases).
+
+### Default Root Exclusions (`--include-dir`)
+
+Tier 2 literal path indexing skips tool/scratch folders at the repository root by default (`next`, `nuxt`, `capn`, `waymark`, `qmd`, `claude`, `codex`, `zed`, `eval`, `experiments`, `evidence`, `sandbox`, `scratch`, `tmp`, `vendor`; nested folders like `src/eval` or `src/vendor` remain indexed). To un-exclude project-specific root directories (for example Go/PHP `vendor/` or research `eval/`), pass `--include-dir vendor,eval` on `waymark ask` (MCP: `include_dirs: ["vendor", "eval"]`) or declare `"includeDirs": ["vendor", "eval"]` in `.waymark/config.json`.
 
 ---
 
@@ -92,8 +102,11 @@ For sub-millisecond query performance on large repositories (delivering a **21xâ
 # Start the background daemon
 waymark daemon start
 
-# Check daemon health, resident memory, and cached files
+# Check daemon status, PID, uptime, and IPC address
 waymark daemon status
+
+# List all active Waymark daemons for the current user
+waymark daemon list
 
 # Reload in-memory AST and trie indices after code edits
 waymark daemon reload
@@ -106,23 +119,26 @@ When the daemon is running, queries routed with `--daemon` execute in **`<10ms`*
 
 ---
 
-## Live REPL Observer & Web Viewer
+## Interactive REPL & Live Telemetry Observer
 
-Waymark Engine includes a built-in terminal REPL paired with a real-time Web Viewer for visual query inspection and telemetry:
+Waymark Engine includes two distinct REPL modes:
 
 ```bash
-# Launch interactive REPL with live browser viewer on port 4141
-waymark repl --live --port 4141
+# 1. Interactive diagnostic REPL (supports ask, symbols, /status, /clear, /exit, and /battery --path <manifest.jsonl>)
+waymark repl
+
+# 2. Live read-only telemetry observer & browser SSE viewer (default port 4141; keys: q/c/s)
+WAYMARK_TELEMETRY=1 waymark repl --live --port 4141
 ```
 
-Once launched, open the tokenized loopback access URL printed by the REPL. Keep that URL private; the dashboard and telemetry endpoints reject requests without its per-session token.
+In `--live` mode, open the tokenized loopback access URL printed by the observer (pass `--port 0` to disable HTTP and monitor in the terminal only). Keep that URL private; the dashboard and telemetry endpoints reject requests without its per-session token.
 
-The observer binds to `127.0.0.1`, validates Host and Origin headers, and blocks framing. It requires `WAYMARK_TELEMETRY=1`. Persistent query/session logging is disabled unless the same explicit opt-in is set.
+The observer binds to `127.0.0.1`, validates Host and Origin headers, and blocks framing. It requires `WAYMARK_TELEMETRY=1` (and exits non-zero without it). Persistent query/session logging is disabled unless the same explicit opt-in is set.
 
-### Key Capabilities of the Live Viewer:
-- **Server-Sent Events (SSE)**: Queries, cache hits, tier execution timings, and latency metrics stream instantaneously to the browser.
-- **Fixed-Viewport App-Shell**: Viewport-locked single internal scroll mechanism (`overflow: hidden` on root, flexbox list layout), eliminating double scrollbars even at scaled zoom levels (125% / 150%).
-- **Hardened Test Battery**: Run canonical prompt batteries (`/battery`) directly from the REPL to measure Tier 1 through Tier 4 recall fidelity.
+### Key Capabilities:
+- **Server-Sent Events (SSE) (`--live`)**: Queries, cache hits, tier execution timings, and latency metrics stream instantaneously to the browser while `q` quits, `c` clears, and `s` prints session stats.
+- **Fixed-Viewport App-Shell (`--live`)**: Viewport-locked single internal scroll mechanism (`overflow: hidden` on root, flexbox list layout), eliminating double scrollbars even at scaled zoom levels (125% / 150%).
+- **Hardened Prompt Battery (`waymark repl` / `--manifest`)**: Run a custom JSONL prompt evaluation manifest via `/battery --path <manifest.jsonl>` (or `waymark repl --manifest <file.jsonl>`). Inside a `waymark-engine` source checkout, `/battery` with no `--path` (or `npm run test:prompts`) runs the repository's canonical 105-prompt self-evaluation suite (`docs/prompts/CATALOGUE_MANIFEST.jsonl`).
 
 ---
 

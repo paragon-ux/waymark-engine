@@ -185,7 +185,9 @@ test("live dashboard is loopback-only, omits permissive CORS, and renders teleme
     constructor(url: string) { eventSourceUrls.push(url); }
     addEventListener(name: string, callback: (event: { data: string }) => void) { listeners[name] = callback; }
   }
-  const script = html.match(/<script>([\s\S]*?)<\/script>/u)?.[1];
+  const scriptOpen = html.indexOf("<script>");
+  const scriptClose = scriptOpen === -1 ? -1 : html.indexOf("</script>", scriptOpen + 8);
+  const script = scriptOpen !== -1 && scriptClose !== -1 ? html.slice(scriptOpen + 8, scriptClose) : undefined;
   assert.ok(script);
   vm.runInNewContext(script, {
     document,

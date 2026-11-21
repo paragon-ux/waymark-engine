@@ -11,7 +11,7 @@
       "purpose": "Measures AST traversal scalability, high-collision verb mitigation, literal path bypassing, and fail-closed path routing on a massive real-world codebase.",
       "target": {
         "repository": "grafana/grafana",
-        "path": "c:/Users/USER/Desktop/Frameworks/deepseek-playground-2/test-codedb/grafana"
+        "path": "<external-checkout>/grafana"
       },
       "cardinality": {
         "totalFiles": 23517,
@@ -27,13 +27,13 @@
         "threadAllocation": "CODEDB_MAX_THREADS = 3 (preserves 1 interactive core)"
       },
       "harnesses": [
-        "scratch/benchmarks/suites/run_parity_benchmark.mjs",
-        "scratch/benchmarks/suites/benchmark_runner.mjs",
-        "scratch/benchmarks/suites/benchmark_stateless_vs_resident.mjs"
+        "benchmarks/suites/run_parity_benchmark.mjs",
+        "benchmarks/suites/benchmark_runner.mjs",
+        "benchmarks/suites/benchmark_stateless_vs_resident.mjs"
       ],
       "dataDirectories": {
-        "baselinePreHardening": "scratch/benchmarks/data/grafana_pre_hardening",
-        "hardenedPostHardening": "scratch/benchmarks/data/grafana_post_hardening"
+        "baselinePreHardening": "benchmarks/data/grafana_pre_hardening",
+        "hardenedPostHardening": "benchmarks/data/grafana_post_hardening"
       },
       "keyResults": {
         "highCollisionASTVerb": {
@@ -73,7 +73,7 @@
       "purpose": "Autonomous in-the-wild evaluation across all 4 discovery tiers on a previously un-benchmarked multi-language codebase strictly via MCP tools.",
       "target": {
         "repository": "openai/codex",
-        "path": "c:/Users/USER/Desktop/Frameworks/deepseek-playground-2/test-codedb/codex"
+        "path": "<external-checkout>/codex"
       },
       "cardinality": {
         "linesOfCode": "50,000+",
@@ -88,7 +88,7 @@
         "externalGrepLookups": 0
       },
       "dataDirectories": {
-        "results": "scratch/benchmarks/data/codex_e2e"
+        "results": "benchmarks/data/codex_e2e"
       },
       "keyResults": {
         "milestone1_fuzzyToAst": {

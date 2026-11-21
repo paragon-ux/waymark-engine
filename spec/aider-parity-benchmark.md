@@ -109,7 +109,7 @@ Measures whether the model identifies the primary target file on Turn 1 without 
 2. **Environment Isolation**:
    - Clean git clone of target repository for each track.
    - Run Aider harness using standard Aider `RepoMap` generation (1024 token budget and 2048 token budget).
-   - Run Waymark harness using stdio MCP server (`canonicalOnly: true`, <450 tokens tool schema).
+   - Run Waymark harness using stdio MCP server (`canonicalOnly: true`, two-verb schema: ~1,500 tokens / ~6.1 KB serialized vs ~2,850 tokens across 12 tools in verbose mode).
 3. **Automated Verification**:
    - For each completed task, run the project test suite (`npm test`).
    - If tests fail or architectural invariants are violated, the task is marked as failed.
@@ -136,7 +136,7 @@ The benchmark was executed against live endpoints using the standardized harness
 | **Track B: Invariant Adherence** | 100% (Partial) | **100% (Complete)** | **Waymark WIN**: Grounded in true cross-platform canonicalization rules. |
 | **Track B: Hallucinated Semantics** | **YES (Fabricated 'bust token')** | **NO (0% Hallucination)** | **Waymark WIN**: Aider's naked AST led model to invent imaginary `crypto.randomBytes` caching logic. |
 | **Multi-Turn Context (10 Turns)** | 2,700 tokens | **196 tokens** | **Waymark WIN: 92.7% Token Reduction**. |
-| **Tool Schema Overhead (MCP)** | N/A (Embedded) | **<450 tokens** (Two-Verb default) | Lean MCP surface prevents context saturation. |
+| **Tool Schema Overhead (MCP)** | N/A (Embedded) | **~1,500 tokens** (Two-Verb default, ~46% below verbose) | Lean two-verb MCP surface reduces schema context overhead vs flat tool catalogs. |
 
 ---
 

@@ -1,7 +1,5 @@
-import fs from "node:fs";
-import path from "node:path";
-import { repoRoot } from "../paths.js";
-import { ask, publish, unchart, bust, prune, listEntries, context, initCapn } from "../capnAdapter.js";
+import { normalizeRelativePath, repoRoot, resolveRepositoryFile } from "../paths.js";
+import { ask, unchart, bust, prune, listEntries, context, initCapn } from "../capnAdapter.js";
 import { discoverSymbolsInFile, SUPPORTED_STRUCTURED_LANGUAGES } from "../astExtractor.js";
 import { tryDaemonPing, getDaemonAddress } from "../daemon.js";
 import { renderPlainText } from "../renderPlainText.js";
@@ -33,8 +31,12 @@ function resolveProfile(args: Record<string, unknown>): AdapterProfile {
   return value === "none" ? "none" : "capn-cli";
 }
 
-function resolveExecutable(args: Record<string, unknown>): string {
-  return (typeof args.capn_executable === "string" && args.capn_executable.trim()) || process.env.WAYMARK_CAPN_EXECUTABLE || "";
+/**
+ * Executable overrides are strictly operator-controlled via server environment;
+ * caller-supplied MCP tool arguments are never allowed to select a host binary.
+ */
+function resolveExecutable(): string {
+  return process.env.WAYMARK_CAPN_EXECUTABLE || "";
 }
 
 export const waymarkAskTool: McpToolHandler = {
@@ -97,6 +99,8 @@ export const waymarkAskTool: McpToolHandler = {
         },
         depth: {
           type: "integer",
+          minimum: 1,
+          maximum: 5,
           description: "Call graph traversal depth (1-5) for structural AST queries. Defaults to 1.",
         },
         direction: {
@@ -117,9 +121,10 @@ export const waymarkAskTool: McpToolHandler = {
           items: { type: "string" },
           description: "Optional list of multiple symbol identifiers to inspect concurrently across the AST call graph.",
         },
-        capn_executable: {
-          type: "string",
-          description: "Optional custom path to the Capn executable.",
+        include_dirs: {
+          type: "array",
+          items: { type: "string" },
+          description: "Optional root directory names (e.g. 'vendor', 'eval') to un-exclude from Tier 2 literal path indexing.",
         },
         profile: {
           type: "string",
@@ -146,13 +151,28 @@ export const waymarkAskTool: McpToolHandler = {
       const plain = args.plain === true;
       const daemon = args.daemon === true;
       const dev = args.dev === true;
-      const depth = typeof args.depth === "number" ? Math.min(Math.max(1, args.depth), 5) : undefined;
-      const direction = (args.direction === "callers" || args.direction === "callees" || args.direction === "both")
-        ? args.direction
-        : undefined;
+      let depth: number | undefined;
+      if (args.depth !== undefined) {
+        if (typeof args.depth !== "number" || !Number.isInteger(args.depth) || args.depth < 1 || args.depth > 5) {
+          throw new WaymarkError("INVALID_ARGUMENT", `Invalid depth value "${String(args.depth)}". Expected integer 1-5.`);
+        }
+        depth = args.depth;
+      }
+      let direction: "callers" | "callees" | "both" | undefined;
+      if (args.direction !== undefined) {
+        if (args.direction !== "callers" && args.direction !== "callees" && args.direction !== "both") {
+          throw new WaymarkError("INVALID_ARGUMENT", `Invalid direction value "${String(args.direction)}". Expected callers, callees, or both.`);
+        }
+        direction = args.direction;
+      }
       const excludeTests = args.exclude_tests === true || args.excludeTests === true;
       const facet = typeof args.facet === "string" ? args.facet.trim() : undefined;
       const rawPath = typeof args.path === "string" ? args.path.trim() : undefined;
+      const rawIncludeDirs = Array.isArray(args.include_dirs)
+        ? args.include_dirs.filter((d): d is string => typeof d === "string" && d.trim().length > 0)
+        : (Array.isArray(args.includeDirs)
+          ? args.includeDirs.filter((d): d is string => typeof d === "string" && d.trim().length > 0)
+          : undefined);
 
       // 1. Facet status check
       if (facet === "status") {
@@ -171,7 +191,6 @@ export const waymarkAskTool: McpToolHandler = {
       const rawSymbols = Array.isArray(args.symbols) ? args.symbols.filter((s): s is string => typeof s === "string" && s.trim().length > 0) : [];
       if (rawSymbols.length > 0) {
         const { queryMultiSymbols } = await import("../codedbAdapter.js");
-        // codedb resolves its own executable; capn_executable / WAYMARK_CAPN_EXECUTABLE name capn.
         const res = await queryMultiSymbols(root, rawSymbols);
         if (plain) {
           return {
@@ -189,7 +208,7 @@ export const waymarkAskTool: McpToolHandler = {
       const requestedLang = typeof args.language === "string" ? args.language.trim() : undefined;
       if ((rawPath && !rawQuestion && !facet) || (args.outline === true && rawPath)) {
         const queryToUse = rawQuery || rawQuestion || undefined;
-        const res = await ask(root, resolveProfile(args), resolveExecutable(args), queryToUse ?? "", {
+        const res = await ask(root, resolveProfile(args), resolveExecutable(), queryToUse ?? "", {
           path: rawPath,
           outline: true,
           language: requestedLang,
@@ -197,13 +216,13 @@ export const waymarkAskTool: McpToolHandler = {
         if (plain) {
           return {
             content: [{ type: "text", text: renderPlainText(res) }],
-            isError: false,
+            isError: res.status === "error",
           };
         }
         if (res.status === "hit") {
           return jsonResult(res.result);
         }
-        return jsonResult(res);
+        return jsonResult(res, res.status === "error");
       }
 
       if (!question && !facet) throw new WaymarkError("MISSING_ARGUMENT", "question, query, path, symbols, or facet is required");
@@ -212,7 +231,7 @@ export const waymarkAskTool: McpToolHandler = {
       const tier = rawTier as DiscoveryTier | undefined;
       const autoResolve = args.auto_resolve !== false && args.autoResolve !== false;
 
-      const result = await ask(root, resolveProfile(args), resolveExecutable(args), question, {
+      const result = await ask(root, resolveProfile(args), resolveExecutable(), question, {
         tier,
         autoResolve,
         timing: timing || dev,
@@ -224,12 +243,16 @@ export const waymarkAskTool: McpToolHandler = {
         facet,
         path: rawPath,
         language: requestedLang,
+        includeDirs: rawIncludeDirs,
       });
 
+      const isError =
+        result.status === "error" ||
+        (result.status === "miss" && "missCode" in result && result.missCode === "CAPN_NON_DETERMINISTIC_MODE");
       if (plain) {
         return {
           content: [{ type: "text", text: renderPlainText(result) }],
-          isError: false,
+          isError,
         };
       }
 
@@ -240,7 +263,9 @@ export const waymarkAskTool: McpToolHandler = {
         status: result.status,
       };
       if ("memoryPruned" in result && Array.isArray(result.memoryPruned)) payload.memoryPruned = result.memoryPruned;
+      if ("dev" in result && result.dev) payload.dev = result.dev;
       if (result.status === "hit") {
+        if ("confidence" in result && result.confidence) payload.confidence = result.confidence;
         payload.result = result.result;
         if (result.timings) payload.timings = result.timings;
       } else if (result.status === "junction") {
@@ -254,14 +279,19 @@ export const waymarkAskTool: McpToolHandler = {
         if (result.tip) payload.tip = result.tip;
         if (result.timings) payload.timings = result.timings;
       } else if (result.status === "error") {
+        if ("errorCode" in result && result.errorCode) payload.errorCode = result.errorCode;
+        if ("message" in result && result.message) payload.message = result.message;
         payload.error = "error" in result ? result.error : ("message" in result ? result.message : "Error");
+        if ("retryable" in result && typeof result.retryable === "boolean") payload.retryable = result.retryable;
+        if (result.timings) payload.timings = result.timings;
       } else {
         payload.matches = "matches" in result ? result.matches : [];
+        if ("candidates" in result && Array.isArray(result.candidates)) payload.candidates = result.candidates;
         if ("missCode" in result) payload.missCode = result.missCode;
         if ("reason" in result) payload.reason = result.reason;
         if (result.timings) payload.timings = result.timings;
       }
-      return jsonResult(payload);
+      return jsonResult(payload, isError);
     } catch (error) {
       return errorResult(error);
     }
@@ -296,7 +326,7 @@ export const waymarkMemoryTool: McpToolHandler = {
         files: {
           type: "array",
           items: { type: "string" },
-          description: "Array of repository-relative backing file paths (required for active facets).",
+          description: "Array of repository-relative backing file paths (at least one file is required for any facet, including not_applicable).",
         },
         file: {
           type: "string",
@@ -331,10 +361,6 @@ export const waymarkMemoryTool: McpToolHandler = {
           type: "boolean",
           description: "Emit token-minimal plain text formatted result for LLM context efficiency.",
         },
-        capn_executable: {
-          type: "string",
-          description: "Optional custom path to the Capn executable.",
-        },
         profile: {
           type: "string",
           enum: ["capn-cli", "none"],
@@ -356,7 +382,7 @@ export const waymarkMemoryTool: McpToolHandler = {
       }
       const action = typeof args.action === "string" ? args.action.trim() : "";
       const plain = args.plain === true;
-      const executable = resolveExecutable(args);
+      const executable = resolveExecutable();
       const profile = resolveProfile(args);
 
       if (action === "chart") {
@@ -465,10 +491,14 @@ export const waymarkMemoryTool: McpToolHandler = {
       }
 
       if (action === "export") {
+        const format = args.format === undefined ? "md" : args.format;
+        if (format !== "md" && format !== "json") {
+          throw new WaymarkError("INVALID_ARGUMENT", `Invalid export format "${String(format)}". Allowed: md, json.`);
+        }
         const { getSemanticMapStatus, renderSemanticMapExport } = await import("../semanticMap.js");
         const status = getSemanticMapStatus(root);
         // An explicit format wins over plain: JSON stays JSON, and Markdown is already plain text.
-        if (args.format === "json") {
+        if (format === "json") {
           return jsonResult(status);
         }
         return { content: [{ type: "text", text: renderSemanticMapExport(status) }], isError: false };
@@ -523,14 +553,19 @@ export const waymarkChartTool: McpToolHandler = {
           type: "string",
           description: "The conclusive charted answer.",
         },
+        facet: {
+          type: "string",
+          enum: ["lifecycle", "data_state", "boundaries", "invariants", "failure"],
+          description: "Optional architectural facet when charting a Semantic Repo Map entry.",
+        },
         files: {
           type: "array",
           items: { type: "string" },
           description: "Array of repository-relative file paths referenced in the answer.",
         },
-        capn_executable: {
+        subsystem: {
           type: "string",
-          description: "Optional custom path to the Capn executable.",
+          description: "Unsupported: chart against the repository root or omit subsystem.",
         },
         profile: {
           type: "string",
@@ -548,35 +583,43 @@ export const waymarkChartTool: McpToolHandler = {
   handler: async (args) => {
     try {
       const root = resolveRoot(args);
+      if (typeof args.subsystem === "string" && args.subsystem.trim()) {
+        throw new WaymarkError("UNSUPPORTED_SUBSYSTEM", "Subsystem-scoped memory operations are not supported; chart against the repository root or omit subsystem.");
+      }
       const question = typeof args.question === "string" ? args.question.trim() : "";
       const answer = typeof args.answer === "string" ? args.answer.trim() : "";
-      const files = Array.isArray(args.files) ? args.files.filter((f): f is string => typeof f === "string") : [];
-      if (!question) throw new WaymarkError("MISSING_ARGUMENT", "question is required");
+      const rawFacet = typeof args.facet === "string" ? args.facet.trim() : undefined;
+      const files = Array.isArray(args.files)
+        ? args.files.filter((f): f is string => typeof f === "string" && f.trim().length > 0)
+        : [];
+      if (!question && !rawFacet) throw new WaymarkError("MISSING_ARGUMENT", "question is required");
       if (!answer) throw new WaymarkError("MISSING_ARGUMENT", "answer is required");
 
-      for (const relPath of files) {
-        const fullPath = path.resolve(root, relPath);
-        if (!fs.existsSync(fullPath)) {
-          throw new WaymarkError("INVALID_ARGUMENT", `Chart backing file not found: "${relPath}" (resolved to "${fullPath}"). Pass valid repository files.`);
-        }
-        const stat = fs.statSync(fullPath);
-        if (!stat.isFile()) {
-          throw new WaymarkError("INVALID_ARGUMENT", `Chart backing path is not a file: "${relPath}" (is directory).`);
+      // Enforce repository containment lexically BEFORE touching the host filesystem (no existence oracle or host path leak).
+      const normalizedFiles = files.map((relPath) => normalizeRelativePath(relPath, root));
+      for (let i = 0; i < normalizedFiles.length; i++) {
+        const relPath = normalizedFiles[i]!;
+        try {
+          resolveRepositoryFile(root, relPath);
+        } catch (err) {
+          if (err instanceof WaymarkError && err.code === "FILE_MISSING") {
+            throw new WaymarkError("INVALID_ARGUMENT", `Chart backing file not found: "${relPath}". Pass valid repository files.`);
+          }
+          if (err instanceof WaymarkError && err.code === "NOT_REGULAR_FILE") {
+            throw new WaymarkError("INVALID_ARGUMENT", `Chart backing path is not a file: "${relPath}" (is directory).`);
+          }
+          throw err;
         }
       }
 
-      const result = await publish(root, resolveProfile(args), resolveExecutable(args), question, answer, files);
-      const payload: Record<string, unknown> = {
-        waymark: 1,
-        kind: "chart",
-        published: result.published,
-        adapter: result.adapter,
-        output: result.output,
-      };
-      if (!result.published && result.error) {
-        payload.error = result.error;
-      }
-      return jsonResult(payload);
+      const { chartMemoryEntry } = await import("../semanticMap.js");
+      const res = await chartMemoryEntry(root, resolveProfile(args), resolveExecutable(), {
+        question,
+        answer,
+        facet: rawFacet,
+        files: normalizedFiles,
+      });
+      return jsonResult(res, !res.published);
     } catch (error) {
       return errorResult(error);
     }
@@ -678,10 +721,6 @@ export const waymarkUnchartTool: McpToolHandler = {
           type: "boolean",
           description: "If true, quietly succeeds without error if the ID is not found.",
         },
-        capn_executable: {
-          type: "string",
-          description: "Optional custom path to the Capn executable.",
-        },
         root: {
           type: "string",
           description: "Optional repository root path. Defaults to current working directory.",
@@ -696,7 +735,7 @@ export const waymarkUnchartTool: McpToolHandler = {
       const id = typeof args.id === "string" ? args.id.trim() : "";
       if (!id) throw new WaymarkError("MISSING_ARGUMENT", "id is required");
       const ifExists = args.if_exists === true || args.ifExists === true;
-      const res = await unchart(root, resolveExecutable(args), id, ifExists);
+      const res = await unchart(root, resolveExecutable(), id, ifExists);
       return jsonResult(res, !res.ok);
     } catch (error) {
       return errorResult(error);
@@ -715,10 +754,6 @@ export const waymarkBustTool: McpToolHandler = {
           type: "string",
           description: "Repository-relative file path whose associated chart entries should be invalidated.",
         },
-        capn_executable: {
-          type: "string",
-          description: "Optional custom path to the Capn executable.",
-        },
         root: {
           type: "string",
           description: "Optional repository root path. Defaults to current working directory.",
@@ -732,7 +767,7 @@ export const waymarkBustTool: McpToolHandler = {
       const root = resolveRoot(args);
       const file = typeof args.file === "string" ? args.file.trim() : "";
       if (!file) throw new WaymarkError("MISSING_ARGUMENT", "file path is required");
-      const res = await bust(root, resolveExecutable(args), file);
+      const res = await bust(root, resolveExecutable(), file);
       return jsonResult(res, !res.ok);
     } catch (error) {
       return errorResult(error);
@@ -747,10 +782,6 @@ export const waymarkPruneTool: McpToolHandler = {
     inputSchema: {
       type: "object",
       properties: {
-        capn_executable: {
-          type: "string",
-          description: "Optional custom path to the Capn executable.",
-        },
         root: {
           type: "string",
           description: "Optional repository root path. Defaults to current working directory.",
@@ -761,7 +792,7 @@ export const waymarkPruneTool: McpToolHandler = {
   handler: async (args) => {
     try {
       const root = resolveRoot(args);
-      const res = await prune(root, resolveExecutable(args));
+      const res = await prune(root, resolveExecutable());
       return jsonResult(res, !res.ok);
     } catch (error) {
       return errorResult(error);
@@ -776,10 +807,6 @@ export const waymarkListTool: McpToolHandler = {
     inputSchema: {
       type: "object",
       properties: {
-        capn_executable: {
-          type: "string",
-          description: "Optional custom path to the Capn executable.",
-        },
         root: {
           type: "string",
           description: "Optional repository root path. Defaults to current working directory.",
@@ -790,7 +817,7 @@ export const waymarkListTool: McpToolHandler = {
   handler: async (args) => {
     try {
       const root = resolveRoot(args);
-      const res = await listEntries(root, resolveExecutable(args));
+      const res = await listEntries(root, resolveExecutable());
       return jsonResult(res, !res.ok);
     } catch (error) {
       return errorResult(error);
@@ -805,10 +832,6 @@ export const waymarkContextTool: McpToolHandler = {
     inputSchema: {
       type: "object",
       properties: {
-        capn_executable: {
-          type: "string",
-          description: "Optional custom path to the Capn executable.",
-        },
         root: {
           type: "string",
           description: "Optional repository root path. Defaults to current working directory.",
@@ -819,7 +842,7 @@ export const waymarkContextTool: McpToolHandler = {
   handler: async (args) => {
     try {
       const root = resolveRoot(args);
-      const res = await context(root, resolveExecutable(args));
+      const res = await context(root, resolveExecutable());
       return jsonResult(res, !res.ok);
     } catch (error) {
       return errorResult(error);
@@ -840,7 +863,7 @@ export const waymarkDaemonStatusTool: McpToolHandler = {
         },
         reload: {
           type: "boolean",
-          description: "Optional. If true, reloads and invalidates the in-memory PrefixTrie and path cache for the resident daemon.",
+          description: "Optional. If true, restarts the resident codedb AST client and invalidates the in-memory PrefixTrie, path, fuzzy, and tree-sitter caches for the resident daemon.",
         },
       },
     },
@@ -897,10 +920,6 @@ export const waymarkInitTool: McpToolHandler = {
     inputSchema: {
       type: "object",
       properties: {
-        capn_executable: {
-          type: "string",
-          description: "Optional custom path to the Capn executable.",
-        },
         root: {
           type: "string",
           description: "Optional repository root path. Defaults to current working directory.",
@@ -911,7 +930,7 @@ export const waymarkInitTool: McpToolHandler = {
   handler: async (args) => {
     try {
       const root = resolveRoot(args);
-      const res = await initCapn(root, resolveExecutable(args));
+      const res = await initCapn(root, resolveExecutable());
       return jsonResult(res, !res.ok);
     } catch (error) {
       return errorResult(error);
@@ -926,6 +945,10 @@ export const waymarkMapStatusTool: McpToolHandler = {
     inputSchema: {
       type: "object",
       properties: {
+        subsystem: {
+          type: "string",
+          description: "Unsupported: subsystem-scoped maps are not implemented; omit this value to target the repository root.",
+        },
         plain: {
           type: "boolean",
           description: "Optional. Emit token-minimal plain text (~25 tokens). Defaults to false.",
@@ -940,6 +963,9 @@ export const waymarkMapStatusTool: McpToolHandler = {
   handler: async (args) => {
     try {
       const root = resolveRoot(args);
+      if (typeof args.subsystem === "string" && args.subsystem.trim()) {
+        throw new WaymarkError("UNSUPPORTED_SUBSYSTEM", "Subsystem-scoped memory status is not supported; query the repository root or omit subsystem.");
+      }
       const { getSemanticMapStatus, renderSemanticMapStatus } = await import("../semanticMap.js");
       const status = getSemanticMapStatus(root);
       if (args.plain) {

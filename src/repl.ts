@@ -8,11 +8,13 @@ import { queryMultiSymbols } from "./codedbAdapter.js";
 import { discoverSymbolsInFile, discoverSymbolsInRepo } from "./astExtractor.js";
 import { anchorForRange, repoRoot } from "./paths.js";
 import { autoStartDaemon, tryDaemonPing, stopDaemon, restartDaemon } from "./daemon.js";
+import { closeAllResidentClients } from "./residentCodedb.js";
 import { renderPlainText } from "./renderPlainText.js";
 import { runBaselineSearch, computeBaselineComparison } from "./baselineSearch.js";
 import { runManifestEvaluation, executePromptTest } from "./evaluator.js";
 import { AskResult, DiscoveryTier } from "./types.js";
 import { resolveSessionLogPath, SessionTelemetryEvent } from "./sessionLogger.js";
+import { ensureStateDir, stateDir } from "./stateDir.js";
 
 export interface ReplOptions {
   rootDir?: string;
@@ -27,35 +29,89 @@ export interface ReplOptions {
 /**
  * Start the interactive Waymark REPL attached to the resident background daemon or live observer.
  */
-export async function startRepl(options: ReplOptions = {}): Promise<void> {
+export async function startRepl(options: ReplOptions = {}): Promise<number> {
   const root = options.rootDir ? path.resolve(options.rootDir) : repoRoot();
 
   if (options.live) {
-    await startLiveReplObserver(options);
-    return;
+    return await startLiveReplObserver(options);
   }
 
   let devMode = options.dev ?? true;
   let plainMode = options.plain ?? false;
+  const prevReplSession = process.env.WAYMARK_REPL_SESSION;
   process.env.WAYMARK_REPL_SESSION = "1";
+  const restoreReplSessionEnv = (): void => {
+    if (prevReplSession === undefined) {
+      delete process.env.WAYMARK_REPL_SESSION;
+    } else {
+      process.env.WAYMARK_REPL_SESSION = prevReplSession;
+    }
+  };
 
-  // Enforce resident daemon requirement
+  // Register termination handlers BEFORE autoStartDaemon so SIGINT/SIGTERM during
+  // daemon startup still tears down a newly spawned daemon instead of orphaning it.
+  let startupAborted = false;
+  let activeFinalize: ((sayGoodbye: boolean) => Promise<void>) | null = null;
+  const onSignal = (): void => {
+    if (activeFinalize) {
+      void activeFinalize(false);
+    } else {
+      startupAborted = true;
+    }
+  };
+  process.on("SIGINT", onSignal);
+  process.on("SIGTERM", onSignal);
+
+  const detachSignals = (): void => {
+    process.off("SIGINT", onSignal);
+    process.off("SIGTERM", onSignal);
+  };
+
+  // Check whether a resident daemon was already running before the REPL started so
+  // exiting the REPL stops any daemon it auto-spawned without killing a user-managed daemon.
+  const preExistingPing = await tryDaemonPing(root, 500);
+  const spawnedByRepl = !preExistingPing?.ok;
+
+  if (startupAborted) {
+    closeAllResidentClients();
+    restoreReplSessionEnv();
+    detachSignals();
+    return 0;
+  }
+
   process.stdout.write(`Connecting to Waymark resident daemon for: ${root} ...\n`);
   const online = await autoStartDaemon(root, 15_000);
+  if (startupAborted) {
+    closeAllResidentClients();
+    if (spawnedByRepl) {
+      try {
+        await stopDaemon(root);
+      } catch {
+        // Ignore teardown errors on interrupted startup
+      }
+    }
+    restoreReplSessionEnv();
+    detachSignals();
+    return 0;
+  }
   if (!online) {
     process.stderr.write(`[REPL Error] Unable to connect or auto-start background daemon for: ${root}\n`);
-    process.exit(1);
+    closeAllResidentClients();
+    restoreReplSessionEnv();
+    detachSignals();
+    return 1;
   }
 
   const ping = await tryDaemonPing(root, 1000);
   const pidStr = ping?.pid ? `PID: ${ping.pid}` : "PID: active";
   const uptimeStr = ping?.uptime !== undefined ? `Uptime: ${ping.uptime}s` : "";
+  const lifecycleNote = spawnedByRepl ? "auto-stops on exit" : "pre-existing";
 
   process.stdout.write(
     [
       "===================================================================",
       "  Waymark Diagnostic REPL (Resident Mode)",
-      `  Daemon: CONNECTED (${pidStr} | ${uptimeStr})`,
+      `  Daemon: CONNECTED (${pidStr}${uptimeStr ? ` | ${uptimeStr}` : ""} | ${lifecycleNote})`,
       `  Root:   ${root}`,
       `  Dev:    ${devMode ? "ENABLED (--dev)" : "DISABLED"} | Plain: ${plainMode ? "ENABLED (--plain)" : "DISABLED"}`,
       "  Type 'help' for available commands, 'exit' or Ctrl+D to quit.",
@@ -69,33 +125,82 @@ export async function startRepl(options: ReplOptions = {}): Promise<void> {
     prompt: "waymark> ",
   });
 
-  rl.prompt();
+  return await new Promise<number>((resolve) => {
+    let pendingChain: Promise<void> = Promise.resolve();
+    let closed = false;
+    let exitRequested = false;
+    let finalized = false;
 
-  rl.on("line", async (lineStr: string) => {
-    const line = lineStr.trim();
-    if (!line) {
-      rl.prompt();
+    const finalize = async (sayGoodbye: boolean): Promise<void> => {
+      if (finalized) return;
+      finalized = true;
+      closed = true;
+      // Keep process signal handlers attached until daemon teardown completes so a
+      // duplicate SIGINT/SIGTERM mid-shutdown cannot abort stopDaemon() and orphan the daemon.
+      rl.close();
+      process.stdout.write(sayGoodbye ? "Goodbye.\n" : "\nExiting Waymark REPL.\n");
+      closeAllResidentClients();
+      if (spawnedByRepl) {
+        try {
+          await stopDaemon(root);
+        } catch {
+          // Ignore teardown errors on exit
+        }
+      }
+      restoreReplSessionEnv();
+      detachSignals();
+      resolve(0);
+    };
+
+    activeFinalize = finalize;
+
+    if (startupAborted) {
+      void finalize(false);
       return;
     }
 
-    try {
-      await handleReplCommand(line, root, {
-        dev: devMode,
-        plain: plainMode,
-        setDev: (val: boolean) => { devMode = val; },
-        setPlain: (val: boolean) => { plainMode = val; },
-        manifestPath: options.manifestPath,
-      });
-    } catch (err: any) {
-      process.stdout.write(`Error: ${err?.message || err}\n`);
-    }
+    rl.on("SIGINT", () => {
+      void finalize(false);
+    });
+
+    rl.on("line", (lineStr: string) => {
+      const line = lineStr.trim();
+      pendingChain = pendingChain
+        .then(async () => {
+          if (exitRequested || finalized) return;
+          if (!line) {
+            if (!closed) rl.prompt();
+            return;
+          }
+          try {
+            const action = await handleReplCommand(line, root, {
+              dev: devMode,
+              plain: plainMode,
+              setDev: (val: boolean) => { devMode = val; },
+              setPlain: (val: boolean) => { plainMode = val; },
+              manifestPath: options.manifestPath,
+            });
+            if (action === "exit") {
+              exitRequested = true;
+              await finalize(true);
+              return;
+            }
+          } catch (err: any) {
+            process.stdout.write(`Error: ${err?.message || err}\n`);
+          }
+          if (!closed && !exitRequested && !finalized) rl.prompt();
+        })
+        .catch(() => {
+          if (!closed && !exitRequested && !finalized) rl.prompt();
+        });
+    });
+
+    rl.on("close", () => {
+      closed = true;
+      void pendingChain.finally(() => finalize(false));
+    });
 
     rl.prompt();
-  });
-
-  rl.on("close", () => {
-    process.stdout.write("\nExiting Waymark REPL.\n");
-    process.exit(0);
   });
 }
 
@@ -112,41 +217,54 @@ async function handleReplCommand(
     setPlain: (val: boolean) => void;
     manifestPath?: string;
   }
-): Promise<void> {
+): Promise<"continue" | "exit"> {
   const parts = line.match(/(?:[^\s"]+|"[^"]*")+/g) || [];
-  const cmd = parts[0]?.toLowerCase();
-  const rawArgs = parts.slice(1).map((a) => (a.startsWith('"') && a.endsWith('"') ? a.slice(1, -1) : a));
+  const rawCmd = parts[0]?.toLowerCase();
+  let cmd = rawCmd;
+  let rawArgs = parts.slice(1).map((a) => (a.startsWith('"') && a.endsWith('"') ? a.slice(1, -1) : a));
+
+  if (rawCmd === "/battery") {
+    cmd = "manifest";
+  } else if (rawCmd === "/status") {
+    cmd = "daemon";
+    rawArgs = ["status", ...rawArgs];
+  } else if (rawCmd === "/clear") {
+    cmd = "clear";
+  } else if (rawCmd === "/exit" || rawCmd === "/quit") {
+    cmd = "exit";
+  } else if (rawCmd === "/help") {
+    cmd = "help";
+  }
 
   if (cmd === "exit" || cmd === "quit") {
-    process.stdout.write("Goodbye.\n");
-    process.exit(0);
+    return "exit";
   }
 
   if (cmd === "clear") {
     process.stdout.write("\x1Bc");
-    return;
+    return "continue";
   }
 
   if (cmd === "help") {
     process.stdout.write(
       [
         "Waymark REPL Commands:",
-        "  ask <question> [--tier auto|ast|path|fuzzy|capn] [--depth <n>] [--direction callers|callees|both]",
+        "  ask <question> [--tier auto|ast|path|fuzzy|capn] [--depth <1-5>] [--direction callers|callees|both]",
         "  symbols <sym1> [sym2 ...]       Query batch symbols across repository",
         "  discover [--path <p>] [--query <q>] Extract single-file or repo-wide symbols",
         "  anchor <file> <start> <end>     Compute SHA-256 range anchor via anchorForRange",
         "  verify-anchor <file> <start> <end> <hash> Check anchor integrity and drift",
         "  baseline <query>                Run naive lexical regex search benchmark",
         "  compare <query>                 Compare Waymark vs baseline search (noise & speed)",
-        "  manifest [--path <p>] [--category <c>] [--id <i>] Run prompt test battery",
-        "  daemon [status|ping|restart|stop] Control resident background daemon",
+        "  manifest | /battery [--path <manifest.jsonl>] [--category <c>] [--id <i>] Run JSONL prompt evaluation manifest (defaults to docs/prompts/CATALOGUE_MANIFEST.jsonl in the waymark-engine repo)",
+        "  daemon [status|ping|restart|stop] | /status Control resident background daemon",
         "  dev [on|off]                    Toggle dev mode diagnostics (default: on)",
         "  plain [on|off]                  Toggle plain text output format (default: off)",
-        "  clear                           Clear screen",
-        "  exit | quit                     Exit REPL",
+        "  clear | /clear                  Clear screen",
+        "  exit | quit | /exit             Exit REPL (auto-stops daemon if spawned by REPL)",
       ].join("\n") + "\n"
     );
-    return;
+    return "continue";
   }
 
   if (cmd === "dev") {
@@ -164,7 +282,7 @@ async function handleReplCommand(
     } else {
       process.stdout.write(`Dev mode is currently: ${ctx.dev ? "ENABLED" : "DISABLED"}\n`);
     }
-    return;
+    return "continue";
   }
 
   if (cmd === "plain") {
@@ -182,7 +300,7 @@ async function handleReplCommand(
     } else {
       process.stdout.write(`Plain text mode is currently: ${ctx.plain ? "ENABLED" : "DISABLED"}\n`);
     }
-    return;
+    return "continue";
   }
 
   if (cmd === "daemon") {
@@ -202,7 +320,7 @@ async function handleReplCommand(
       const ok = await stopDaemon(root);
       process.stdout.write(ok ? "Resident daemon stopped.\n" : "Failed to stop daemon.\n");
     }
-    return;
+    return "continue";
   }
 
   if (cmd === "anchor") {
@@ -211,7 +329,7 @@ async function handleReplCommand(
     const endLine = parseInt(rawArgs[2] || String(startLine), 10);
     if (!filePath) {
       process.stdout.write("Usage: anchor <file> <startLine> <endLine>\n");
-      return;
+      return "continue";
     }
     const anchor = anchorForRange(root, filePath, { start: startLine, end: endLine });
     process.stdout.write(
@@ -222,7 +340,7 @@ async function handleReplCommand(
         `File SHA-256:    ${anchor.fileSha256}`,
       ].join("\n") + "\n"
     );
-    return;
+    return "continue";
   }
 
   if (cmd === "verify-anchor") {
@@ -232,7 +350,7 @@ async function handleReplCommand(
     const expectedHash = rawArgs[3];
     if (!filePath || !expectedHash) {
       process.stdout.write("Usage: verify-anchor <file> <startLine> <endLine> <expectedHash>\n");
-      return;
+      return "continue";
     }
     try {
       const anchor = anchorForRange(root, filePath, { start: startLine, end: endLine });
@@ -244,14 +362,14 @@ async function handleReplCommand(
     } catch (err: any) {
       process.stdout.write(`✗ Verification failed: ${err.message}\n`);
     }
-    return;
+    return "continue";
   }
 
   if (cmd === "baseline") {
     const query = rawArgs.join(" ");
     if (!query) {
       process.stdout.write("Usage: baseline <query>\n");
-      return;
+      return "continue";
     }
     const res = runBaselineSearch(query, root);
     process.stdout.write(
@@ -263,14 +381,14 @@ async function handleReplCommand(
         `  Est. Tokens:    ~${res.estimated_tokens}`,
       ].join("\n") + "\n"
     );
-    return;
+    return "continue";
   }
 
   if (cmd === "compare") {
     const query = rawArgs.join(" ");
     if (!query) {
       process.stdout.write("Usage: compare <query>\n");
-      return;
+      return "continue";
     }
     const startW = performance.now();
     const waymarkRes = (await ask(root, "capn-cli", "", query, { dev: true })) as AskResult;
@@ -307,7 +425,7 @@ async function handleReplCommand(
         "===============================================================\n",
       ].join("\n")
     );
-    return;
+    return "continue";
   }
 
   if (cmd === "manifest") {
@@ -317,7 +435,7 @@ async function handleReplCommand(
 
     for (let i = 0; i < rawArgs.length; i++) {
       if (rawArgs[i] === "--path" && rawArgs[i + 1]) {
-        manifestPath = path.resolve(rawArgs[i + 1]!);
+        manifestPath = path.resolve(root, rawArgs[i + 1]!);
         i++;
       } else if (rawArgs[i] === "--category" && rawArgs[i + 1]) {
         category = rawArgs[i + 1]!;
@@ -326,6 +444,13 @@ async function handleReplCommand(
         id = rawArgs[i + 1]!;
         i++;
       }
+    }
+
+    if (!fs.existsSync(manifestPath)) {
+      process.stdout.write(
+        `Manifest file not found: ${manifestPath}\nPass --path <manifest.jsonl> for a custom prompt evaluation suite, or run inside the waymark-engine source repository.\n`,
+      );
+      return "continue";
     }
 
     process.stdout.write(`Running manifest evaluation: ${manifestPath}\n`);
@@ -340,11 +465,12 @@ async function handleReplCommand(
       },
     });
 
+    const passPct = scoreboard.total > 0 ? Math.round((scoreboard.passed / scoreboard.total) * 100) : 0;
     process.stdout.write(
       [
         "\n================ Prompt Battery Scoreboard ================",
         `Total Executed:          ${scoreboard.total}`,
-        `Passed:                  ${scoreboard.passed} (${Math.round((scoreboard.passed / scoreboard.total) * 100)}%)`,
+        `Passed:                  ${scoreboard.passed} (${passPct}%)`,
         `Failed:                  ${scoreboard.failed}`,
         `Average Latency:         ${scoreboard.average_duration_ms}ms`,
         `Average Noise Reduction: ${scoreboard.average_noise_reduction_pct}%`,
@@ -356,13 +482,13 @@ async function handleReplCommand(
         "===========================================================\n",
       ].join("\n")
     );
-    return;
+    return "continue";
   }
 
   if (cmd === "symbols") {
     if (rawArgs.length === 0) {
       process.stdout.write("Usage: symbols <symbol1> [symbol2 ...]\n");
-      return;
+      return "continue";
     }
     const res = await queryMultiSymbols(root, rawArgs);
     if (ctx.plain) {
@@ -370,7 +496,7 @@ async function handleReplCommand(
     } else {
       process.stdout.write(JSON.stringify(res, null, 2) + "\n");
     }
-    return;
+    return "continue";
   }
 
   if (cmd === "discover") {
@@ -404,7 +530,7 @@ async function handleReplCommand(
     } else {
       process.stdout.write("Usage: discover [--path <file>] [--query <name>]\n");
     }
-    return;
+    return "continue";
   }
 
   if (cmd === "ask") {
@@ -416,27 +542,39 @@ async function handleReplCommand(
 
     const qParts: string[] = [];
     for (let i = 0; i < rawArgs.length; i++) {
-      const a = rawArgs[i];
+      const a = rawArgs[i]!;
       if (a === "--tier" && rawArgs[i + 1]) {
         tier = rawArgs[i + 1] as DiscoveryTier;
         i++;
-      } else if (a === "--depth" && rawArgs[i + 1]) {
-        depth = parseInt(rawArgs[i + 1]!, 10);
-        i++;
-      } else if (a === "--direction" && rawArgs[i + 1]) {
-        direction = rawArgs[i + 1] as any;
-        i++;
+      } else if (a.startsWith("--tier=")) {
+        tier = a.slice("--tier=".length) as DiscoveryTier;
+      } else if (a === "--depth" || a.startsWith("--depth=")) {
+        const rawDepth = a === "--depth" ? rawArgs[i + 1] : a.slice("--depth=".length);
+        if (rawDepth === undefined || !/^[1-5]$/u.test(rawDepth)) {
+          process.stdout.write(`Error: Invalid --depth value "${rawDepth ?? ""}". Expected integer 1-5.\n`);
+          return "continue";
+        }
+        depth = Number(rawDepth);
+        if (a === "--depth") i++;
+      } else if (a === "--direction" || a.startsWith("--direction=")) {
+        const rawDir = a === "--direction" ? rawArgs[i + 1] : a.slice("--direction=".length);
+        if (rawDir !== "callers" && rawDir !== "callees" && rawDir !== "both") {
+          process.stdout.write(`Error: Invalid --direction value "${rawDir ?? ""}". Expected callers, callees, or both.\n`);
+          return "continue";
+        }
+        direction = rawDir;
+        if (a === "--direction") i++;
       } else if (a === "--exclude-tests") {
         excludeTests = true;
-      } else if (!a?.startsWith("--")) {
-        qParts.push(a!);
+      } else if (!a.startsWith("--")) {
+        qParts.push(a);
       }
     }
 
     question = qParts.join(" ");
     if (!question) {
-      process.stdout.write("Usage: ask <question> [--tier <tier>] [--depth <n>] [--direction <dir>]\n");
-      return;
+      process.stdout.write("Usage: ask <question> [--tier <tier>] [--depth <1-5>] [--direction <callers|callees|both>]\n");
+      return "continue";
     }
 
     const res = (await ask(root, "capn-cli", "", question, {
@@ -459,7 +597,7 @@ async function handleReplCommand(
         `\n[dev diagnostics] Tiers: [${(d.tiersEvaluated || []).join(" -> ")}] | IPC: ${d.daemonIpcUsed ? "daemon" : "in-process"} | Invariants: ${d.invariantsPassed ? "OK" : "FAILED"}\n`
       );
     }
-    return;
+    return "continue";
   }
 
   // Fallback: If command not recognized, treat entire line as an `ask` query!
@@ -469,6 +607,7 @@ async function handleReplCommand(
   } else {
     process.stdout.write(JSON.stringify(res, null, 2) + "\n");
   }
+  return "continue";
 }
 
 /**
@@ -482,13 +621,18 @@ export async function runReplScript(scriptPath: string, rootDir?: string): Promi
   let dev = true;
   let plain = false;
 
-  for (const line of lines) {
-    await handleReplCommand(line, root, {
-      dev,
-      plain,
-      setDev: (v) => { dev = v; },
-      setPlain: (v) => { plain = v; },
-    });
+  try {
+    for (const line of lines) {
+      const action = await handleReplCommand(line, root, {
+        dev,
+        plain,
+        setDev: (v) => { dev = v; },
+        setPlain: (v) => { plain = v; },
+      });
+      if (action === "exit") break;
+    }
+  } finally {
+    closeAllResidentClients();
   }
 }
 
@@ -589,16 +733,24 @@ export function getLiveDashboardHtml(): string {
 
 export const LIVE_OBSERVER_HOST = "127.0.0.1";
 
-export async function startLiveReplObserver(options: ReplOptions = {}): Promise<void> {
+export async function startLiveReplObserver(options: ReplOptions = {}): Promise<number> {
   const root = options.rootDir ? path.resolve(options.rootDir) : repoRoot();
   if (process.env.WAYMARK_TELEMETRY !== "1") {
-    process.stdout.write("Live observer requires explicit telemetry opt-in: set WAYMARK_TELEMETRY=1.\n");
-    return;
+    process.stderr.write("Live observer requires explicit telemetry opt-in: set WAYMARK_TELEMETRY=1.\n");
+    return 1;
   }
   const sessionPath = resolveSessionLogPath(root, options.sessionPath);
-  const webPort = options.port ?? (process.env.WAYMARK_LIVE_PORT ? parseInt(process.env.WAYMARK_LIVE_PORT, 10) : undefined);
+  const envPort = process.env.WAYMARK_LIVE_PORT ? parseInt(process.env.WAYMARK_LIVE_PORT, 10) : undefined;
+  const webPort = options.port !== undefined
+    ? options.port
+    : (envPort !== undefined && Number.isInteger(envPort) && envPort >= 0 ? envPort : 4141);
 
-  // Ensure file and directory exist
+  // Ensure .waymark/.gitignore is always written before creating session logs inside stateDir(root).
+  const repoStateDir = path.resolve(stateDir(root));
+  const relToState = path.relative(repoStateDir, path.resolve(sessionPath));
+  if (relToState === "" || (!relToState.startsWith("..") && !path.isAbsolute(relToState))) {
+    ensureStateDir(root);
+  }
   const dir = path.dirname(sessionPath);
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
@@ -715,8 +867,32 @@ export async function startLiveReplObserver(options: ReplOptions = {}): Promise<
       res.end(html);
     });
 
-    httpServer.listen(webPort, LIVE_OBSERVER_HOST, () => {
-      // server active
+    const bindResult = await new Promise<{ ok: true } | { ok: false; error: Error }>((resolve) => {
+      let settled = false;
+      httpServer!.once("error", (err: Error) => {
+        if (!settled) {
+          settled = true;
+          resolve({ ok: false, error: err });
+        }
+      });
+      httpServer!.listen(webPort, LIVE_OBSERVER_HOST, () => {
+        if (!settled) {
+          settled = true;
+          resolve({ ok: true });
+        }
+      });
+    });
+    if (!bindResult.ok) {
+      const err = bindResult.error as NodeJS.ErrnoException;
+      const reason = err.code === "EADDRINUSE"
+        ? `Port ${webPort} on ${LIVE_OBSERVER_HOST} is already in use. Pass --port <other> or --port 0 to disable the web viewer.`
+        : (err.message || String(err));
+      process.stderr.write(`[Live Observer Error] Unable to start web viewer: ${reason}\n`);
+      try { httpServer.close(); } catch {}
+      return 1;
+    }
+    httpServer.on("error", (err: Error) => {
+      process.stderr.write(`[Live Observer Error] HTTP server error: ${err.message || String(err)}\n`);
     });
   }
 
@@ -868,5 +1044,6 @@ export async function startLiveReplObserver(options: ReplOptions = {}): Promise<
 
   process.once("SIGINT", cleanup);
   process.once("SIGTERM", cleanup);
+  return 0;
 }
 

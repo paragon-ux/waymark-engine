@@ -68,5 +68,5 @@ Every component and tier within Waymark Engine MUST adhere to the following inva
    When structural and literal tiers miss, the engine returns an inspectable recommendation junction (`status: "junction"`), presenting the executed recommendation alongside the unexecuted alternative with machine-readable continuation instructions (`tool: "waymark_ask"` and `cliCommand`).
 4. **Decoupling of Query Routing and Charting**:
    The syntactic token classifier (`classifyTokenShape`) governs query routing recommendations only. It holds ZERO authority over `waymark-chart`. Chart-worthiness is a judgment of retention value made by the agent, never conditioned on syntax.
-5. **CLI-First Token Economy**:
-   The terminal CLI defaults to compact plain text output (~16–38 tokens) to preserve the caller's context window. Machine-readable JSON is emitted explicitly via `--json` or programmatic MCP bindings.
+5. **Structured Default with Plain-Text Token Economy**:
+   The terminal CLI defaults to machine-readable JSON on `stdout` (`--json` / `-j`) for programmatic pipelines and MCP parity. Pass `--plain` (`-p`) for compact plain-text output (~16–38 tokens) to preserve an agent's context window.

@@ -63,7 +63,7 @@ Options and flags modify discovery routing, execution format, performance instru
 | `--query` | `-q` | Value | Symbol name/substring | None | `discover-symbols` | **Stable** | Symbol name filter (for single-file Mode A) or repo-wide symbol discovery search (Mode B). |
 | `--symbol` | `-s` | Value | Symbol name/substring | None | `discover-symbols` | **Stable** | Alias for `--query`. |
 | `--symbols` | — | Value | Comma-delimited list | None | `symbols`, `ask` | **Stable** | Explicit list of symbol identifiers to query concurrently across the repository. |
-| `--language` | — | Value | `typescript`, `python` | Auto from file ext | `discover-symbols` | **Stable** | Explicit parser grammar override when file extension is ambiguous or non-standard. |
+| `--language` | — | Value | `typescript`, `javascript`, `python`, `json`, `toml`, `yaml`, `bash`, `markdown`, `csharp`, `scala`, `lua`, `zig`, `elixir`, `solidity`, `rust`, `go`, `java`, `c`, `cpp`, `ruby`, `swift`, `kotlin`, `php` (23 languages) | Auto from file ext | `discover-symbols`, `ask` | **Stable** | Explicit parser grammar override when file extension is ambiguous or non-standard. |
 | `--question` | — | Value | String ($\le 240$ chars) | None (Required) | `chart` | **Stable** | The ground-truth question being charted. |
 | `--answer` | — | Value | String ($\le 4000$ chars) | None (Required) | `chart` | **Stable** | Verified, conclusive architectural answer to commit to memory. |
 | `--files` | — | Value | Comma-delimited list | `""` | `chart` | **Stable** | Source file paths associated with the charted answer for cache invalidation tracking. |
@@ -75,6 +75,7 @@ Options and flags modify discovery routing, execution format, performance instru
 | `--facet` | — | Value | `lifecycle`, `data_state`, `boundaries`, `invariants`, `failure` | None | `ask`, `map` | **Stable** | Restricts or prioritizes query discovery to a specific architectural facet within the Semantic Repo Map. |
 | `--subsystem` | — | Value | Subsystem directory/name | None | Discovery and map operations | **Unsupported** | Rejected with `UNSUPPORTED_SUBSYSTEM`; current indexes and backing-file validation operate at repository-root scope only. |
 | `--root` | — | Value | Filesystem path | Process cwd / git root | All | **Stable** | Overrides target workspace root directory across all CLI and discovery operations. |
+| `--include-dir` | — | Value | Comma-delimited or repeatable root directory names (e.g. `vendor,eval`) | None | `ask` | **Stable** | Un-excludes specified root directories from `SKIP_DIRS_ROOT_ONLY` during Tier 2 literal path indexing. |
 | `--live` | — | Flag | Boolean | `false` | `repl` | **Stable** | Launches the live PDLt-style observer on loopback only; requires `WAYMARK_TELEMETRY=1`. |
 | `--session` | — | Value | Filesystem path | `.waymark/sessions/active.jsonl` | `repl` | **Stable** | Selects the NDJSON session path. Persistent query/session logging remains disabled unless `WAYMARK_TELEMETRY=1`. |
 
@@ -83,8 +84,10 @@ Options and flags modify discovery routing, execution format, performance instru
 ## 4. MCP Tool Registry
 
 The resident stdio MCP server (`waymark-mcp`) provides two modes of tool exposure:
-1. **Canonical Two-Verb Interface** (default): Minimal prompt overhead (<450 tokens in agent context) consolidating all discovery into `waymark_ask` and all stateful memory management / subcommands into `waymark_memory`.
-2. **Granular Interface** (opt-in via `WAYMARK_MCP_VERBOSE=1`): Registers all 12 tools for backward compatibility with agents expecting single-purpose verbs.
+1. **Canonical Two-Verb Interface** (default): Lean schema footprint (~1,500 tokens / 6.1 KB serialized for 2 tools vs ~2,850 tokens / 11.4 KB in verbose mode), consolidating all discovery into `waymark_ask` and all stateful memory management / subcommands into `waymark_memory`.
+2. **Granular Interface** (opt-in via `WAYMARK_MCP_VERBOSE=1`): Registers all 12 tools (2 canonical + 10 legacy granular tools) for backward compatibility with agents expecting single-purpose verbs.
+
+*(Security note: executable overrides are strictly operator-controlled via server environment variables `WAYMARK_CAPN_EXECUTABLE` and `WAYMARK_CODEDB_EXECUTABLE`; no MCP tool accepts a caller-supplied executable path.)*
 
 ### 4.1 `waymark_ask`
 - **Identifier**: `waymark_ask`
@@ -111,7 +114,7 @@ The resident stdio MCP server (`waymark-mcp`) provides two modes of tool exposur
       "timing": { "type": "boolean", "description": "Collect high-resolution tier execution timing metrics." },
       "plain": { "type": "boolean", "description": "Emit token-minimal plain text formatted result for LLM context efficiency (~16-38 tokens)." },
       "daemon": { "type": "boolean", "description": "Accelerate query via persistent in-memory background daemon IPC." },
-      "capn_executable": { "type": "string", "description": "Optional custom path to the Capn executable." },
+      "include_dirs": { "type": "array", "items": { "type": "string" }, "description": "Optional root directory names (e.g. 'vendor', 'eval') to un-exclude from Tier 2 literal path indexing." },
       "profile": { "type": "string", "enum": ["capn-cli", "none"], "description": "Optional adapter profile; defaults to capn-cli." },
       "facet": { "type": "string", "enum": ["lifecycle", "data_state", "boundaries", "invariants", "failure", "status"], "description": "Optional facet filter to scope query to an architectural domain in the Semantic Repo Map, or 'status' to inspect map health." },
       "root": { "type": "string", "description": "Optional repository root path. Defaults to current working directory." }
@@ -139,7 +142,7 @@ The resident stdio MCP server (`waymark-mcp`) provides two modes of tool exposur
       "question": { "type": "string", "description": "The question or topic charted." },
       "answer": { "type": "string", "description": "The conclusive charted answer." },
       "files": { "type": "array", "items": { "type": "string" }, "description": "Array of repository-relative file paths." },
-      "capn_executable": { "type": "string", "description": "Optional custom path to the Capn executable." },
+      "facet": { "type": "string", "enum": ["lifecycle", "data_state", "boundaries", "invariants", "failure"], "description": "Optional architectural facet." },
       "profile": { "type": "string", "enum": ["capn-cli", "none"], "description": "Optional adapter profile." },
       "root": { "type": "string", "description": "Optional repository root path." }
     },
@@ -175,31 +178,31 @@ The resident stdio MCP server (`waymark-mcp`) provides two modes of tool exposur
 - **Identifier**: `waymark_unchart`
 - **Stability**: **Stable**
 - **Description**: Delete one charted consensus memory entry by ID from Capn repository memory.
-- **Input Schema**: `{ "id": string, "if_exists"?: boolean, "capn_executable"?: string, "root"?: string }`
+- **Input Schema**: `{ "id": string, "if_exists"?: boolean, "root"?: string }`
 
 ### 4.5 `waymark_bust`
 - **Identifier**: `waymark_bust`
 - **Stability**: **Stable**
 - **Description**: Invalidate and delete every charted memory entry backed by a specific repository file.
-- **Input Schema**: `{ "file": string, "capn_executable"?: string, "root"?: string }`
+- **Input Schema**: `{ "file": string, "root"?: string }`
 
 ### 4.6 `waymark_prune`
 - **Identifier**: `waymark_prune`
 - **Stability**: **Stable**
 - **Description**: Delete every charted memory entry whose backing files have changed or vanished.
-- **Input Schema**: `{ "capn_executable"?: string, "root"?: string }`
+- **Input Schema**: `{ "root"?: string }`
 
 ### 4.7 `waymark_list`
 - **Identifier**: `waymark_list`
 - **Stability**: **Stable**
 - **Description**: List all charted consensus memory entries in the repository. Degrades gracefully with empty list on uninitialized stores without throwing.
-- **Input Schema**: `{ "capn_executable"?: string, "root"?: string }`
+- **Input Schema**: `{ "root"?: string }`
 
 ### 4.8 `waymark_context`
 - **Identifier**: `waymark_context`
 - **Stability**: **Stable**
 - **Description**: Retrieve the ask-first charting contract and syntax guidelines for Waymark Engine. Degrades gracefully on uninitialized stores without throwing.
-- **Input Schema**: `{ "capn_executable"?: string, "root"?: string }`
+- **Input Schema**: `{ "root"?: string }`
 
 ### 4.9 `waymark_daemon_status`
 - **Identifier**: `waymark_daemon_status`
@@ -211,7 +214,7 @@ The resident stdio MCP server (`waymark-mcp`) provides two modes of tool exposur
 - **Identifier**: `waymark_init`
 - **Stability**: **Stable**
 - **Description**: Initialize the repository's deterministic lexical store (`.waymark/memory`) with embedding mode disabled.
-- **Input Schema**: `{ "capn_executable"?: string, "root"?: string }`
+- **Input Schema**: `{ "root"?: string }`
 
 ### 4.11 `waymark_map_status`
 - **Identifier**: `waymark_map_status`
@@ -243,7 +246,7 @@ The resident stdio MCP server (`waymark-mcp`) provides two modes of tool exposur
       "files": {
         "type": "array",
         "items": { "type": "string" },
-        "description": "Array of repository-relative backing file paths (required for active facets)."
+        "description": "Array of repository-relative backing file paths (at least one file is required for any facet, including not_applicable)."
       },
       "file": { "type": "string", "description": "Repository-relative file path (required for action='bust')." },
       "id": { "type": "string", "description": "Entry hex ID to delete (required for action='unchart')." },
@@ -253,7 +256,6 @@ The resident stdio MCP server (`waymark-mcp`) provides two modes of tool exposur
       "subsystem": { "type": "string", "description": "Unsupported: subsystem-scoped maps are not implemented; omit this value to target the repository root." },
       "format": { "type": "string", "enum": ["md", "json"], "description": "Export format for action='export': md | json. Defaults to md." },
       "plain": { "type": "boolean", "description": "Emit token-minimal plain text formatted result for LLM context efficiency." },
-      "capn_executable": { "type": "string", "description": "Optional custom path to the Capn executable." },
       "profile": { "type": "string", "enum": ["capn-cli", "none"], "description": "Optional adapter profile; defaults to capn-cli." },
       "root": { "type": "string", "description": "Optional repository root path. Defaults to current working directory." }
     },
@@ -298,11 +300,11 @@ Programmatic TypeScript / JavaScript consumers import directly from `"waymark-en
 | `initCapn(root, bin)` | `Function` | Semantic Memory | **Stable** | Programmatic initialization of deterministic BM25 lexical store. |
 | `publish(root, profile, bin, q, a, files)` | `Function` | Semantic Memory | **Stable** | Charts consensus memory programmatically. |
 | `discoverSymbolsInFile(root, path, lang)` | `Function` | AST Extractor | **Stable** | Parses source files into structured symbol records using tree-sitter. |
-| `verifyHop(root, hop)` | `Function` | Hop Integrity | **Stable** | Verifies structural hash integrity of saved hop records across file revisions. |
+| `verifyHop(root, hop, maxWindows)` | `Function` | Hop Integrity | **Stable** | Verifies structural hash integrity of saved hop records across file revisions. |
 | `detectAstIntent(question)` | `Function` | Intent Classifier | **Stable** | Classifies questions into AST structural categories (`callers`, `callees`, etc.). |
 | `detectLiteralIntent(question)` | `Function` | Intent Classifier | **Stable** | Classifies path/filename targets from natural language queries. |
 | `scoreFzf(pattern, target)` | `Function` | Fuzzy Matching | **Stable** | Embedded two-pass Smith-Waterman scoring algorithm returning raw score and match matrix. |
-| `rankFzf(candidates, query, opts)` | `Function` | Fuzzy Matching | **Stable** | Ranks list of symbol candidates with path-proximity and boundary bonuses. |
+| `rankFzf(pattern, candidates, options)` | `Function` | Fuzzy Matching | **Stable** | Ranks list of symbol candidates with path-proximity and boundary bonuses. |
 | `classifyTokenShape(token)` | `Function` | Signal Classifier | **Stable** | Determines whether a token is `identifier-like` or `plain`. |
 | `extractCandidateTokens(question)` | `Function` | Signal Classifier | **Stable** | Partitions query into stop-word filtered candidate and plain tokens. |
 | `anchorForRange(root, file, range)` | `Function` | Hop Integrity | **Stable** | Computes cryptographic and structural signatures for line ranges. |

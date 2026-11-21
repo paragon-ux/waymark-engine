@@ -14,8 +14,10 @@ export function formatTimings(timings: Record<string, number>): string {
 export function formatDevDiagnostics(dev: Record<string, unknown>): string {
   const tiers = Array.isArray(dev.tiersEvaluated) ? (dev.tiersEvaluated as string[]).join(" -> ") : "";
   const ipc = dev.daemonIpcUsed !== undefined ? ` | ipc: ${dev.daemonIpcUsed ? "daemon" : "in-process"}` : "";
+  const trie = typeof dev.trieHitType === "string" ? ` | trie: ${dev.trieHitType}` : "";
+  const nodes = typeof dev.nodesVisited === "number" ? ` | nodes: ${dev.nodesVisited}` : "";
   const inv = dev.invariantsPassed ? " | invariants: OK" : " | invariants: FAILED";
-  return `[dev] tiers: [${tiers}]${ipc}${inv}`;
+  return `[dev] tiers: [${tiers}]${ipc}${trie}${nodes}${inv}`;
 }
 
 /** Formats structured CallGraphData as an indented plain text tree (LEDGER-08 / DOD-11). */
@@ -61,7 +63,10 @@ function prunedLine(record: Record<string, unknown>): string {
 
 /** A codedb name from a CRLF file can end in \r; never let it split the output line. */
 function cleanName(value: unknown): string {
-  return String(value ?? "").replace(/[\r\n]+$/u, "").replace(/[\r\n]+/gu, " ");
+  const s = String(value ?? "");
+  let end = s.length;
+  while (end > 0 && (s[end - 1] === "\r" || s[end - 1] === "\n")) end--;
+  return s.slice(0, end).replace(/[\r\n]+/gu, " ");
 }
 
 /** Bootstrap and heal: the drafts with their evidence, what heal uncharted, then the map status. */
@@ -245,6 +250,14 @@ export function renderPlainText(value: unknown): string {
     const timingStr = record.timings ? `\n[timing] ${formatTimings(record.timings as Record<string, number>)}` : "";
     const devStr = record.dev ? `\n${formatDevDiagnostics(record.dev as Record<string, unknown>)}` : "";
     return `[miss] ${reason}${timingStr}${devStr}${prunedLine(record)}`;
+  }
+
+  if (record.status === "error") {
+    const code = String(record.errorCode ?? record.code ?? "ERROR");
+    const message = String(record.message ?? record.error ?? "Unexpected error");
+    const timingStr = record.timings ? `\n[timing] ${formatTimings(record.timings as Record<string, number>)}` : "";
+    const devStr = record.dev ? `\n${formatDevDiagnostics(record.dev as Record<string, unknown>)}` : "";
+    return `[error: ${code}] ${message}${timingStr}${devStr}`;
   }
 
   if (record.kind === "daemon") {

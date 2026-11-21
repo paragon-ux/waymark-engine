@@ -17,9 +17,10 @@ import { WaymarkError } from "../src/types.js";
 import { ask, publish } from "../src/capnAdapter.js";
 import { memoryStoreDir } from "../src/stateDir.js";
 import { initMemoryStoreSync } from "./capnContract.js";
+import { mkTrackedTempDir } from "./tempDirs.js";
 
 function setupTestRepo(): string {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "waymark-semantic-map-"));
+  const repo = mkTrackedTempDir("waymark-semantic-map-");
   execFileSync("git", ["init", "-q", "-b", "main"], { cwd: repo });
   fs.mkdirSync(path.join(repo, "src"), { recursive: true });
   fs.writeFileSync(
@@ -244,7 +245,7 @@ test("bootstrap evidence cites facet-relevant code, never imports or comments", 
 });
 
 test("minimal repository bootstrap adds no map facts or memory store", async () => {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "waymark-empty-map-"));
+  const repo = mkTrackedTempDir("waymark-empty-map-");
   try {
     const result = await bootstrapSemanticMap(repo);
     assert.equal(result.scaffolded.length, 0);

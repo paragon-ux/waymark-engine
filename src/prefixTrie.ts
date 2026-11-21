@@ -85,15 +85,17 @@ export class PrefixTrie {
   }
 
   match(rawNormalized: string, isExplicitPath = false): LiteralMatch[] {
-    const isExplicit = isExplicitPath || rawNormalized.startsWith("./") || rawNormalized.startsWith(".\\");
-    const normalized = rawNormalized.replace(/\\/g, "/").replace(/^\.\//, "");
+    const isRootAnchored = rawNormalized.startsWith("./") || rawNormalized.startsWith(".\\");
+    const isExplicit = isExplicitPath || isRootAnchored;
+    const normalized = rawNormalized.replace(/\\/g, "/").replace(/^(?:\.\/)+/, "");
     const lower = normalized.toLowerCase();
+    const hasSlash = normalized.includes("/");
     const baseName = lower.split("/").pop() ?? "";
 
     const basenames = this.basenameMap.get(baseName) ?? [];
 
     // Refuse ambiguous bare basename collisions
-    if (!isExplicit && !normalized.includes("/") && basenames.length > 1) {
+    if (!isExplicit && !hasSlash && basenames.length > 1) {
       return [];
     }
 
@@ -105,19 +107,31 @@ export class PrefixTrie {
       return strict ? [{ file: strict, kind: "exact" }] : allExact.map((file) => ({ file, kind: "exact" }));
     }
 
-    // 2. Basename single hit
-    if (basenames.length === 1 && basenames[0] !== undefined) {
+    // Leading "./" anchors to repository root — never extrapolate to subdirectories.
+    if (isRootAnchored) {
+      return [];
+    }
+
+    // 2. Basename single hit — ONLY for bare filenames with no directory prefix
+    if (!isExplicit && !hasSlash && basenames.length === 1 && basenames[0] !== undefined) {
       return [{ file: basenames[0], kind: "basename" }];
     }
 
-    // 3. Suffix match
-    const suffixes = this.allPaths.filter((p) => p.toLowerCase().endsWith(lower));
+    // 3. Suffix match — require path-segment boundary so partial dir names cannot match
+    const suffixes = this.allPaths.filter((p) => {
+      const pl = p.toLowerCase();
+      return pl === lower || pl.endsWith(`/${lower}`);
+    });
     if (suffixes.length === 1 && suffixes[0] !== undefined) {
       return [{ file: suffixes[0], kind: "suffix" }];
     }
 
-    // 4. Substring match
-    const subs = this.allPaths.filter((p) => p.toLowerCase().includes(lower));
+    // 4. Substring match (for slash-qualified queries, enforce path-segment boundaries)
+    const subs = this.allPaths.filter((p) => {
+      const pl = p.toLowerCase();
+      if (!hasSlash) return pl.includes(lower);
+      return pl === lower || pl.startsWith(`${lower}/`) || pl.endsWith(`/${lower}`) || pl.includes(`/${lower}/`);
+    });
     if (subs.length === 1 && subs[0] !== undefined) {
       return [{ file: subs[0], kind: "substring" }];
     }
@@ -130,16 +144,31 @@ export class PrefixTrie {
    * suffix match, else every substring match, when more than one exists. Empty when the query
    * matches one file or none.
    */
-  collisions(rawNormalized: string): LiteralMatch[] {
-    const normalized = rawNormalized.replace(/\\/g, "/").replace(/^\.\//, "");
+  collisions(rawNormalized: string, isExplicitPath = false): LiteralMatch[] {
+    const isRootAnchored = rawNormalized.startsWith("./") || rawNormalized.startsWith(".\\");
+    const isExplicit = isExplicitPath || isRootAnchored;
+    const normalized = rawNormalized.replace(/\\/g, "/").replace(/^(?:\.\/)+/, "");
     const lower = normalized.toLowerCase();
     if (!lower) return [];
-    const baseName = lower.split("/").pop() ?? "";
-    const basenames = this.basenameMap.get(baseName) ?? [];
-    if (basenames.length > 1) return basenames.map((file) => ({ file, kind: "basename" }));
-    const suffixes = this.allPaths.filter((p) => p.toLowerCase().endsWith(lower));
+    const hasSlash = normalized.includes("/");
+    if (!isExplicit && !hasSlash) {
+      const baseName = lower.split("/").pop() ?? "";
+      const basenames = this.basenameMap.get(baseName) ?? [];
+      if (basenames.length > 1) return basenames.map((file) => ({ file, kind: "basename" }));
+    }
+    if (isRootAnchored) {
+      return [];
+    }
+    const suffixes = this.allPaths.filter((p) => {
+      const pl = p.toLowerCase();
+      return pl === lower || pl.endsWith(`/${lower}`);
+    });
     if (suffixes.length > 1) return suffixes.map((file) => ({ file, kind: "suffix" }));
-    const subs = this.allPaths.filter((p) => p.toLowerCase().includes(lower));
+    const subs = this.allPaths.filter((p) => {
+      const pl = p.toLowerCase();
+      if (!hasSlash) return pl.includes(lower);
+      return pl === lower || pl.startsWith(`${lower}/`) || pl.endsWith(`/${lower}`) || pl.includes(`/${lower}/`);
+    });
     if (subs.length > 1) return subs.map((file) => ({ file, kind: "substring" }));
     return [];
   }

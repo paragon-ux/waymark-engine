@@ -9,9 +9,10 @@ import { McpServer } from "../src/mcp/server.js";
 import { routeDiscovery } from "../src/discoveryRouter.js";
 import { AskMissResult, FuzzyCandidate } from "../src/types.js";
 import { initMemoryStoreSync } from "./capnContract.js";
+import { mkTrackedTempDir } from "./tempDirs.js";
 
 function setupRepo(): string {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "waymark-mcp-parity-"));
+  const repo = mkTrackedTempDir("waymark-mcp-parity-");
   execFileSync("git", ["init", "-q", "-b", "main"], { cwd: repo });
   fs.mkdirSync(path.join(repo, "src"), { recursive: true });
   fs.writeFileSync(
@@ -228,7 +229,7 @@ test("MCP maintenance tools: chart -> list -> context -> bust -> unchart -> prun
 });
 
 test("MCP waymark_init and uninitialized repo graceful degradation", async () => {
-  const uninitRepo = fs.mkdtempSync(path.join(os.tmpdir(), "waymark-uninit-"));
+  const uninitRepo = mkTrackedTempDir("waymark-uninit-");
   execFileSync("git", ["init", "-q", "-b", "main"], { cwd: uninitRepo });
   fs.mkdirSync(path.join(uninitRepo, "src"), { recursive: true });
   fs.writeFileSync(
@@ -499,7 +500,7 @@ test("Edge Cases: multi-symbol 0-hits, empty symbols array fallback, and special
 });
 
 test("Bounded Multi-Hop BFS Call Graph: depth, directionality, cycle prevention, and indented tree plain text (LEDGER-08 / DOD-11)", async () => {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "waymark-callgraph-"));
+  const repo = mkTrackedTempDir("waymark-callgraph-");
   execFileSync("git", ["init", "-q", "-b", "main"], { cwd: repo });
   fs.mkdirSync(path.join(repo, "src"), { recursive: true });
 
@@ -645,7 +646,7 @@ test("Bounded Multi-Hop BFS Call Graph: depth, directionality, cycle prevention,
 });
 
 test("Persistent In-Memory Prefix Trie & Resident Daemon Path Resolution (LEDGER-09 / DOD-12)", async () => {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "waymark-prefixtrie-"));
+  const repo = mkTrackedTempDir("waymark-prefixtrie-");
   execFileSync("git", ["init", "-q", "-b", "main"], { cwd: repo });
   fs.mkdirSync(path.join(repo, "src", "pkg_a"), { recursive: true });
   fs.mkdirSync(path.join(repo, "src", "pkg_b"), { recursive: true });
@@ -698,7 +699,7 @@ test("Persistent In-Memory Prefix Trie & Resident Daemon Path Resolution (LEDGER
 });
 
 test("Call Graph test exclusion (exclude_tests) and Resident Daemon reload", async () => {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "waymark-excludetests-"));
+  const repo = mkTrackedTempDir("waymark-excludetests-");
   execFileSync("git", ["init", "-q", "-b", "main"], { cwd: repo });
   fs.mkdirSync(path.join(repo, "src"), { recursive: true });
   fs.mkdirSync(path.join(repo, "tests"), { recursive: true });

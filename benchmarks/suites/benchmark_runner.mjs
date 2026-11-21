@@ -2,35 +2,49 @@ import { execFile } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
+import { fileURLToPath } from "node:url";
+import { resolveCodedbCommand } from "../../dist/src/codedbAdapter.js";
 
-const WAYMARK_ASK = path.resolve("./bin/waymark-ask.mjs");
-const WAYMARK_CHART = path.resolve("./bin/waymark-chart.mjs");
-const WAYMARK_BUST = path.resolve("./bin/waymark-bust.mjs");
-const WAYMARK_LIST = path.resolve("./bin/waymark-list.mjs");
-const WAYMARK_UNCHART = path.resolve("./bin/waymark-unchart.mjs");
-const WAYMARK_PRUNE = path.resolve("./bin/waymark-prune.mjs");
-const CODEDB_EXE = path.resolve("./node_modules/@paragon-ux/codedb-core/dist/codedb-win32-x64.exe");
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const REPO_ROOT = path.resolve(__dirname, "..", "..");
 
-const GRAFANA_ROOT = "C:\\Users\\USER\\Desktop\\Frameworks\\deepseek-playground-2\\test-codedb\\grafana";
+const WAYMARK_INIT = path.join(REPO_ROOT, "bin", "waymark-init.mjs");
+const WAYMARK_ASK = path.join(REPO_ROOT, "bin", "waymark-ask.mjs");
+const WAYMARK_CHART = path.join(REPO_ROOT, "bin", "waymark-chart.mjs");
+const WAYMARK_BUST = path.join(REPO_ROOT, "bin", "waymark-bust.mjs");
+const WAYMARK_LIST = path.join(REPO_ROOT, "bin", "waymark-list.mjs");
+const WAYMARK_UNCHART = path.join(REPO_ROOT, "bin", "waymark-unchart.mjs");
+const WAYMARK_PRUNE = path.join(REPO_ROOT, "bin", "waymark-prune.mjs");
+const CODEDB_EXE = resolveCodedbCommand().file;
+
+const TARGET_ROOT = process.env.BENCHMARK_REPO_ROOT
+  ? path.resolve(process.env.BENCHMARK_REPO_ROOT)
+  : REPO_ROOT;
+const GRAFANA_ROOT = TARGET_ROOT;
 const OUT_DIR = process.env.BENCHMARK_OUT_DIR
   ? path.resolve(process.env.BENCHMARK_OUT_DIR)
-  : path.resolve("./scratch/benchmark_results");
+  : path.join(REPO_ROOT, "scratch", "benchmark_results");
 
 if (!fs.existsSync(OUT_DIR)) {
   fs.mkdirSync(OUT_DIR, { recursive: true });
 }
 
-function runCmd(file, args, cwd = GRAFANA_ROOT, envExtra = {}) {
+function runCmd(file, args, cwd = TARGET_ROOT, envExtra = {}) {
   return new Promise((resolve) => {
     const t0 = performance.now();
-    const child = execFile(
+    execFile(
       file,
       args,
       {
         cwd,
         maxBuffer: 32 * 1024 * 1024,
         timeout: 180_000,
-        env: { ...process.env, ...envExtra, CODEDB_QUIET: "1" },
+        env: {
+          ...process.env,
+          CODEDB_ALLOW_TEMP: process.env.CODEDB_ALLOW_TEMP ?? "1",
+          ...envExtra,
+          CODEDB_QUIET: "1",
+        },
       },
       (err, stdout, stderr) => {
         const t1 = performance.now();
@@ -47,11 +61,11 @@ function runCmd(file, args, cwd = GRAFANA_ROOT, envExtra = {}) {
   });
 }
 
-function runWaymark(bin, args, cwd = GRAFANA_ROOT, envExtra = {}) {
+function runWaymark(bin, args, cwd = TARGET_ROOT, envExtra = {}) {
   return runCmd(process.execPath, [bin, ...args], cwd, envExtra);
 }
 
-function runCodedb(args, cwd = GRAFANA_ROOT) {
+function runCodedb(args, cwd = TARGET_ROOT) {
   return runCmd(CODEDB_EXE, [cwd, ...args], cwd);
 }
 
@@ -73,6 +87,8 @@ function estimateTokens(text) {
 }
 
 export {
+  REPO_ROOT,
+  WAYMARK_INIT,
   WAYMARK_ASK,
   WAYMARK_CHART,
   WAYMARK_BUST,
@@ -80,6 +96,7 @@ export {
   WAYMARK_UNCHART,
   WAYMARK_PRUNE,
   CODEDB_EXE,
+  TARGET_ROOT,
   GRAFANA_ROOT,
   OUT_DIR,
   runCmd,

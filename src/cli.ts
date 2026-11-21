@@ -15,17 +15,47 @@ import { PACKAGE_VERSION } from "./mcp/server.js";
 interface ParsedArgs {
   positionals: string[];
   values: Map<string, string>;
+  multiValues: Map<string, string[]>;
 }
 
-const HELP_TOKENS = new Set(["help", "--help", "-h", "--h", "-help"]);
-const VERSION_TOKENS = new Set(["version", "--version", "-v", "--v", "-V", "-version"]);
+const HELP_FLAG_TOKENS = new Set(["--help", "-h", "--h", "-help"]);
+const VERSION_FLAG_TOKENS = new Set(["--version", "-v", "--v", "-V", "-version"]);
 
 export function isHelpToken(token: string | undefined): boolean {
-  return token !== undefined && HELP_TOKENS.has(token);
+  return token !== undefined && (token === "help" || HELP_FLAG_TOKENS.has(token));
 }
 
 export function isVersionToken(token: string | undefined): boolean {
-  return token !== undefined && VERSION_TOKENS.has(token);
+  return token !== undefined && (token === "version" || VERSION_FLAG_TOKENS.has(token));
+}
+
+function scanForFlag(args: readonly string[], flagSet: ReadonlySet<string>): boolean {
+  for (let i = 0; i < args.length; i += 1) {
+    const current = args[i];
+    if (!current) continue;
+    if (current === "--") break;
+    if (flagSet.has(current)) return true;
+    if (current.startsWith("--")) {
+      const eq = current.indexOf("=");
+      if (eq !== -1) continue;
+      const flag = current.slice(2);
+      if (VALUE_FLAGS.has(flag)) i += 1;
+      continue;
+    }
+    if (current.startsWith("-") && current.length === 2) {
+      const short = current.slice(1);
+      if (short === "t" || short === "q" || short === "s") i += 1;
+    }
+  }
+  return false;
+}
+
+export function hasHelpFlag(args: readonly string[]): boolean {
+  return scanForFlag(args, HELP_FLAG_TOKENS);
+}
+
+export function hasVersionFlag(args: readonly string[]): boolean {
+  return scanForFlag(args, VERSION_FLAG_TOKENS);
 }
 
 export function formatHelpText(): string {
@@ -97,7 +127,7 @@ export function formatHelpText(): string {
     "  --format <md|json>                     Output format for memory/map export (default: md)",
     "  --all                                  Release all resident codedb instances across roots (for evict/close)",
     "  --idle-timeout <sec>                   Daemon inactivity timeout in seconds (default: 600)",
-    "  --force                                Force-terminate daemon if graceful IPC stop fails",
+    "  --include-dir <dirs>                   Root directory names to un-exclude from path indexing (e.g. vendor,eval)",
     "  --profile <capn-cli|none>              Memory adapter profile (default: capn-cli)",
     "  --capn-executable <path>               Custom capn binary path override",
     "  --manifest <file>                      Evaluation manifest JSONL path (for repl)",
@@ -118,7 +148,19 @@ const VALUE_FLAGS = new Set([
   "profile", "path", "language", "capn-executable", "question", "answer", "files",
   "tier", "t", "format", "idle-timeout", "query", "symbol", "symbols", "q", "s",
   "depth", "direction", "manifest", "category", "id", "file", "facet", "action", "subsystem",
-  "root", "session", "port", "from",
+  "root", "session", "port", "from", "include-dir",
+]);
+
+/** Free-text value flags accept any non-empty next token, including values resembling flags (e.g. "-h", "--plain"). */
+const FREE_TEXT_VALUE_FLAGS = new Set(["answer", "question", "query", "symbol", "q", "s"]);
+
+const EXIT_2_ERROR_CODES = new Set([
+  "CODEDB_UNSUPPORTED_SHIM",
+  "CODEDB_BINARY_MISSING",
+  "FILE_TOO_LARGE",
+  "PARSE_ERROR",
+  "SYMLINK_ESCAPE",
+  "UNSAFE_RUNTIME_DIR",
 ]);
 
 const BOOLEAN_FLAGS = new Set([
@@ -136,23 +178,73 @@ function normalizeBooleanFlag(flag: string): string {
   return flag;
 }
 
+function isKnownFlagToken(token: string): boolean {
+  if (token === "--") return true;
+  if (HELP_FLAG_TOKENS.has(token) || VERSION_FLAG_TOKENS.has(token)) return true;
+  if (token.startsWith("--")) {
+    const raw = token.slice(2);
+    const eq = raw.indexOf("=");
+    const name = eq === -1 ? raw : raw.slice(0, eq);
+    return BOOLEAN_FLAGS.has(name) || VALUE_FLAGS.has(name);
+  }
+  if (token.startsWith("-") && token.length === 2) {
+    const short = token.slice(1);
+    return BOOLEAN_FLAGS.has(short) || VALUE_FLAGS.has(short);
+  }
+  return false;
+}
+
+function setOptionValue(values: Map<string, string>, multiValues: Map<string, string[]>, flag: string, value: string): void {
+  values.set(flag, value);
+  const list = multiValues.get(flag) ?? [];
+  list.push(value);
+  multiValues.set(flag, list);
+}
+
 function parseArgs(args: readonly string[]): ParsedArgs {
   const positionals: string[] = [];
   const values = new Map<string, string>();
+  const multiValues = new Map<string, string[]>();
+  let afterDoubleDash = false;
   for (let index = 0; index < args.length; index += 1) {
     const current = args[index];
-    if (!current) continue;
+    if (current === undefined) continue;
+
+    if (afterDoubleDash) {
+      positionals.push(current);
+      continue;
+    }
+    if (current === "--") {
+      afterDoubleDash = true;
+      continue;
+    }
 
     if (current.startsWith("--")) {
-      const flag = current.slice(2);
+      const rawFlag = current.slice(2);
+      const eq = rawFlag.indexOf("=");
+      if (eq !== -1) {
+        const flag = rawFlag.slice(0, eq);
+        const val = rawFlag.slice(eq + 1);
+        if (BOOLEAN_FLAGS.has(flag)) {
+          if (val !== "false" && val !== "0") values.set(normalizeBooleanFlag(flag), "true");
+          continue;
+        }
+        if (!VALUE_FLAGS.has(flag)) throw new WaymarkError("UNKNOWN_OPTION", `Unknown option --${flag}`);
+        if (val.length === 0) throw new WaymarkError("MISSING_OPTION_VALUE", `Option --${flag} requires a value`);
+        setOptionValue(values, multiValues, flag, val);
+        continue;
+      }
+      const flag = rawFlag;
       if (BOOLEAN_FLAGS.has(flag)) {
         values.set(normalizeBooleanFlag(flag), "true");
         continue;
       }
       if (!VALUE_FLAGS.has(flag)) throw new WaymarkError("UNKNOWN_OPTION", `Unknown option --${flag}`);
       const value = args[index + 1];
-      if (!value || value.startsWith("-")) throw new WaymarkError("MISSING_OPTION_VALUE", `Option --${flag} requires a value`);
-      values.set(flag, value);
+      if (value === undefined || value.length === 0 || (!FREE_TEXT_VALUE_FLAGS.has(flag) && isKnownFlagToken(value))) {
+        throw new WaymarkError("MISSING_OPTION_VALUE", `Option --${flag} requires a value`);
+      }
+      setOptionValue(values, multiValues, flag, value);
       index += 1;
       continue;
     }
@@ -165,22 +257,28 @@ function parseArgs(args: readonly string[]): ParsedArgs {
       }
       if (flag === "t") {
         const value = args[index + 1];
-        if (!value || value.startsWith("-")) throw new WaymarkError("MISSING_OPTION_VALUE", `Option -t requires a value`);
-        values.set("tier", value);
+        if (value === undefined || value.length === 0 || isKnownFlagToken(value)) {
+          throw new WaymarkError("MISSING_OPTION_VALUE", "Option -t requires a value");
+        }
+        setOptionValue(values, multiValues, "tier", value);
         index += 1;
         continue;
       }
       if (flag === "q") {
         const value = args[index + 1];
-        if (!value || value.startsWith("-")) throw new WaymarkError("MISSING_OPTION_VALUE", `Option -q requires a value`);
-        values.set("query", value);
+        if (value === undefined || value.length === 0) {
+          throw new WaymarkError("MISSING_OPTION_VALUE", "Option -q requires a value");
+        }
+        setOptionValue(values, multiValues, "query", value);
         index += 1;
         continue;
       }
       if (flag === "s") {
         const value = args[index + 1];
-        if (!value || value.startsWith("-")) throw new WaymarkError("MISSING_OPTION_VALUE", `Option -s requires a value`);
-        values.set("symbol", value);
+        if (value === undefined || value.length === 0) {
+          throw new WaymarkError("MISSING_OPTION_VALUE", "Option -s requires a value");
+        }
+        setOptionValue(values, multiValues, "symbol", value);
         index += 1;
         continue;
       }
@@ -189,7 +287,7 @@ function parseArgs(args: readonly string[]): ParsedArgs {
 
     positionals.push(current);
   }
-  return { positionals, values };
+  return { positionals, values, multiValues };
 }
 
 function requiredValue(parsed: ParsedArgs, name: string): string {
@@ -250,6 +348,7 @@ function errorOutput(error: unknown): CommandResult {
 interface CommandResult {
   value: unknown;
   exitCode?: number;
+  exit?: boolean;
 }
 
 function resolveProfile(parsed: ParsedArgs): AdapterProfile {
@@ -271,15 +370,15 @@ async function runCommand(command: string, rawArgs: readonly string[]): Promise<
       : undefined;
   if (suppression) return { value: { waymark: 1, kind: "suppressed", ok: true, reason: suppression } };
 
-  const wantsJson = rawArgs.includes("--json") || rawArgs.includes("-j");
-  if (isVersionToken(command) || rawArgs.some((arg) => isVersionToken(arg))) {
+  const wantsJson = command === "--json" || command === "-j" || scanForFlag(rawArgs, new Set(["--json", "-j"]));
+  if (isVersionToken(command) || hasVersionFlag(rawArgs)) {
     return {
       value: wantsJson
         ? { waymark: 1, kind: "version", ok: true, name: "waymark-engine", version: PACKAGE_VERSION }
         : `waymark-engine v${PACKAGE_VERSION}`,
     };
   }
-  if (isHelpToken(command) || rawArgs.some((arg) => isHelpToken(arg))) {
+  if (isHelpToken(command) || hasHelpFlag(rawArgs)) {
     return {
       value: wantsJson
         ? { waymark: 1, kind: "help", ok: true, name: "waymark-engine", version: PACKAGE_VERSION, help: formatHelpText() }
@@ -333,7 +432,7 @@ async function runCommand(command: string, rawArgs: readonly string[]): Promise<
     const scriptFile = parsed.values.get("file");
     const manifestFile = parsed.values.get("manifest");
     const plain = parsed.values.has("plain");
-    const dev = parsed.values.has("dev");
+    const dev = parsed.values.has("dev") ? true : undefined;
     const live = parsed.values.has("live");
     const sessionPath = parsed.values.get("session");
 
@@ -360,13 +459,40 @@ async function runCommand(command: string, rawArgs: readonly string[]): Promise<
     }
 
     const portStr = parsed.values.get("port");
-    const port = portStr ? parseInt(portStr, 10) : undefined;
+    let port: number | undefined;
+    if (portStr !== undefined) {
+      const parsedPort = Number(portStr);
+      if (!Number.isInteger(parsedPort) || parsedPort < 0 || parsedPort > 65535) {
+        throw new WaymarkError("INVALID_ARGUMENT", `Invalid --port value "${portStr}". Expected integer 0-65535.`);
+      }
+      port = parsedPort;
+    }
 
-    await startRepl({ rootDir: root, plain, dev, live, sessionPath, port });
-    return { value: null };
+    const replExit = await startRepl({ rootDir: root, plain, dev, live, sessionPath, port });
+    return {
+      value: null,
+      exitCode: typeof replExit === "number" ? replExit : 0,
+      ...(live ? {} : { exit: true }),
+    };
   }
 
   if (command === "ask") {
+    const rawDepth = parsed.values.get("depth");
+    let depth: number | undefined;
+    if (rawDepth !== undefined) {
+      if (!/^[1-5]$/u.test(rawDepth)) {
+        throw new WaymarkError("INVALID_ARGUMENT", `Invalid --depth value "${rawDepth}". Expected integer 1-5.`);
+      }
+      depth = Number(rawDepth);
+    }
+    const rawDirection = parsed.values.get("direction");
+    let direction: "callers" | "callees" | "both" | undefined;
+    if (rawDirection !== undefined) {
+      if (rawDirection !== "callers" && rawDirection !== "callees" && rawDirection !== "both") {
+        throw new WaymarkError("INVALID_ARGUMENT", `Invalid --direction value "${rawDirection}". Expected callers, callees, or both.`);
+      }
+      direction = rawDirection;
+    }
     if (parsed.values.has("symbols")) {
       const symbolsList = parsed.values.get("symbols")!.split(",").map((s) => s.trim()).filter(Boolean);
       const { queryMultiSymbols } = await import("./codedbAdapter.js");
@@ -386,18 +512,19 @@ async function runCommand(command: string, rawArgs: readonly string[]): Promise<
       const res = await ask(root, profile, executable, queryToUse ?? "", { path: rawPath, outline: true, language: requestedLang });
       if (parsed.values.has("plain")) {
         const { renderPlainText } = await import("./renderPlainText.js");
-        return { value: renderPlainText(res) };
+        return { value: renderPlainText(res), exitCode: res.status === "error" ? 1 : 0 };
       }
       if (res.status === "hit") {
         return { value: res.result };
       }
-      return { value: res };
+      return { value: res, exitCode: res.status === "error" ? 1 : 0 };
     }
     if (rawFacet === "status") {
       const { getSemanticMapStatus } = await import("./semanticMap.js");
       return { value: getSemanticMapStatus(root) };
     }
-    const question = boundedText(posText, 240, "question", Boolean(rawFacet));
+    const queryText = parsed.values.get("query") ?? parsed.values.get("symbol") ?? posText;
+    const question = boundedText(queryText, 240, "question", Boolean(rawFacet));
     const rawTier = parsed.values.get("tier");
     const tier = rawTier as DiscoveryTier | undefined;
     const timing = parsed.values.has("timing");
@@ -405,22 +532,39 @@ async function runCommand(command: string, rawArgs: readonly string[]): Promise<
     const daemon = parsed.values.has("daemon");
     const excludeTests = parsed.values.has("exclude-tests");
     const dev = parsed.values.has("dev");
-    const rawDepth = parsed.values.get("depth");
-    const depth = rawDepth ? parseInt(rawDepth, 10) : undefined;
-    const rawDirection = parsed.values.get("direction");
-    const direction = (rawDirection === "callers" || rawDirection === "callees" || rawDirection === "both")
-      ? rawDirection
-      : undefined;
+    const includeDirs = (parsed.multiValues.get("include-dir") ?? [])
+      .flatMap((entry) => entry.split(","))
+      .map((entry) => entry.trim())
+      .filter(Boolean);
 
-    return {
-      value: await capnAsk(
-        root,
-        resolveProfile(parsed),
-        resolveCapnExecutable(parsed),
-        question,
-        { tier, timing: timing || dev, autoResolve, daemon, depth, direction, excludeTests, dev, facet: rawFacet, path: rawPath },
-      ),
-    };
+    const askRes = await capnAsk(
+      root,
+      resolveProfile(parsed),
+      resolveCapnExecutable(parsed),
+      question,
+      {
+        tier,
+        timing: timing || dev,
+        autoResolve,
+        daemon,
+        depth,
+        direction,
+        excludeTests,
+        dev,
+        facet: rawFacet,
+        path: rawPath,
+        language: parsed.values.get("language"),
+        ...(includeDirs.length > 0 ? { includeDirs } : {}),
+      },
+    );
+    let askExitCode = 0;
+    if (askRes.status === "error") {
+      const code = String((askRes as { errorCode?: unknown }).errorCode ?? "");
+      askExitCode = (code.startsWith("CAPN_") || EXIT_2_ERROR_CODES.has(code)) ? 2 : 1;
+    } else if (askRes.status === "miss" && (askRes as { missCode?: unknown }).missCode === "CAPN_NON_DETERMINISTIC_MODE") {
+      askExitCode = 2;
+    }
+    return { value: askRes, exitCode: askExitCode };
   }
 
   if (command === "memory") {
@@ -455,15 +599,18 @@ async function runCommand(command: string, rawArgs: readonly string[]): Promise<
     if (action === "bust") {
       const file = parsed.positionals[1] ?? parsed.values.get("file");
       if (!file) throw new WaymarkError("MISSING_ARGUMENT", "memory bust requires a repository-relative path");
-      return { value: await bust(root, executable, file) };
+      const res = await bust(root, executable, file);
+      return { value: res, exitCode: res.ok ? 0 : ((res.exitCode as number | undefined) ?? 1) };
     }
 
     if (action === "prune") {
-      return { value: await prune(root, executable) };
+      const res = await prune(root, executable);
+      return { value: res, exitCode: res.ok ? 0 : ((res.exitCode as number | undefined) ?? 1) };
     }
 
     if (action === "list") {
-      return { value: await listEntries(root, executable) };
+      const res = await listEntries(root, executable);
+      return { value: res, exitCode: res.ok ? 0 : ((res.exitCode as number | undefined) ?? 1) };
     }
 
     if (action === "unchart") {
@@ -471,7 +618,7 @@ async function runCommand(command: string, rawArgs: readonly string[]): Promise<
       if (!id) throw new WaymarkError("MISSING_ARGUMENT", "memory unchart requires an id");
       const ifExists = parsed.values.has("if-exists");
       const res = await unchart(root, executable, id, ifExists);
-      const exitCode = res.exitCode as number | undefined ?? (res.ok ? 0 : 1);
+      const exitCode = res.ok ? 0 : ((res.exitCode as number | undefined) ?? 1);
       return { value: res, exitCode };
     }
 
@@ -487,7 +634,8 @@ async function runCommand(command: string, rawArgs: readonly string[]): Promise<
     }
 
     if (action === "context") {
-      return { value: await context(root, executable) };
+      const res = await context(root, executable);
+      return { value: res, exitCode: res.ok ? 0 : ((res.exitCode as number | undefined) ?? 1) };
     }
 
     if (action === "heal") {
@@ -498,9 +646,12 @@ async function runCommand(command: string, rawArgs: readonly string[]): Promise<
     }
 
     if (action === "export") {
+      const format = parsed.values.get("format") || "md";
+      if (format !== "md" && format !== "json") {
+        throw new WaymarkError("INVALID_ARGUMENT", `Invalid export format "${format}". Allowed: md, json.`);
+      }
       const { getSemanticMapStatus, renderSemanticMapExport } = await import("./semanticMap.js");
       const status = getSemanticMapStatus(root);
-      const format = parsed.values.get("format") || "md";
       if (format === "json") {
         return { value: status };
       }
@@ -509,13 +660,45 @@ async function runCommand(command: string, rawArgs: readonly string[]): Promise<
 
     if (action === "evict" || action === "close") {
       const { closeResidentClient, closeAllResidentClients } = await import("./residentCodedb.js");
-      const target = parsed.positionals[1] || root;
+      const { listActiveDaemons, stopDaemon } = await import("./daemon.js");
+      const target = parsed.positionals[1] ? path.resolve(parsed.positionals[1]) : root;
       if (parsed.values.has("all")) {
         closeAllResidentClients();
-        return { value: { waymark: 1, kind: action, ok: true, all: true, message: "Closed all resident codedb instances." } };
+        const active = await listActiveDaemons();
+        let daemonsStopped = 0;
+        for (const entry of active) {
+          if (await stopDaemon(entry.root)) daemonsStopped += 1;
+        }
+        return {
+          value: {
+            waymark: 1,
+            kind: action,
+            ok: true,
+            all: true,
+            daemonsStopped,
+            message: daemonsStopped > 0
+              ? `Closed all resident codedb instances and stopped ${daemonsStopped} active daemon${daemonsStopped === 1 ? "" : "s"}.`
+              : "Closed all resident codedb instances.",
+          },
+        };
       }
-      const closed = closeResidentClient(target);
-      return { value: { waymark: 1, kind: action, ok: true, closed, root: target } };
+      const closedInProcess = closeResidentClient(target);
+      const daemonStopped = await stopDaemon(target);
+      const daemonsStopped = daemonStopped ? 1 : 0;
+      const closed = closedInProcess || daemonStopped;
+      return {
+        value: {
+          waymark: 1,
+          kind: action,
+          ok: true,
+          closed,
+          daemonsStopped,
+          root: target,
+          message: closed
+            ? `Released resident codedb state for ${target}.`
+            : `No active resident codedb instance or daemon found for ${target}.`,
+        },
+      };
     }
 
     throw new WaymarkError("UNKNOWN_COMMAND", `Unknown memory action: ${action}. Use chart, bootstrap, bust, prune, list, unchart, init, context, status, heal, export, evict, or close.`);
@@ -547,9 +730,12 @@ async function runCommand(command: string, rawArgs: readonly string[]): Promise<
       return { value: res, exitCode: res.ok ? 0 : 1 };
     }
     if (subAction === "export") {
+      const format = parsed.values.get("format") || "md";
+      if (format !== "md" && format !== "json") {
+        throw new WaymarkError("INVALID_ARGUMENT", `Invalid export format "${format}". Allowed: md, json.`);
+      }
       const { getSemanticMapStatus, renderSemanticMapExport } = await import("./semanticMap.js");
       const status = getSemanticMapStatus(root);
-      const format = parsed.values.get("format") || "md";
       if (format === "json") {
         return { value: status };
       }
@@ -559,39 +745,38 @@ async function runCommand(command: string, rawArgs: readonly string[]): Promise<
   }
 
   if (command === "chart") {
-    const question = boundedText(requiredValue(parsed, "question"), 240, "question");
-    const answer = boundedText(requiredValue(parsed, "answer"), 4000, "answer");
-    const files = (parsed.values.get("files") ?? "").split(",").map((file) => file.trim()).filter(Boolean);
-    const profile = resolveProfile(parsed);
-    const result = await publish(root, profile, resolveCapnExecutable(parsed), question, answer, files);
-    return { value: result, exitCode: result.published === false && profile === "capn-cli" ? 3 : 0 };
+    return await runCommand("memory", ["chart", ...rawArgs]);
   }
 
   if (command === "unchart") {
-    const id = parsed.positionals[0];
+    const id = parsed.positionals[0] ?? parsed.values.get("id");
     if (!id) throw new WaymarkError("MISSING_ARGUMENT", "unchart requires an id");
     const ifExists = parsed.values.has("if-exists");
     const res = await unchart(root, resolveCapnExecutable(parsed), id, ifExists);
-    const exitCode = res.exitCode as number | undefined ?? (res.ok ? 0 : 1);
+    const exitCode = res.ok ? 0 : ((res.exitCode as number | undefined) ?? 1);
     return { value: res, exitCode };
   }
 
   if (command === "bust") {
-    const file = parsed.positionals[0];
+    const file = parsed.positionals[0] ?? parsed.values.get("file");
     if (!file) throw new WaymarkError("MISSING_ARGUMENT", "bust requires a repository-relative path");
-    return { value: await bust(root, resolveCapnExecutable(parsed), file) };
+    const res = await bust(root, resolveCapnExecutable(parsed), file);
+    return { value: res, exitCode: res.ok ? 0 : ((res.exitCode as number | undefined) ?? 1) };
   }
 
   if (command === "prune") {
-    return { value: await prune(root, resolveCapnExecutable(parsed)) };
+    const res = await prune(root, resolveCapnExecutable(parsed));
+    return { value: res, exitCode: res.ok ? 0 : ((res.exitCode as number | undefined) ?? 1) };
   }
 
   if (command === "list") {
-    return { value: await listEntries(root, resolveCapnExecutable(parsed)) };
+    const res = await listEntries(root, resolveCapnExecutable(parsed));
+    return { value: res, exitCode: res.ok ? 0 : ((res.exitCode as number | undefined) ?? 1) };
   }
 
   if (command === "context") {
-    return { value: await context(root, resolveCapnExecutable(parsed)) };
+    const res = await context(root, resolveCapnExecutable(parsed));
+    return { value: res, exitCode: res.ok ? 0 : ((res.exitCode as number | undefined) ?? 1) };
   }
 
   if (command === "mcp") {
@@ -607,8 +792,18 @@ async function runCommand(command: string, rawArgs: readonly string[]): Promise<
     const action = parsed.positionals[0] || "status";
     const targetRoot = parsed.values.get("path") || root;
     const force = parsed.values.has("force");
-    const idleSec = parsed.values.get("idle-timeout") ? parseInt(parsed.values.get("idle-timeout")!, 10) : undefined;
-    const idleMs = idleSec !== undefined ? idleSec * 1000 : undefined;
+    const rawIdle = parsed.values.get("idle-timeout");
+    let idleMs: number | undefined;
+    if (rawIdle !== undefined) {
+      if (!/^\d+$/u.test(rawIdle)) {
+        throw new WaymarkError("INVALID_ARGUMENT", `Invalid --idle-timeout value "${rawIdle}". Expected a non-negative integer (seconds).`);
+      }
+      const idleSec = Number(rawIdle);
+      if (!Number.isSafeInteger(idleSec)) {
+        throw new WaymarkError("INVALID_ARGUMENT", `Invalid --idle-timeout value "${rawIdle}". Expected a non-negative integer (seconds).`);
+      }
+      idleMs = idleSec * 1000;
+    }
     const { autoStartDaemon, stopDaemon, restartDaemon, tryDaemonPing, listActiveDaemons, WaymarkDaemon, getDaemonAddress } = await import("./daemon.js");
 
     if (action === "start") {
@@ -641,6 +836,7 @@ async function runCommand(command: string, rawArgs: readonly string[]): Promise<
           root: targetRoot,
           address: getDaemonAddress(targetRoot),
         },
+        exitCode: started ? 0 : 1,
       };
     }
 
@@ -655,6 +851,7 @@ async function runCommand(command: string, rawArgs: readonly string[]): Promise<
           status: stopped ? "stopped" : "not_running",
           root: targetRoot,
         },
+        exitCode: stopped ? 0 : 1,
       };
     }
 
@@ -672,6 +869,7 @@ async function runCommand(command: string, rawArgs: readonly string[]): Promise<
           root: targetRoot,
           address: getDaemonAddress(targetRoot),
         },
+        exitCode: restarted ? 0 : 1,
       };
     }
 
@@ -680,32 +878,36 @@ async function runCommand(command: string, rawArgs: readonly string[]): Promise<
       const { invalidatePathsCache } = await import("./discoveryRouter.js");
       invalidatePathsCache();
       const reloaded = await tryDaemonReload(targetRoot);
+      const ok = Boolean(reloaded && reloaded.ok);
       return {
         value: {
           waymark: 1,
           kind: "daemon",
           action: "reload",
-          ok: Boolean(reloaded && reloaded.ok),
-          status: reloaded?.ok ? "reloaded" : "not_running",
+          ok,
+          status: ok ? "reloaded" : "not_running",
           root: targetRoot,
         },
+        exitCode: ok ? 0 : 1,
       };
     }
 
     if (action === "status") {
       const active = await tryDaemonPing(targetRoot, 500);
+      const ok = Boolean(active && active.ok);
       return {
         value: {
           waymark: 1,
           kind: "daemon",
           action: "status",
-          ok: Boolean(active && active.ok),
-          status: active?.ok ? "running" : "stopped",
+          ok,
+          status: ok ? "running" : "stopped",
           pid: active?.pid,
           uptime: active?.uptime,
           root: targetRoot,
           address: getDaemonAddress(targetRoot),
         },
+        exitCode: ok ? 0 : 1,
       };
     }
 
@@ -741,7 +943,14 @@ async function runCommand(command: string, rawArgs: readonly string[]): Promise<
 
     if (action === "run") {
       const daemon = new WaymarkDaemon(targetRoot, idleMs);
-      await daemon.start();
+      const shutdown = (code: number) => {
+        daemon.stop();
+        process.exit(code);
+      };
+      process.once("SIGINT", () => shutdown(130));
+      process.once("SIGTERM", () => shutdown(143));
+      const started = await daemon.start();
+      if (!started) return { value: null, exitCode: 1 };
       return { value: null };
     }
 
@@ -757,8 +966,8 @@ async function runCommand(command: string, rawArgs: readonly string[]): Promise<
  * waymark-chart) so each action is one process without subcommand parsing.
  */
 export async function runCli(command: string, args: readonly string[]): Promise<void> {
-  const isJson = args.includes("--json") || args.includes("-j");
-  const isPlain = args.includes("--plain") || args.includes("-p");
+  const isJson = command === "--json" || command === "-j" || scanForFlag(args, new Set(["--json", "-j"]));
+  const isPlain = command === "--plain" || command === "-p" || scanForFlag(args, new Set(["--plain", "-p"]));
   try {
     const result = await runCommand(command, args);
     if (result.value !== null) {
@@ -767,6 +976,8 @@ export async function runCli(command: string, args: readonly string[]): Promise<
       // after any parse; a graceful drain adds seconds of 0%-CPU latency per one-shot
       // CLI call. All output is flushed synchronously by this point, so hard-exit
       // with the intended code.
+      process.exit(result.exitCode ?? 0);
+    } else if (result.exit || (result.exitCode !== undefined && result.exitCode !== 0)) {
       process.exit(result.exitCode ?? 0);
     }
   } catch (error) {

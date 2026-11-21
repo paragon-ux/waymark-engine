@@ -4,7 +4,7 @@ import { resolveRepositoryFile } from "./paths.js";
 import { memoryStoreDir, MEMORY_STORE_LABEL } from "./stateDir.js";
 import { AdapterProfile, WaymarkError } from "./types.js";
 import { entryFreshness, readChartedEntries } from "./memoryEntries.js";
-import { publish, unchart } from "./capnAdapter.js";
+import { assertLexicalStore, publish, unchart, withMemoryStoreLock } from "./capnAdapter.js";
 
 export type SemanticFacetId =
   | "lifecycle"
@@ -180,6 +180,8 @@ export function getSemanticMapStatus(root: string): SemanticMapStatus {
       message: `Consensus memory store (${MEMORY_STORE_LABEL}) is uninitialized. Run 'waymark memory init' (MCP: waymark_memory(action: "init")) to initialize it; bootstrap only collects unverified source-evidence drafts.`,
     };
   }
+
+  assertLexicalStore(root);
 
   const entries = readChartedEntries(root);
   const facets = {} as Record<SemanticFacetId, FacetStatus>;
@@ -373,15 +375,100 @@ interface EvidenceLine {
   score: number;
 }
 
+const REGEX_PREFIX_CHARS = new Set(["=", "(", ":", ",", "[", "!", "&", "|", "?", ";", "{", "}"]);
+
+function isRegexStartContext(line: string, slashIndex: number): boolean {
+  let k = slashIndex - 1;
+  while (k >= 0 && (line[k] === " " || line[k] === "\t")) k--;
+  if (k < 0) return true;
+  const ch = line[k]!;
+  if (REGEX_PREFIX_CHARS.has(ch)) return true;
+  if (k >= 5 && line.slice(k - 5, k + 1) === "return") {
+    const prev = k === 5 ? "" : line[k - 6]!;
+    if (!/[A-Za-z0-9_$]/u.test(prev)) return true;
+  }
+  return false;
+}
+
 /**
- * A line's code with its regex, string, and template literals blanked, so a keyword spelled inside
- * a literal (an error message, a keyword table, a pattern) is not evidence. Quotes are written as
- * \x22/\x27/\x60 because codedb-core 2.1.1 misreads a quote inside a regex literal.
+ * A line's code with its regex, string, and template literals blanked in a single linear pass,
+ * so a keyword spelled inside a literal (an error message, a keyword table, a pattern) is not
+ * evidence and untrusted repo lines can never trigger regex backtracking.
  */
-function codeOnly(line: string): string {
-  return line
-    .replace(/(^|[=(:,[!&|?;{}]|\breturn)\s*\/(?![/*])(?:\\.|\[(?:\\.|[^\]\\])*\]|[^/\\])+\/[a-z]*/gu, "$1 ")
-    .replace(/\x22(?:\\.|[^\x22\\])*\x22|\x27(?:\\.|[^\x27\\])*\x27|\x60(?:\\.|[^\x60\\])*\x60/gu, " ");
+export function codeOnly(line: string): string {
+  const out: string[] = [];
+  let i = 0;
+  let noClosingSlash = false;
+  while (i < line.length) {
+    const code = line.charCodeAt(i);
+    // Double quote (34), single quote (39), or backtick (96)
+    if (code === 34 || code === 39 || code === 96) {
+      let j = i + 1;
+      while (j < line.length) {
+        const c = line.charCodeAt(j);
+        if (c === 92) {
+          j += 2;
+          continue;
+        }
+        if (c === code) {
+          j++;
+          break;
+        }
+        j++;
+      }
+      out.push(" ");
+      i = j;
+      continue;
+    }
+    // Forward slash (47): potential regex literal (not // or /* comment)
+    if (code === 47 && !noClosingSlash && i + 1 < line.length) {
+      const next = line.charCodeAt(i + 1);
+      if (next !== 47 && next !== 42 && isRegexStartContext(line, i)) {
+        let j = i + 1;
+        let inClass = false;
+        let closed = false;
+        while (j < line.length) {
+          const c = line.charCodeAt(j);
+          if (c === 92) {
+            j += 2;
+            continue;
+          }
+          if (inClass) {
+            if (c === 93) inClass = false;
+            j++;
+            continue;
+          }
+          if (c === 91) {
+            inClass = true;
+            j++;
+            continue;
+          }
+          if (c === 47) {
+            if (j > i + 1) closed = true;
+            j++;
+            break;
+          }
+          j++;
+        }
+        if (closed) {
+          while (j < line.length) {
+            const flag = line.charCodeAt(j);
+            if (flag < 97 || flag > 122) break;
+            j++;
+          }
+          out.push(" ");
+          i = j;
+          continue;
+        }
+        if (j >= line.length) {
+          noClosingSlash = true;
+        }
+      }
+    }
+    out.push(line[i]!);
+    i++;
+  }
+  return out.join("");
 }
 
 /** Every code line of a file that names a facet keyword or is an exported declaration. */
@@ -455,9 +542,23 @@ const SOURCE_EXTENSIONS = new Set([
   ".sol", ".sh", ".bash",
 ]);
 
+const TEST_SOURCE_MARKERS = [
+  ".test.", "_test.", "-test.",
+  ".spec.", "_spec.", "-spec.",
+  ".bench.", "_bench.", "-bench.",
+];
+
 function isTestSource(file: string): boolean {
-  return /(?:^|\/)(?:tests?|__tests__|spec|testing|benchmarks?|benches|examples|fixtures|testdata)\//iu.test(file)
-    || /(?:[._-]test|[._-]spec|[._-]bench)\.[^/]+$/iu.test(file);
+  if (/(?:^|\/)(?:tests?|__tests__|spec|testing|benchmarks?|benches|examples|fixtures|testdata)\//iu.test(file)) {
+    return true;
+  }
+  const slashIdx = file.lastIndexOf("/");
+  const base = (slashIdx === -1 ? file : file.slice(slashIdx + 1)).toLowerCase();
+  for (const marker of TEST_SOURCE_MARKERS) {
+    const idx = base.indexOf(marker);
+    if (idx !== -1 && idx + marker.length < base.length) return true;
+  }
+  return false;
 }
 
 /** Entry files the package manifest names (`main`, `module`, every `bin`, string `exports`), in that order. */
@@ -657,7 +758,33 @@ export async function healSemanticMap(
 export const MAX_CHART_QUESTION_CHARS = 240;
 export const MAX_CHART_ANSWER_CHARS = 4000;
 
-const FACET_TAG = /\[FACET:([^\]]*)\]/giu;
+/** Linear-time scanner for `[FACET:<id>]` tags (case-insensitive) without polynomial regex backtracking. */
+function extractFacetTags(question: string): { tags: string[]; bare: string } {
+  const lower = question.toLowerCase();
+  const tags: string[] = [];
+  const parts: string[] = [];
+  let cursor = 0;
+  while (cursor < question.length) {
+    const start = lower.indexOf("[facet:", cursor);
+    if (start === -1) {
+      parts.push(question.slice(cursor));
+      break;
+    }
+    const end = question.indexOf("]", start + 7);
+    if (end === -1) {
+      parts.push(question.slice(cursor));
+      break;
+    }
+    if (start > cursor) parts.push(question.slice(cursor, start));
+    parts.push(" ");
+    tags.push(question.slice(start + 7, end).trim().toLowerCase());
+    cursor = end + 1;
+  }
+  return {
+    tags,
+    bare: parts.join("").replace(/\s+/gu, " ").trim(),
+  };
+}
 
 /**
  * The charted question with exactly one canonical `[FACET:<ID>]` tag, and that facet. A `facet`
@@ -665,7 +792,7 @@ const FACET_TAG = /\[FACET:([^\]]*)\]/giu;
  * same facet from ALL_FACET_IDS.
  */
 export function normalizeFacetQuestion(question: string, facet?: string): { question: string; facet?: SemanticFacetId } {
-  const embedded = [...question.matchAll(FACET_TAG)].map((m) => (m[1] ?? "").trim().toLowerCase());
+  const { tags: embedded, bare } = extractFacetTags(question);
   const requested = facet?.trim().toLowerCase() || undefined;
   const named = [...new Set([...(requested ? [requested] : []), ...embedded])];
   for (const id of named) {
@@ -677,7 +804,6 @@ export function normalizeFacetQuestion(question: string, facet?: string): { ques
     throw new WaymarkError("INVALID_ARGUMENT", `A chart entry belongs to one facet; got ${named.join(", ")}.`);
   }
   const id = named[0] as SemanticFacetId | undefined;
-  const bare = question.replace(FACET_TAG, " ").replace(/\s+/gu, " ").trim();
   if (!id) return { question: bare };
   return { question: `${SEMANTIC_FACETS[id].tag} ${bare}`.trim(), facet: id };
 }
@@ -715,7 +841,7 @@ export async function chartMemoryEntry(
   input: { question: string; answer: string; facet?: string; files: string[] },
 ): Promise<ChartMemoryResult> {
   const normalized = normalizeFacetQuestion(input.question.trim(), input.facet);
-  const bareQuestion = normalized.question.replace(FACET_TAG, "").trim();
+  const bareQuestion = extractFacetTags(normalized.question).bare;
   // A facet tag alone is a valid question; otherwise the question text is bounded like the CLI.
   if (!normalized.facet || bareQuestion) boundedChartText(bareQuestion, MAX_CHART_QUESTION_CHARS, "question");
   const answer = boundedChartText(input.answer.trim(), MAX_CHART_ANSWER_CHARS, "answer");
@@ -724,27 +850,55 @@ export async function chartMemoryEntry(
   // Anti-Hallucination Guard for facets
   if (normalized.facet) validateFacetBackingFiles(root, input.files, isNotApplicableAnswer(answer));
 
-  const result = await publish(root, profile, executable, question, answer, input.files);
-  const base: ChartMemoryResult = {
-    waymark: 1,
-    kind: "chart",
-    published: result.published,
-    adapter: result.adapter,
-    output: result.output,
-    ...(result.error ? { error: result.error } : {}),
-    question,
-    ...(normalized.facet ? { facet: normalized.facet } : {}),
-  };
-  if (!result.published || !normalized.facet) return base;
-
-  const tag = SEMANTIC_FACETS[normalized.facet].tag.toUpperCase();
-  const previous = readChartedEntries(root).filter((e) => e.question.toUpperCase().includes(tag) && e.question !== question);
-  const replaced: string[] = [];
-  for (const entry of previous) {
-    const removed = await unchart(root, executable, entry.id, true);
-    if (removed.ok) replaced.push(entry.id);
+  if (profile === "none") {
+    const result = await publish(root, profile, executable, question, answer, input.files);
+    return {
+      waymark: 1,
+      kind: "chart",
+      published: result.published,
+      adapter: result.adapter,
+      output: result.output,
+      ...(result.error ? { error: result.error } : {}),
+      question,
+      ...(normalized.facet ? { facet: normalized.facet } : {}),
+    };
   }
-  return replaced.length > 0 ? { ...base, replaced } : base;
+
+  return await withMemoryStoreLock(root, async () => {
+    const tag = normalized.facet ? SEMANTIC_FACETS[normalized.facet].tag.toUpperCase() : "";
+    const beforeIds = normalized.facet
+      ? new Set(readChartedEntries(root).filter((e) => e.question.toUpperCase().includes(tag)).map((e) => e.id))
+      : new Set<string>();
+
+    const result = await publish(root, profile, executable, question, answer, input.files);
+    const base: ChartMemoryResult = {
+      waymark: 1,
+      kind: "chart",
+      published: result.published,
+      adapter: result.adapter,
+      output: result.output,
+      ...(result.error ? { error: result.error } : {}),
+      question,
+      ...(normalized.facet ? { facet: normalized.facet } : {}),
+    };
+    if (!result.published || !normalized.facet) return base;
+
+    const afterEntries = readChartedEntries(root).filter((e) => e.question.toUpperCase().includes(tag));
+    // Preserve the newly published entry (preferring an ID not present before publish, else matching question, else newest).
+    const keepEntry =
+      afterEntries.find((e) => !beforeIds.has(e.id) && e.question === question) ??
+      afterEntries.find((e) => !beforeIds.has(e.id)) ??
+      afterEntries.find((e) => e.question === question) ??
+      afterEntries[0];
+
+    const staleEntries = keepEntry ? afterEntries.filter((e) => e.id !== keepEntry.id) : [];
+    const replaced: string[] = [];
+    for (const entry of staleEntries) {
+      const removed = await unchart(root, executable, entry.id, true);
+      if (removed.ok) replaced.push(entry.id);
+    }
+    return replaced.length > 0 ? { ...base, replaced } : base;
+  });
 }
 
 /** The Markdown architecture report of `waymark memory export` / `waymark_memory(action: "export")`. */
@@ -761,8 +915,8 @@ export function renderSemanticMapExport(status: SemanticMapStatus): string {
     if (f.details) {
       lines.push("");
       lines.push(f.details);
-      lines.push("");
     }
+    lines.push("");
   }
-  return lines.join("\n");
+  return lines.join("\n").trimEnd() + "\n";
 }

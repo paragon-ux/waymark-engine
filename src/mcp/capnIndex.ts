@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { CAPN_PROMPTS, CAPN_RESOURCES, McpServer } from "./server.js";
 import { CAPN_TOOLS } from "./capnTools.js";
-import { isHelpToken, isVersionToken, runCli } from "../cli.js";
+import { hasHelpFlag, hasVersionFlag, isHelpToken, isVersionToken, runCli } from "../cli.js";
 
 const CLI_SUBCOMMANDS = new Set([
   "ask", "symbols", "discover-symbols", "memory", "map", "bootstrap",
@@ -23,12 +23,12 @@ function rootArgument(argv: readonly string[]): string | null | undefined {
 
 const rawArgs = process.argv.slice(2);
 
-if (rawArgs.some((arg) => isVersionToken(arg))) {
-  await runCli("version", rawArgs);
-} else if (rawArgs.some((arg) => isHelpToken(arg))) {
-  await runCli("help", rawArgs);
-} else if (rawArgs[0] && CLI_SUBCOMMANDS.has(rawArgs[0])) {
+if (rawArgs[0] && CLI_SUBCOMMANDS.has(rawArgs[0])) {
   await runCli(rawArgs[0], rawArgs.slice(1));
+} else if (isVersionToken(rawArgs[0]) || hasVersionFlag(rawArgs)) {
+  await runCli("version", rawArgs);
+} else if (isHelpToken(rawArgs[0]) || hasHelpFlag(rawArgs)) {
+  await runCli("help", rawArgs);
 } else {
   // Tools default `root` to the working directory, so `--root` moves it for MCP hosts that cannot set a cwd.
   const root = rootArgument(rawArgs);

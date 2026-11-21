@@ -10,7 +10,7 @@ import test from "node:test";
 import { ask, assertSupportedCapnCommand, bust, context, listEntries, migrateMemoryStore, prune, unchart } from "../src/capnAdapter.js";
 import { bundledCodedbBinary, queryMultiHopCallGraph, queryStructural } from "../src/codedbAdapter.js";
 import { discoverSymbolsInFile, MAX_SYMBOL_DISCOVERY_FILE_BYTES } from "../src/astExtractor.js";
-import { collectRepoPaths, detectAstIntent, invalidatePathsCache, matchLiteralPath } from "../src/discoveryRouter.js";
+import { collectRepoPaths, detectAstIntent, detectLiteralIntent, invalidatePathsCache, matchLiteralPath } from "../src/discoveryRouter.js";
 import { anchorForRange, normalizeRelativePath, resolveRepositoryFile } from "../src/paths.js";
 import { PrefixTrie } from "../src/prefixTrie.js";
 import { readChartedEntries, staleChartedEntries } from "../src/memoryEntries.js";
@@ -1755,6 +1755,31 @@ test("WM-SEC-001 + WM-CLI-001: semanticMap scanners stay linear-time on ReDoS pa
   const t1 = performance.now();
   assert.deepEqual(normalizeFacetQuestion(evilFacet), { question: evilFacet });
   assert.ok(performance.now() - t1 < 50, "normalizeFacetQuestion must stay linear-time on pathological [FACET: input");
+
+  // CodeQL #2/#3/#4: discoveryRouter intent parsers stay linear-time on repeated quotes and parentheses
+  assert.equal(detectLiteralIntent(`"src/foo.ts"`).normalized, "src/foo.ts");
+  assert.equal(detectAstIntent("who calls WaymarkDaemon.start()?").functionName, "WaymarkDaemon.start");
+  assert.equal(detectAstIntent("where is method computeSha256()?").query, "computeSha256");
+
+  const evilQuotes = "a" + '"'.repeat(30_000) + "a";
+  const t2 = performance.now();
+  const litRes = detectLiteralIntent(evilQuotes);
+  assert.equal(litRes.normalized, evilQuotes);
+  assert.ok(performance.now() - t2 < 50, "detectLiteralIntent must stay linear-time on pathological quote input");
+
+  const evilTrace = "trace " + "(".repeat(30_000) + "a";
+  const t3 = performance.now();
+  const traceRes = detectAstIntent(evilTrace);
+  assert.equal(traceRes.tool, "trace_path");
+  assert.equal(traceRes.functionName, evilTrace);
+  assert.ok(performance.now() - t3 < 50, "detectAstIntent(trace_path) must stay linear-time on pathological parens");
+
+  const evilSymbol = "where is method " + "(".repeat(30_000) + "a";
+  const t4 = performance.now();
+  const symRes = detectAstIntent(evilSymbol);
+  assert.equal(symRes.tool, "search_graph");
+  assert.equal(symRes.query, evilSymbol);
+  assert.ok(performance.now() - t4 < 50, "detectAstIntent(search_graph) must stay linear-time on pathological parens");
 
   // Strict --idle-timeout validation rejects blank/whitespace/hex/float/negative values
   const repo = createSampleRepo("waymark-wm-cli-001-");

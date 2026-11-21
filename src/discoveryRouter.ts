@@ -77,8 +77,18 @@ export interface LiteralIntent {
 
 const DOTTED_IDENTIFIER = /^[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)+(?:\(\))?$/u;
 
+function stripTrailingQueryPunctuation(value: string): string {
+  let end = value.length;
+  while (end > 0) {
+    const ch = value[end - 1];
+    if (ch === "?" || ch === "(" || ch === ")" || ch === ".") end--;
+    else break;
+  }
+  return value.slice(0, end);
+}
+
 export function detectLiteralIntent(question: string): LiteralIntent {
-  const q = question.trim().replace(/^['"`]+|['"`]+$/g, "");
+  const q = stripOuterQuotes(question);
   const normalized = q.replace(/\\/g, "/").replace(/^(?:\.\/)+/, "");
   const lower = normalized.toLowerCase();
 
@@ -151,7 +161,7 @@ export function detectAstIntent(question: string): AstIntent {
     const rawTarget = candidates[candidates.length - 1] ?? candidates[0] ?? q;
     // A dotted name keeps its qualifier (`WaymarkDaemon.start`); queryStructural
     // drops it only when codedb has no such qualified name (`path.join`).
-    const functionName = rawTarget.replace(/[?().]+$/g, "");
+    const functionName = stripTrailingQueryPunctuation(rawTarget);
 
     return {
       requiresParser: true,
@@ -197,7 +207,7 @@ export function detectAstIntent(question: string): AstIntent {
     return {
       requiresParser: true,
       tool: "search_graph",
-      query: queryTerm.replace(/[?().]+$/g, ""),
+      query: stripTrailingQueryPunctuation(queryTerm),
     };
   }
 
@@ -208,7 +218,7 @@ export function detectAstIntent(question: string): AstIntent {
     return {
       requiresParser: true,
       tool: "search_graph",
-      query: q.replace(/[?().]+$/g, ""),
+      query: stripTrailingQueryPunctuation(q),
     };
   }
 
